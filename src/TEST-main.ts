@@ -3,6 +3,7 @@ import { generatePoints } from './point-generation';
 import { DualMesh } from './dual-mesh';
 import { assignElevations, assignIslandElevations, TERRAIN_PRESETS } from './landmasses';
 import { assignBiomes, getBiomeName } from './biomes';
+import { findCoastlineCells } from './coastlines';
 
 const WIDTH  = 960;
 const HEIGHT = 600;
@@ -84,24 +85,24 @@ let biomeConfig = {
 };
 
 // Helper function to blend two colors
-function blendColors(color1: string, color2: string, ratio: number): string {
-  const hex1 = color1.replace('#', '');
-  const hex2 = color2.replace('#', '');
+// function blendColors(color1: string, color2: string, ratio: number): string {
+//   const hex1 = color1.replace('#', '');
+//   const hex2 = color2.replace('#', '');
   
-  const r1 = parseInt(hex1.substr(0, 2), 16);
-  const g1 = parseInt(hex1.substr(2, 2), 16);
-  const b1 = parseInt(hex1.substr(4, 2), 16);
+//   const r1 = parseInt(hex1.substr(0, 2), 16);
+//   const g1 = parseInt(hex1.substr(2, 2), 16);
+//   const b1 = parseInt(hex1.substr(4, 2), 16);
   
-  const r2 = parseInt(hex2.substr(0, 2), 16);
-  const g2 = parseInt(hex2.substr(2, 2), 16);
-  const b2 = parseInt(hex2.substr(4, 2), 16);
+//   const r2 = parseInt(hex2.substr(0, 2), 16);
+//   const g2 = parseInt(hex2.substr(2, 2), 16);
+//   const b2 = parseInt(hex2.substr(4, 2), 16);
   
-  const r = Math.round(r1 * (1 - ratio) + r2 * ratio);
-  const g = Math.round(g1 * (1 - ratio) + g2 * ratio);
-  const b = Math.round(b1 * (1 - ratio) + b2 * ratio);
+//   const r = Math.round(r1 * (1 - ratio) + r2 * ratio);
+//   const g = Math.round(g1 * (1 - ratio) + g2 * ratio);
+//   const b = Math.round(b1 * (1 - ratio) + b2 * ratio);
   
-  return `rgb(${r}, ${g}, ${b})`;
-}
+//   return `rgb(${r}, ${g}, ${b})`;
+// }
 
 function drawFilledCellsByBiome(
   ctx: CanvasRenderingContext2D,
@@ -113,80 +114,152 @@ function drawFilledCellsByBiome(
   smoothColors: boolean = true
 ) {
   const nCells = cellOffsets.length - 1;
-  
+
+  // 1) collect all land-boundary segments
+  const coastSegments: [number, number][] = [];
+
   for (let cellId = 0; cellId < nCells; cellId++) {
     const start = cellOffsets[cellId];
-    const end = cellOffsets[cellId + 1];
-    
+    const end   = cellOffsets[cellId + 1];
     if (start >= end) continue;
-    
+
+    // — fill & subtle stroke as before —
     const biome = cellBiomes[cellId];
     let color = BIOME_COLORS[biome] || "#888888";
-    
-    // Color smoothing: blend with neighbor colors
-    if (smoothColors && cellNeighbors && meshData) {
-      const neighborStart = meshData.cellOffsets[cellId];
-      const neighborEnd = meshData.cellOffsets[cellId + 1];
-      
-      if (neighborEnd > neighborStart) {
-        let totalWeight = 1;
-        let r = parseInt(color.substr(1, 2), 16);
-        let g = parseInt(color.substr(3, 2), 16);
-        let b = parseInt(color.substr(5, 2), 16);
-        
-        // Sample a few neighbors for blending
-        const maxNeighbors = Math.min(3, neighborEnd - neighborStart);
-        for (let i = 0; i < maxNeighbors; i++) {
-          const neighborIdx = neighborStart + i;
-          if (neighborIdx < neighborEnd) {
-            const neighborId = cellNeighbors[neighborIdx];
-            if (neighborId >= 0 && neighborId < nCells) {
-              const neighborBiome = cellBiomes[neighborId];
-              const neighborColor = BIOME_COLORS[neighborBiome] || "#888888";
-              
-              const weight = 0.15; // Light blending to maintain distinct biomes
-              const nr = parseInt(neighborColor.substr(1, 2), 16);
-              const ng = parseInt(neighborColor.substr(3, 2), 16);
-              const nb = parseInt(neighborColor.substr(5, 2), 16);
-              
-              r += nr * weight;
-              g += ng * weight;
-              b += nb * weight;
-              totalWeight += weight;
-            }
-          }
+
+    // optional smoothing of fill‐colors
+    if (smoothColors) {
+      let totalWeight = 1;
+      let r = parseInt(color.substr(1,2),16),
+          g = parseInt(color.substr(3,2),16),
+          b = parseInt(color.substr(5,2),16);
+
+      const neighborCount = Math.min(3, end - start);
+      for (let k = 0; k < neighborCount; k++) {
+        const nbId = cellNeighbors[start + k];
+        if (nbId >= 0 && nbId < nCells) {
+          const nbColor = BIOME_COLORS[cellBiomes[nbId]] || "#888888";
+          const weight = 0.15;
+          const nr = parseInt(nbColor.substr(1,2),16),
+                ng = parseInt(nbColor.substr(3,2),16),
+                nb = parseInt(nbColor.substr(5,2),16);
+          r += nr * weight;
+          g += ng * weight;
+          b += nb * weight;
+          totalWeight += weight;
         }
-        
-        r = Math.round(r / totalWeight);
-        g = Math.round(g / totalWeight);
-        b = Math.round(b / totalWeight);
-        
-        color = `rgb(${r}, ${g}, ${b})`;
       }
+      color = `rgb(${Math.round(r/totalWeight)}, ${Math.round(g/totalWeight)}, ${Math.round(b/totalWeight)})`;
     }
-    
+
+    // draw cell fill
     ctx.fillStyle = color;
     ctx.beginPath();
-    
-    const firstVertexIndex = cellVertexIndices[start];
-    const firstX = allVertices[firstVertexIndex * 2];
-    const firstY = allVertices[firstVertexIndex * 2 + 1];
-    ctx.moveTo(firstX, firstY);
-    
-    for (let j = start + 1; j < end; j++) {
-      const vertexIndex = cellVertexIndices[j];
-      const x = allVertices[vertexIndex * 2];
-      const y = allVertices[vertexIndex * 2 + 1];
-      ctx.lineTo(x, y);
+    const v0 = cellVertexIndices[start];
+    ctx.moveTo(allVertices[v0*2], allVertices[v0*2+1]);
+    for (let j = start+1; j < end; j++) {
+      const vi = cellVertexIndices[j];
+      ctx.lineTo(allVertices[vi*2], allVertices[vi*2+1]);
     }
-    
     ctx.closePath();
     ctx.fill();
 
-    // Subtle stroke to avoid gaps
-    ctx.lineWidth = 0.5;
+    ctx.lineWidth   = 0.5;
     ctx.strokeStyle = color;
     ctx.stroke();
+
+    // — collect black‐stroke segments only for land cells —
+    const thisIsWater = (biome === 6 || biome === 7);
+    if (!thisIsWater) {
+      for (let i = start; i < end; i++) {
+        const nb = cellNeighbors[i];
+        let drawEdge = false;
+
+        // outer boundary
+        if (nb < 0) {
+          drawEdge = true;
+        } else {
+          // coastline: neighbor must be water
+          const nbIsWater = (cellBiomes[nb] === 6 || cellBiomes[nb] === 7);
+          if (nbIsWater) drawEdge = true;
+        }
+
+        if (drawEdge) {
+          const viA = cellVertexIndices[i];
+          const nxt = (i+1 < end ? i+1 : start);
+          const viB = cellVertexIndices[nxt];
+          coastSegments.push([viA, viB]);
+        }
+      }
+    }
+  }
+
+  // 2) build adjacency map
+  const adj = new Map<number, number[]>();
+  for (const [u,v] of coastSegments) {
+    if (!adj.has(u)) adj.set(u, []);
+    if (!adj.has(v)) adj.set(v, []);
+    adj.get(u)!.push(v);
+    adj.get(v)!.push(u);
+  }
+
+  // 3) extract each closed loop
+  const loops: number[][] = [];
+  const usedEdge = new Set<string>();
+
+  for (const startV of adj.keys()) {
+    const nbrs = adj.get(startV)!;
+    if (nbrs.every(nb => usedEdge.has(`${startV}->${nb}`))) continue;
+
+    const loop: number[] = [startV];
+    let prev = startV, curr = nbrs[0];
+
+    while (curr !== startV) {
+      loop.push(curr);
+      usedEdge.add(`${prev}->${curr}`);
+      const [a,b] = adj.get(curr)!;
+      const nxt = (a === prev ? b : a);
+      prev = curr;
+      curr = nxt;
+    }
+    loops.push(loop);
+  }
+
+  // 4) helper: stroke one loop with cubic Béziers (Catmull–Rom→Bezier)
+  function strokeSmoothLoop(loop: number[]) {
+    const pts = loop.map(vi => ({
+      x: allVertices[vi*2],
+      y: allVertices[vi*2 + 1]
+    }));
+    const n = pts.length;
+    if (n < 2) return;
+
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+
+    for (let i = 0; i < n; i++) {
+      const p0 = pts[(i - 1 + n) % n];
+      const p1 = pts[i];
+      const p2 = pts[(i + 1) % n];
+      const p3 = pts[(i + 2) % n];
+
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
+
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  // 5) stroke every loop in one go
+  ctx.lineWidth   = 2;
+  ctx.strokeStyle = "black";
+  for (const loop of loops) {
+    strokeSmoothLoop(loop);
   }
 }
 
@@ -440,7 +513,7 @@ function createUI() {
   // Smooth colors checkbox
   document.getElementById('smoothColors')!.addEventListener('change', (e) => {
     biomeConfig.smoothColors = (e.target as HTMLInputElement).checked;
-    regenerateElevations();
+    regenerateElevations(); // TODO why are we regenerating just to get smooth colors????? Fix this.
   });
   
   // Amplitude and frequency controls - auto-regenerate
@@ -576,6 +649,14 @@ function regenerateElevations() {
     ${biomeStatsHtml}
   `;
   
+  // TODO get rid of, just to demonstrate that coastline identification is working
+  // const coastlineIds: Set<number> = findCoastlineCells(mesh, cellElevations)
+  // for (let i = 0; i < cellBiomes.length; i++) {
+  //   if (coastlineIds.has(i)) {
+  //     cellBiomes[i] = 12
+  //   }
+  // }
+
   console.time('drawFilled');
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, WIDTH, HEIGHT);

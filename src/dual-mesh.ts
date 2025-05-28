@@ -2,7 +2,7 @@ import Delaunator from "delaunator";
 import { MeshData } from "./TEST-main";
 
 /**
- * DualMesh constructs the dual‐cell mesh of a Delaunay triangulation,
+ * DualMesh constructs the dual‐cell mesh of a Delaunay triangulation (using centroids),
  * but only for points strictly inside a rectangular region (excluding the boundary ring).
  */
 export class DualMesh {
@@ -72,6 +72,7 @@ export class DualMesh {
       let cx = (x0 + x1 + x2) / 3;
       let cy = (y0 + y1 + y2) / 3;
 
+      // TODO fix clamping to avoid weird edge cases and use correct radius calculation (hardcoded atm)
       // if any vertex sits on the left or right boundary, clamp x
       if (x0 === 0 || x1 === 0 || x2 === 0)       cx = 5; // half of radius
       else if (x0 === width || x1 === width || x2 === width) cx = width - 5;
