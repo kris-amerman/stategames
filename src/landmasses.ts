@@ -17,6 +17,7 @@ export interface ElevationConfig {
 // Elevation is between 0 and 1 -- the water level is at 0.5 by default.
 
 // TODO consider not using Float64 to save on memorys
+// TODO consider having mountain ranges as opposed to just spikes of mountain!
 export function assignElevations(
   cellCenters: Float64Array, 
   config: ElevationConfig = {}

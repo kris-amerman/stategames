@@ -2,6 +2,7 @@ import Delaunator from 'delaunator';
 import { generatePoints } from './point-generation';
 import { DualMesh } from './dual-mesh';
 import { assignElevations, assignIslandElevations, TERRAIN_PRESETS } from './landmasses';
+import { assignBiomes, getBiomeName } from './biomes';
 
 const WIDTH  = 960;
 const HEIGHT = 600;
@@ -10,6 +11,25 @@ const RADIUS_OPTIONS = {
   'medium': 15,
   'large': 10,
   'xl': 5
+};
+
+// Biome color scheme
+const BIOME_COLORS: { [key: number]: string } = {
+  0: "#88aa55",   // Plains - Grassland
+  1: "#679459",   // Woods - Temperate Deciduous Forest
+  2: "#337755",   // Rainforest - Tropical Rain Forest
+  3: "#2f6666",   // Wetlands - Marsh
+  4: "#889977",   // Hills - Shrubland
+  5: "#888888",   // Mountains - Bare
+  6: "#44447a",   // Shallow Ocean - Ocean
+  7: "#33335a",   // Deep Ocean - (darker)
+  8: "#bbbbaa",   // Tundra Plains - Tundra
+  9: "#99aa77",   // Tundra Woods - Taiga
+  10: "#bbbbaa",  // Tundra Hills - Tundra
+  11: "#ffffff",  // Tundra Mountains - Ice
+  12: "#d2b98b",  // Desert Plains - Subtropical Desert
+  13: "#c9d29b",  // Desert Hills - Temperate Desert
+  14: "#555555"   // Desert Mountains - Scorched
 };
 
 // set up canvas
@@ -24,7 +44,7 @@ const ctx = canvas.getContext('2d')!;
 const mesh = new DualMesh(WIDTH, HEIGHT);
 
 let meshConfig = {
-  radius: 5
+  radius: RADIUS_OPTIONS['large'] // default
 }
 
 export type MeshData = {
@@ -51,48 +71,101 @@ let elevationConfig = {
   useIslands: false
 };
 
-function drawFilledCellsByElevation(
+// Biome configuration
+let biomeConfig = {
+  waterLevel: 0.5,
+  moistureFrequency: 0.02,
+  moistureAmplitude: 1.0,
+  moistureOctaves: 3,
+  temperatureFrequency: 0.015,
+  temperatureAmplitude: 1.0,
+  temperatureOctaves: 2,
+  smoothColors: true
+};
+
+// Helper function to blend two colors
+function blendColors(color1: string, color2: string, ratio: number): string {
+  const hex1 = color1.replace('#', '');
+  const hex2 = color2.replace('#', '');
+  
+  const r1 = parseInt(hex1.substr(0, 2), 16);
+  const g1 = parseInt(hex1.substr(2, 2), 16);
+  const b1 = parseInt(hex1.substr(4, 2), 16);
+  
+  const r2 = parseInt(hex2.substr(0, 2), 16);
+  const g2 = parseInt(hex2.substr(2, 2), 16);
+  const b2 = parseInt(hex2.substr(4, 2), 16);
+  
+  const r = Math.round(r1 * (1 - ratio) + r2 * ratio);
+  const g = Math.round(g1 * (1 - ratio) + g2 * ratio);
+  const b = Math.round(b1 * (1 - ratio) + b2 * ratio);
+  
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function drawFilledCellsByBiome(
   ctx: CanvasRenderingContext2D,
   allVertices: Float64Array,
   cellOffsets: Uint32Array,
   cellVertexIndices: Uint32Array,
-  cellElevations: Float64Array,
-  waterColor: string = '#2c5aa0',
-  landColor: string = '#7cb342'
+  cellBiomes: Uint8Array,
+  cellNeighbors: Int32Array,
+  smoothColors: boolean = true
 ) {
   const nCells = cellOffsets.length - 1;
+  
   for (let cellId = 0; cellId < nCells; cellId++) {
     const start = cellOffsets[cellId];
     const end = cellOffsets[cellId + 1];
     
     if (start >= end) continue;
     
-    const elevation = cellElevations[cellId];
+    const biome = cellBiomes[cellId];
+    let color = BIOME_COLORS[biome] || "#888888";
     
-    // Create gradient colors based on elevation
-    if (elevation < 0.5) {
-      // Water: deeper = darker blue
-      const intensity = Math.max(0.3, elevation * 2);
-      const blue = Math.floor(160 * intensity);
-      const green = Math.floor(90 * intensity);
-      ctx.fillStyle = `rgb(44, ${green}, ${blue})`;
-    } else {
-      // Land: higher = lighter green/brown
-      const landHeight = (elevation - 0.5) * 2;
-      if (landHeight > 0.7) {
-        // Mountains: brown/gray
-        const intensity = Math.min(1, landHeight);
-        const val = Math.floor(80 + 100 * intensity);
-        ctx.fillStyle = `rgb(${val}, ${val - 20}, ${val - 40})`;
-      } else {
-        // Hills/plains: green
-        const intensity = Math.max(0.4, landHeight);
-        const green = Math.floor(124 + 60 * intensity);
-        const red = Math.floor(66 + 40 * intensity);
-        ctx.fillStyle = `rgb(${red}, ${green}, 66)`;
+    // Color smoothing: blend with neighbor colors
+    if (smoothColors && cellNeighbors && meshData) {
+      const neighborStart = meshData.cellOffsets[cellId];
+      const neighborEnd = meshData.cellOffsets[cellId + 1];
+      
+      if (neighborEnd > neighborStart) {
+        let totalWeight = 1;
+        let r = parseInt(color.substr(1, 2), 16);
+        let g = parseInt(color.substr(3, 2), 16);
+        let b = parseInt(color.substr(5, 2), 16);
+        
+        // Sample a few neighbors for blending
+        const maxNeighbors = Math.min(3, neighborEnd - neighborStart);
+        for (let i = 0; i < maxNeighbors; i++) {
+          const neighborIdx = neighborStart + i;
+          if (neighborIdx < neighborEnd) {
+            const neighborId = cellNeighbors[neighborIdx];
+            if (neighborId >= 0 && neighborId < nCells) {
+              const neighborBiome = cellBiomes[neighborId];
+              const neighborColor = BIOME_COLORS[neighborBiome] || "#888888";
+              
+              const weight = 0.15; // Light blending to maintain distinct biomes
+              const nr = parseInt(neighborColor.substr(1, 2), 16);
+              const ng = parseInt(neighborColor.substr(3, 2), 16);
+              const nb = parseInt(neighborColor.substr(5, 2), 16);
+              
+              r += nr * weight;
+              g += ng * weight;
+              b += nb * weight;
+              totalWeight += weight;
+            }
+          }
+        }
+        
+        r = Math.round(r / totalWeight);
+        g = Math.round(g / totalWeight);
+        b = Math.round(b / totalWeight);
+        
+        color = `rgb(${r}, ${g}, ${b})`;
       }
     }
     
+    ctx.fillStyle = color;
     ctx.beginPath();
     
     const firstVertexIndex = cellVertexIndices[start];
@@ -110,9 +183,9 @@ function drawFilledCellsByElevation(
     ctx.closePath();
     ctx.fill();
 
-    ctx.lineWidth    = 1;
-    ctx.lineJoin     = 'round';       // helps avoid little miter spikes
-    ctx.strokeStyle  = ctx.fillStyle; // exactly the same as your fill
+    // Subtle stroke to avoid gaps
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = color;
     ctx.stroke();
   }
 }
@@ -137,7 +210,7 @@ function createUI() {
   `;
   
   uiPanel.innerHTML = `
-    <h3 style="margin: 0 0 15px 0; color: #4CAF50;">Terrain Controls</h3>
+    <h3 style="margin: 0 0 15px 0; color: #4CAF50;">Biome Terrain Controls</h3>
     
     <div style="margin-bottom: 15px;">
       <button id="newMesh" style="
@@ -155,6 +228,13 @@ function createUI() {
       <label>
         <input type="checkbox" id="useIslands" ${elevationConfig.useIslands ? 'checked' : ''}> 
         Island Mode
+      </label>
+    </div>
+
+    <div style="margin-bottom: 15px;">
+      <label>
+        <input type="checkbox" id="smoothColors" ${biomeConfig.smoothColors ? 'checked' : ''}> 
+        Smooth Colors
       </label>
     </div>
 
@@ -178,10 +258,45 @@ function createUI() {
         <option value="chaotic">Chaotic</option>
       </select>
     </div>
-    
+
+    <details style="margin-bottom: 15px;">
+      <summary style="cursor: pointer; margin-bottom: 10px;">Biome Settings</summary>
+      
+      <div style="margin-bottom: 10px;">
+        <label>Water Level: <span id="waterLevelValue">${biomeConfig.waterLevel}</span></label>
+        <input type="range" id="waterLevel" min="0.2" max="0.8" step="0.05" value="${biomeConfig.waterLevel}" 
+               style="width: 100%; margin-top: 5px;">
+      </div>
+
+      <div style="margin-bottom: 10px;">
+        <label>Moisture Frequency: <span id="moistureFrequencyValue">${biomeConfig.moistureFrequency}</span></label>
+        <input type="range" id="moistureFrequency" min="0.005" max="0.05" step="0.005" value="${biomeConfig.moistureFrequency}" 
+               style="width: 100%; margin-top: 5px;">
+      </div>
+
+      <div style="margin-bottom: 10px;">
+        <label>Temperature Frequency: <span id="temperatureFrequencyValue">${biomeConfig.temperatureFrequency}</span></label>
+        <input type="range" id="temperatureFrequency" min="0.005" max="0.05" step="0.005" value="${biomeConfig.temperatureFrequency}" 
+               style="width: 100%; margin-top: 5px;">
+      </div>
+
+      <div style="margin-bottom: 10px;">
+        <label>Moisture Octaves: <span id="moistureOctavesValue">${biomeConfig.moistureOctaves}</span></label>
+        <input type="range" id="moistureOctaves" min="1" max="5" step="1" value="${biomeConfig.moistureOctaves}" 
+               style="width: 100%; margin-top: 5px;">
+      </div>
+
+      <div style="margin-bottom: 15px;">
+        <label>Temperature Octaves: <span id="temperatureOctavesValue">${biomeConfig.temperatureOctaves}</span></label>
+        <input type="range" id="temperatureOctaves" min="1" max="5" step="1" value="${biomeConfig.temperatureOctaves}" 
+               style="width: 100%; margin-top: 5px;">
+      </div>
+      <hr></hr>
+    </details>
+
     <div style="margin-bottom: 10px;">
       <label>Elevation Shift: <span id="elevationShiftValue">${elevationConfig.elevationShift}</span></label>
-      <input type="range" id="elevationShift" min="-0.4" max="0.4" step="0.05" value="${elevationConfig.elevationShift}" 
+      <input type="range" id="elevationShift" min="-0.4" max="0.4" step="0.01" value="${elevationConfig.elevationShift}" 
              style="width: 100%; margin-top: 5px;">
     </div>
     
@@ -240,8 +355,8 @@ function createUI() {
     </details>
     
     <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
-      <div>Water Level: 0.5 (fixed)</div>
       <div id="stats"></div>
+      <div id="biomeStats" style="margin-top: 10px;"></div>
     </div>
   `;
   
@@ -296,6 +411,17 @@ function createUI() {
       regenerateElevations();
     });
   });
+
+  // Biome config inputs
+  ['waterLevel', 'moistureFrequency', 'temperatureFrequency', 'moistureOctaves', 'temperatureOctaves'].forEach(param => {
+    const element = document.getElementById(param)!;
+    element.addEventListener('input', (e) => {
+      const value = parseFloat((e.target as HTMLInputElement).value);
+      (biomeConfig as any)[param] = ['moistureOctaves', 'temperatureOctaves'].includes(param) ? Math.floor(value) : value;
+      document.getElementById(param + 'Value')!.textContent = value.toString();
+      regenerateElevations();
+    });
+  });
   
   // Redistribution
   document.getElementById('redistribution')!.addEventListener('change', (e) => {
@@ -308,6 +434,12 @@ function createUI() {
   // Islands checkbox
   document.getElementById('useIslands')!.addEventListener('change', (e) => {
     elevationConfig.useIslands = (e.target as HTMLInputElement).checked;
+    regenerateElevations();
+  });
+
+  // Smooth colors checkbox
+  document.getElementById('smoothColors')!.addEventListener('change', (e) => {
+    biomeConfig.smoothColors = (e.target as HTMLInputElement).checked;
     regenerateElevations();
   });
   
@@ -393,20 +525,69 @@ function regenerateElevations() {
   const cellElevations = elevationFunction(meshData.cellGeometricCenters, elevationConfig);
   console.timeEnd('assignElevations');
 
+  console.time('assignBiomes');
+  const cellBiomes = assignBiomes(
+    meshData.cellGeometricCenters,
+    cellElevations,
+    meshData.cellNeighbors,
+    meshData.cellOffsets,
+    biomeConfig.waterLevel,
+    {
+      frequency: biomeConfig.moistureFrequency,
+      amplitude: biomeConfig.moistureAmplitude,
+      octaves: biomeConfig.moistureOctaves
+    },
+    {
+      frequency: biomeConfig.temperatureFrequency,
+      amplitude: biomeConfig.temperatureAmplitude,
+      octaves: biomeConfig.temperatureOctaves
+    }
+  );
+  console.timeEnd('assignBiomes');
+
   // Calculate stats
-  const landCells = cellElevations.filter(e => e >= 0.5).length;
+  const landCells = cellElevations.filter(e => e >= biomeConfig.waterLevel).length;
   const waterCells = cellElevations.length - landCells;
   const landPercentage = Math.round((landCells / cellElevations.length) * 100);
+  
+  // Calculate biome distribution
+  const biomeCounts: { [key: number]: number } = {};
+  for (let i = 0; i < cellBiomes.length; i++) {
+    const biome = cellBiomes[i];
+    biomeCounts[biome] = (biomeCounts[biome] || 0) + 1;
+  }
+  
+  const biomeStatsHtml = Object.entries(biomeCounts)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 6) // Show top 6 biomes
+    .map(([biomeId, count]) => {
+      const percentage = Math.round((count / cellBiomes.length) * 100);
+      return `${getBiomeName(parseInt(biomeId))}: ${percentage}%`;
+    })
+    .join('<br>');
   
   document.getElementById('stats')!.innerHTML = `
     Land: ${landPercentage}% (${landCells} cells)<br>
     Water: ${100 - landPercentage}% (${waterCells} cells)
   `;
   
+  document.getElementById('biomeStats')!.innerHTML = `
+    <strong>Top Biomes:</strong><br>
+    ${biomeStatsHtml}
+  `;
+  
   console.time('drawFilled');
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  drawFilledCellsByElevation(ctx, meshData.allVertices, meshData.cellOffsets, meshData.cellVertexIndices, cellElevations);
+  drawFilledCellsByBiome(
+    ctx, 
+    meshData.allVertices, 
+    meshData.cellOffsets, 
+    meshData.cellVertexIndices, 
+    cellBiomes,
+    meshData.cellNeighbors,
+    biomeConfig.smoothColors
+  );
   console.timeEnd('drawFilled');
 }
 
