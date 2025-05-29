@@ -30,7 +30,7 @@ interface NoiseConfig {
 // Each biome has a unique ID (e.g. 0, 1, 2, ...)
 
 // TODO more realistic logic instead of just noise? Or doesn't matter for us?
-// TODO definitely want more contiguous biomes instead of noisy patches
+// TODO more contiguous biomes instead of noisy patches? Just playing around w octaves?
 export function assignBiomes(
   cellCenters: Float64Array,
   cellElevations: Float64Array,

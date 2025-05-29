@@ -1,5 +1,5 @@
 import Delaunator from "delaunator";
-import { MeshData } from "./TEST-main";
+import { MeshData } from "./main";
 
 /**
  * DualMesh constructs the dual‐cell mesh of a Delaunay triangulation (using centroids),
