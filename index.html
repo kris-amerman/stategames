@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Poisson-Disc Sampling</title>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;   /* stack children vertically */
+      align-items: center;      /* center them horizontally */
+      margin: 0;
+      padding: 1rem;
+    }
+    canvas {
+      border: 1px solid #444;   /* optional, just so you can see its bounds */
+    }
+    #refresh {
+      margin-top: 1rem;         /* push it down below the canvas */
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <!-- <button id="refresh">Refresh</button> -->
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
