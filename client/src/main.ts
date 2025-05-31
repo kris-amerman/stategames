@@ -1,18 +1,13 @@
-import Delaunator from 'delaunator';
-import { generatePoints } from './point-generation';
-import { DualMesh } from './dual-mesh';
-import { assignElevations, assignIslandElevations, TERRAIN_PRESETS } from './landmasses';
-import { assignBiomes, getBiomeName } from './biomes';
-import { findCoastlineCells } from './coastlines';
+import { assignElevations, assignIslandElevations, TERRAIN_PRESETS } from './terrain-gen/elevations';
+import { assignBiomes, getBiomeName } from './terrain-gen/biomes';
+
+type MapSize = "small" | "medium" | "large" | "xl";
 
 const WIDTH  = 960;
 const HEIGHT = 600;
-const RADIUS_OPTIONS = {
-  'small': 20,
-  'medium': 15,
-  'large': 10,
-  'xl': 5
-};
+
+// Server configuration
+const SERVER_BASE_URL = 'http://localhost:3000'; // Update this to match your server
 
 // Biome color scheme
 const BIOME_COLORS: { [key: number]: string } = {
@@ -42,23 +37,21 @@ canvas.height = HEIGHT;
 
 const ctx = canvas.getContext('2d')!;
 
-const mesh = new DualMesh(WIDTH, HEIGHT);
-
-let meshConfig = {
-  radius: RADIUS_OPTIONS['xl'] // default
-}
-
 export type MeshData = {
   allVertices: Float64Array;
   cellOffsets: Uint32Array;
   cellVertexIndices: Uint32Array;
   cellNeighbors: Int32Array;
   cellTriangleCenters: Float64Array;
-  cellGeometricCenters: Float64Array;
 };
 
-// Global state for mesh data (persist between elevation updates)
+// Mesh cache - stores fetched meshes from server
+const meshCache = new Map<MapSize, MeshData>();
+const meshLoadingStates = new Map<MapSize, 'loading' | 'loaded' | 'error'>();
+
+// Current mesh data
 let meshData: MeshData | null = null;
+let currentMapSize: MapSize = 'xl';
 
 // Current elevation configuration
 let elevationConfig = {
@@ -84,6 +77,236 @@ let biomeConfig = {
   smoothColors: true
 };
 
+/**
+ * Deserializes mesh data from server response back to TypedArrays
+ */
+function deserializeMeshData(serialized: any): MeshData {
+  return {
+    allVertices: new Float64Array(serialized.allVertices),
+    cellOffsets: new Uint32Array(serialized.cellOffsets),
+    cellVertexIndices: new Uint32Array(serialized.cellVertexIndices),
+    cellNeighbors: new Int32Array(serialized.cellNeighbors),
+    cellTriangleCenters: new Float64Array(serialized.cellTriangleCenters),
+  };
+}
+
+/**
+ * Fetches mesh data from the server for a specific size
+ */
+async function fetchMeshFromServer(size: MapSize): Promise<MeshData | null> {
+  if (meshLoadingStates.get(size) === 'loading') {
+    // Already loading, wait for it to complete
+    while (meshLoadingStates.get(size) === 'loading') {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return meshCache.get(size) || null;
+  }
+
+  meshLoadingStates.set(size, 'loading');
+
+  try {
+    console.log(`🌐 Fetching ${size} mesh from server...`);
+    console.time(`fetch-${size}`);
+    
+    const response = await fetch(`${SERVER_BASE_URL}/api/mesh/${size}`);
+    
+    // DEBUG: Log response details
+    console.log(`📡 Response status: ${response.status}`);
+    console.log(`📡 Response headers:`, [...response.headers.entries()]);
+    console.log(`📡 Response URL: ${response.url}`);
+    console.log(`📡 Response type: ${response.type}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${size} mesh: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    console.timeEnd(`fetch-${size}`);
+    
+    // DEBUG: Log data structure
+    console.log(`📦 Data keys:`, Object.keys(data));
+    console.log(`📦 Has meshData:`, !!data.meshData);
+    console.log(`📦 MeshData keys:`, data.meshData ? Object.keys(data.meshData) : 'none');
+    
+    // Deserialize the mesh data
+    const meshData = deserializeMeshData(data.meshData);
+    
+    // Cache the mesh
+    meshCache.set(size, meshData);
+    meshLoadingStates.set(size, 'loaded');
+    
+    console.log(`✅ Loaded ${size} mesh: ${data.meta?.cellCount || 'unknown'} cells`);
+    
+    return meshData;
+  } catch (error) {
+    console.error(`❌ Failed to fetch ${size} mesh:`, error);
+    meshLoadingStates.set(size, 'error');
+    return null;
+  }
+}
+
+/**
+ * Preloads all mesh sizes from the server (non-blocking)
+ */
+async function preloadAllMeshes(): Promise<void> {
+  const sizes: MapSize[] = ['small', 'medium', 'large', 'xl'];
+  
+  console.log('🚀 Preloading all meshes from server...');
+  
+  // Start all fetches in parallel (non-blocking)
+  const fetchPromises = sizes.map(async (size) => {
+    try {
+      await fetchMeshFromServer(size);
+      updateLoadingStatus();
+    } catch (error) {
+      console.error(`Failed to preload ${size} mesh:`, error);
+    }
+  });
+  
+  // Don't wait for all to complete - they load in background
+  Promise.all(fetchPromises).then(() => {
+    console.log('🎉 All meshes preloaded!');
+    updateLoadingStatus();
+  });
+}
+
+/**
+ * Updates UI to show loading status
+ */
+function updateLoadingStatus(): void {
+  const sizes: MapSize[] = ['small', 'medium', 'large', 'xl'];
+  const loadedCount = sizes.filter(size => meshLoadingStates.get(size) === 'loaded').length;
+  const loadingCount = sizes.filter(size => meshLoadingStates.get(size) === 'loading').length;
+  const errorCount = sizes.filter(size => meshLoadingStates.get(size) === 'error').length;
+  
+  // Update the map size selector to show loading status
+  const mapSizeSelect = document.getElementById('mapSize') as HTMLSelectElement;
+  if (mapSizeSelect) {
+    for (const option of mapSizeSelect.options) {
+      const size = option.value as MapSize;
+      const state = meshLoadingStates.get(size);
+      
+      if (state === 'loading') {
+        option.textContent = `${size.charAt(0).toUpperCase() + size.slice(1)} (Loading...)`;
+        option.disabled = true;
+      } else if (state === 'error') {
+        option.textContent = `${size.charAt(0).toUpperCase() + size.slice(1)} (Error)`;
+        option.disabled = true;
+      } else if (state === 'loaded') {
+        option.textContent = size.charAt(0).toUpperCase() + size.slice(1);
+        option.disabled = false;
+      }
+    }
+  }
+  
+  // Update stats in UI if element exists
+  const statsElement = document.getElementById('loadingStats');
+  if (statsElement) {
+    statsElement.innerHTML = `
+      Meshes: ${loadedCount}/4 loaded${loadingCount > 0 ? `, ${loadingCount} loading` : ''}${errorCount > 0 ? `, ${errorCount} failed` : ''}
+    `;
+  }
+}
+
+/**
+ * Loads or waits for mesh data for a specific size
+ */
+async function loadOrGetMesh(size: MapSize): Promise<void> {
+  console.time('loadOrGetMesh');
+  
+  // Check if mesh exists in cache
+  if (meshCache.has(size)) {
+    console.log(`Using cached mesh for size: ${size}`);
+    meshData = meshCache.get(size)!;
+    generateTerrain();
+    console.timeEnd('loadOrGetMesh');
+    return;
+  }
+  
+  // Show loading state
+  showLoadingIndicator(`Loading ${size} mesh...`);
+  
+  // Fetch from server
+  const fetchedMesh = await fetchMeshFromServer(size);
+  hideLoadingIndicator();
+  
+  if (fetchedMesh) {
+    meshData = fetchedMesh;
+    generateTerrain();
+  } else {
+    showError(`Failed to load ${size} mesh from server`);
+  }
+  
+  console.timeEnd('loadOrGetMesh');
+}
+
+/**
+ * Shows a loading indicator
+ */
+function showLoadingIndicator(message: string): void {
+  let indicator = document.getElementById('loadingIndicator');
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.id = 'loadingIndicator';
+    indicator.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 20px;
+      border-radius: 8px;
+      font-family: Arial, sans-serif;
+      z-index: 2000;
+    `;
+    document.body.appendChild(indicator);
+  }
+  indicator.textContent = message;
+  indicator.style.display = 'block';
+}
+
+/**
+ * Hides the loading indicator
+ */
+function hideLoadingIndicator(): void {
+  const indicator = document.getElementById('loadingIndicator');
+  if (indicator) {
+    indicator.style.display = 'none';
+  }
+}
+
+/**
+ * Shows an error message
+ */
+function showError(message: string): void {
+  let errorElement = document.getElementById('errorMessage');
+  if (!errorElement) {
+    errorElement = document.createElement('div');
+    errorElement.id = 'errorMessage';
+    errorElement.style.cssText = `
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #f44336;
+      color: white;
+      padding: 10px 20px;
+      border-radius: 4px;
+      font-family: Arial, sans-serif;
+      z-index: 2000;
+    `;
+    document.body.appendChild(errorElement);
+  }
+  errorElement.textContent = message;
+  errorElement.style.display = 'block';
+  
+  // Auto-hide after 5 seconds
+  setTimeout(() => {
+    errorElement!.style.display = 'none';
+  }, 5000);
+}
+
 function drawFilledCellsByBiome(
   ctx: CanvasRenderingContext2D,
   allVertices: Float64Array,
@@ -95,15 +318,11 @@ function drawFilledCellsByBiome(
 ) {
   const nCells = cellOffsets.length - 1;
 
-  // 1) collect all land-boundary segments
-  const coastSegments: [number, number][] = [];
-
   for (let cellId = 0; cellId < nCells; cellId++) {
     const start = cellOffsets[cellId];
     const end   = cellOffsets[cellId + 1];
     if (start >= end) continue;
 
-    // — fill & subtle stroke as before —
     const biome = cellBiomes[cellId];
     let color = BIOME_COLORS[biome] || "#888888";
 
@@ -147,100 +366,7 @@ function drawFilledCellsByBiome(
     ctx.lineWidth   = 0.5;
     ctx.strokeStyle = color;
     ctx.stroke();
-
-    // — collect black‐stroke segments only for land cells —
-    const thisIsWater = (biome === 6 || biome === 7);
-    if (!thisIsWater) {
-      for (let i = start; i < end; i++) {
-        const nb = cellNeighbors[i];
-        let drawEdge = false;
-
-        // outer boundary
-        if (nb < 0) {
-          drawEdge = true;
-        } else {
-          // coastline: neighbor must be water
-          const nbIsWater = (cellBiomes[nb] === 6 || cellBiomes[nb] === 7);
-          if (nbIsWater) drawEdge = true;
-        }
-
-        if (drawEdge) {
-          const viA = cellVertexIndices[i];
-          const nxt = (i+1 < end ? i+1 : start);
-          const viB = cellVertexIndices[nxt];
-          coastSegments.push([viA, viB]);
-        }
-      }
-    }
   }
-
-  // 2) build adjacency map
-  const adj = new Map<number, number[]>();
-  for (const [u,v] of coastSegments) {
-    if (!adj.has(u)) adj.set(u, []);
-    if (!adj.has(v)) adj.set(v, []);
-    adj.get(u)!.push(v);
-    adj.get(v)!.push(u);
-  }
-
-  // 3) extract each closed loop
-  const loops: number[][] = [];
-  const usedEdge = new Set<string>();
-
-  for (const startV of adj.keys()) {
-    const nbrs = adj.get(startV)!;
-    if (nbrs.every(nb => usedEdge.has(`${startV}->${nb}`))) continue;
-
-    const loop: number[] = [startV];
-    let prev = startV, curr = nbrs[0];
-
-    while (curr !== startV) {
-      loop.push(curr);
-      usedEdge.add(`${prev}->${curr}`);
-      const [a,b] = adj.get(curr)!;
-      const nxt = (a === prev ? b : a);
-      prev = curr;
-      curr = nxt;
-    }
-    loops.push(loop);
-  }
-
-  // 4) helper: stroke one loop with cubic Béziers (Catmull–Rom→Bezier)
-  function strokeSmoothLoop(loop: number[]) {
-    const pts = loop.map(vi => ({
-      x: allVertices[vi*2],
-      y: allVertices[vi*2 + 1]
-    }));
-    const n = pts.length;
-    if (n < 2) return;
-
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-
-    for (let i = 0; i < n; i++) {
-      const p0 = pts[(i - 1 + n) % n];
-      const p1 = pts[i];
-      const p2 = pts[(i + 1) % n];
-      const p3 = pts[(i + 2) % n];
-
-      const cp1x = p1.x + (p2.x - p0.x) / 6;
-      const cp1y = p1.y + (p2.y - p0.y) / 6;
-      const cp2x = p2.x - (p3.x - p1.x) / 6;
-      const cp2y = p2.y - (p3.y - p1.y) / 6;
-
-      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
-    }
-
-    ctx.closePath();
-    ctx.stroke();
-  }
-
-  // 5) stroke every loop in one go
-  // ctx.lineWidth   = 2;
-  // ctx.strokeStyle = "black";
-  // for (const loop of loops) {
-  //   strokeSmoothLoop(loop);
-  // }
 }
 
 function createUI() {
@@ -266,18 +392,6 @@ function createUI() {
     <h3 style="margin: 0 0 15px 0; color: #4CAF50;">Biome Terrain Controls</h3>
     
     <div style="margin-bottom: 15px;">
-      <button id="newMesh" style="
-        background: #4CAF50; 
-        color: white; 
-        border: none; 
-        padding: 8px 16px; 
-        border-radius: 4px; 
-        cursor: pointer;
-        width: 100%;
-      ">Generate New Mesh</button>
-    </div>
-    
-    <div style="margin-bottom: 15px;">
       <label>
         <input type="checkbox" id="useIslands" ${elevationConfig.useIslands ? 'checked' : ''}> 
         Island Mode
@@ -296,8 +410,8 @@ function createUI() {
       <select id="mapSize" style="width: 100%; margin-top: 5px; background: #333; color: white; border: 1px solid #555; padding: 4px;">
         <option value="small">Small</option>
         <option value="medium">Medium</option>
-        <option value="large" selected>Large</option>
-        <option value="xl">XL</option>
+        <option value="large">Large</option>
+        <option value="xl" selected>XL</option>
       </select>
     </div>
     
@@ -408,6 +522,7 @@ function createUI() {
     </details>
     
     <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
+      <div id="loadingStats" style="margin-bottom: 5px;"></div>
       <div id="stats"></div>
       <div id="biomeStats" style="margin-top: 10px;"></div>
     </div>
@@ -415,23 +530,19 @@ function createUI() {
   
   document.body.appendChild(uiPanel);
   
-  // Event listeners
-  document.getElementById('newMesh')!.addEventListener('click', generateNewMesh);
-
   // Map size selectors
-  document.getElementById('mapSize')!.addEventListener('change', (e) => {
-    const size = (e.target as HTMLSelectElement).value;
-    if (size !== 'none' && RADIUS_OPTIONS[size as keyof typeof RADIUS_OPTIONS]) {
-      const radius = RADIUS_OPTIONS[size as keyof typeof RADIUS_OPTIONS];
-      meshConfig['radius'] = radius;
-      generateNewMesh();
+  document.getElementById('mapSize')!.addEventListener('change', async (e) => {
+    const size = (e.target as HTMLSelectElement).value as MapSize;
+    if (size) {
+      currentMapSize = size;
+      await loadOrGetMesh(currentMapSize);
     }
   });
   
   document.getElementById('randomSeed')!.addEventListener('click', () => {
     elevationConfig.seed = Math.random();
     (document.getElementById('seedInput') as HTMLInputElement).value = elevationConfig.seed.toFixed(3);
-    regenerateElevations();
+    generateTerrain();
   });
   
   // Seed input
@@ -439,7 +550,7 @@ function createUI() {
     const value = parseFloat((e.target as HTMLInputElement).value);
     if (!isNaN(value)) {
       elevationConfig.seed = Math.max(0, Math.min(1, value));
-      regenerateElevations();
+      generateTerrain();
     }
   });
   
@@ -450,7 +561,7 @@ function createUI() {
       const presetConfig = TERRAIN_PRESETS[preset as keyof typeof TERRAIN_PRESETS];
       Object.assign(elevationConfig, presetConfig);
       updateUIFromConfig();
-      regenerateElevations();
+      generateTerrain();
     }
   });
   
@@ -461,7 +572,7 @@ function createUI() {
       const value = parseFloat((e.target as HTMLInputElement).value);
       (elevationConfig as any)[param] = param === 'octaves' ? Math.floor(value) : value;
       document.getElementById(param + 'Value')!.textContent = value.toString();
-      regenerateElevations();
+      generateTerrain();
     });
   });
 
@@ -472,7 +583,7 @@ function createUI() {
       const value = parseFloat((e.target as HTMLInputElement).value);
       (biomeConfig as any)[param] = ['moistureOctaves', 'temperatureOctaves'].includes(param) ? Math.floor(value) : value;
       document.getElementById(param + 'Value')!.textContent = value.toString();
-      regenerateElevations();
+      generateTerrain();
     });
   });
   
@@ -481,19 +592,19 @@ function createUI() {
     elevationConfig.redistribution = (e.target as HTMLSelectElement).value as any;
     document.getElementById('exponentialPowerDiv')!.style.display = 
       elevationConfig.redistribution === 'exponential' ? 'block' : 'none';
-    regenerateElevations();
+    generateTerrain();
   });
   
   // Islands checkbox
   document.getElementById('useIslands')!.addEventListener('change', (e) => {
     elevationConfig.useIslands = (e.target as HTMLInputElement).checked;
-    regenerateElevations();
+    generateTerrain();
   });
 
   // Smooth colors checkbox
   document.getElementById('smoothColors')!.addEventListener('change', (e) => {
     biomeConfig.smoothColors = (e.target as HTMLInputElement).checked;
-    regenerateElevations(); // TODO why are we regenerating just to get smooth colors????? Fix this.
+    generateTerrain(); // Re-render with new color smoothing
   });
   
   // Amplitude and frequency controls - auto-regenerate
@@ -506,7 +617,7 @@ function createUI() {
         const value = parseFloat((e.target as HTMLInputElement).value);
         elevationConfig.amplitudes[i] = value;
         document.getElementById(`amp${i}Value`)!.textContent = value.toString();
-        regenerateElevations();
+        generateTerrain();
       });
     }
     
@@ -515,7 +626,7 @@ function createUI() {
         const value = parseFloat((e.target as HTMLInputElement).value);
         elevationConfig.frequencies[i] = value;
         document.getElementById(`freq${i}Value`)!.textContent = value.toString();
-        regenerateElevations();
+        generateTerrain();
       });
     }
   }
@@ -547,31 +658,11 @@ function updateUIFromConfig() {
   }
 }
 
-function generateNewMesh() {
-  console.time('fullRender');
-  
-  console.time('pointGeneration');
-  const points: Float64Array = generatePoints({ x: WIDTH, y: HEIGHT }, meshConfig.radius);
-  console.timeEnd('pointGeneration');
-  
-  console.log(`Generated ${points.length / 2} points`);
-
-  console.time('triangulation');
-  const delaunay = new Delaunator(points);
-  console.timeEnd('triangulation');
-  
-  console.log(`Created ${delaunay.triangles.length / 3} triangles`);
-
-  console.time('meshUpdate');
-  meshData = mesh.update(points, delaunay);
-  console.timeEnd('meshUpdate');
-
-  regenerateElevations();
-  console.timeEnd('fullRender');
-}
-
-function regenerateElevations() {
-  if (!meshData) return;
+function generateTerrain() {
+  if (!meshData) {
+    console.warn('No mesh data available for terrain generation');
+    return;
+  }
   
   console.time('assignElevations');
   const elevationFunction = elevationConfig.useIslands ? assignIslandElevations : assignElevations;
@@ -621,22 +712,14 @@ function regenerateElevations() {
   
   document.getElementById('stats')!.innerHTML = `
     Land: ${landPercentage}% (${landCells} cells)<br>
-    Water: ${100 - landPercentage}% (${waterCells} cells)
+    Water: ${100 - landPercentage}% (${waterCells} cells)<br>
+    Mesh: ${currentMapSize} (${meshData.cellTriangleCenters.length / 2} cells)
   `;
   
   document.getElementById('biomeStats')!.innerHTML = `
     <strong>Top Biomes:</strong><br>
     ${biomeStatsHtml}
   `;
-  
-  // TODO get rid of, just to demonstrate that coastline identification is working
-  // Could be used for defining a Beach or coastal biome
-  // const coastlineIds: Set<number> = findCoastlineCells(mesh, cellElevations)
-  // for (let i = 0; i < cellBiomes.length; i++) {
-  //   if (coastlineIds.has(i)) {
-  //     cellBiomes[i] = 12
-  //   }
-  // }
 
   console.time('drawFilled');
   ctx.fillStyle = '#000';
@@ -653,6 +736,24 @@ function regenerateElevations() {
   console.timeEnd('drawFilled');
 }
 
-// Initialize
-createUI();
-generateNewMesh();
+// Initialize the application
+async function initializeApp() {
+  console.log('🚀 Initializing terrain generator...');
+  
+  // Create UI first
+  createUI();
+  
+  // Start preloading all meshes in background (non-blocking)
+  preloadAllMeshes();
+  
+  // Load the default mesh (xl) - this will show loading indicator if needed
+  await loadOrGetMesh(currentMapSize);
+  
+  console.log('✅ Application initialized');
+}
+
+// Start the application
+initializeApp().catch(error => {
+  console.error('Failed to initialize application:', error);
+  showError('Failed to initialize application. Please check server connection.');
+});

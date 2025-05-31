@@ -1,5 +1,5 @@
 import Delaunator from "delaunator";
-import { MeshData } from "./main";
+import type { MeshData } from "./types";
 
 /**
  * DualMesh constructs the dual‐cell mesh of a Delaunay triangulation (using centroids),
@@ -17,13 +17,11 @@ export class DualMesh {
   // flattened list of vertex indices in CCW order for each cell, used to access allVertices
   cellVertexIndices: Uint32Array = new Uint32Array(0);
   // flattened list of neighboring cell ids for each cell (same structure as cellVertexIndices)
-  // TODO: clarfiy, is this in CCW format?
   cellNeighbors: Int32Array = new Int32Array(0);
   // locations of cell's associated triangle vertex [x0,y0, x1,y1, …] ordered by cell id
   cellTriangleCenters: Float64Array = new Float64Array(0);
-  // geometric centers of the cells (as opposed to triangle vertex)
-  cellGeometricCenters: Float64Array = new Float64Array(0);
 
+  // helper data structures
   private cellOffsetIndices: Int32Array = new Int32Array(0);
   private firstEdge: Int32Array = new Int32Array(0);
 
@@ -40,7 +38,10 @@ export class DualMesh {
     return edgeIndex % 3 === 2 ? edgeIndex - 2 : edgeIndex + 1;
   }
 
-  update(points: Float64Array, delaunay: Delaunator<ArrayLike<number>>): MeshData {
+  generate(
+    points: Float64Array,
+    delaunay: Delaunator<ArrayLike<number>>
+  ): MeshData {
     const triangles = delaunay.triangles;
     const halfedges = delaunay.halfedges;
     const width = this.regionWidth;
@@ -72,13 +73,13 @@ export class DualMesh {
       let cx = (x0 + x1 + x2) / 3;
       let cy = (y0 + y1 + y2) / 3;
 
-      // TODO fix clamping to avoid weird edge cases and use correct radius calculation (hardcoded atm)
+      // TODO fix the "5" boundary math (supposedly half of radius)
       // if any vertex sits on the left or right boundary, clamp x
-      if (x0 === 0 || x1 === 0 || x2 === 0)       cx = 5; // half of radius
+      if (x0 === 0 || x1 === 0 || x2 === 0) cx = 5; 
       else if (x0 === width || x1 === width || x2 === width) cx = width - 5;
 
       // if any vertex sits on the top or bottom boundary, clamp y
-      if (y0 === 0 || y1 === 0 || y2 === 0)       cy = 5; // half of radius
+      if (y0 === 0 || y1 === 0 || y2 === 0) cy = 5;
       else if (y0 === height || y1 === height || y2 === height) cy = height - 5;
 
       this.allVertices[2 * t] = cx;
@@ -149,9 +150,6 @@ export class DualMesh {
     if (this.cellNeighbors.length !== cumulativeVertexCount) {
       this.cellNeighbors = new Int32Array(cumulativeVertexCount);
     }
-    if (this.cellGeometricCenters.length !== cellCount * 2) {
-      this.cellGeometricCenters = new Float64Array(cellCount * 2);
-    }
 
     let writePointer = 0;
     for (let p = 0; p < numPoints; p++) {
@@ -161,20 +159,10 @@ export class DualMesh {
       let edge = this.firstEdge[p];
       const startEdge = edge;
 
-      // Accumulate vertex positions to compute cell centroid
-      let sumX = 0;
-      let sumY = 0;
-      let vertexCount = 0;
-
       do {
         // Store the triangle index for this edge
         const triIndex = this.triOfEdge(edge);
         this.cellVertexIndices[writePointer] = triIndex;
-
-        // Accumulate cell vertex (aka triangle centroid) for cell centroid calculation
-        sumX += this.allVertices[2 * triIndex];
-        sumY += this.allVertices[2 * triIndex + 1];
-        vertexCount++;
 
         // Find the neighboring cell across this edge
         const oppositeEdge = halfedges[edge];
@@ -200,12 +188,6 @@ export class DualMesh {
 
         edge = this.nextEdge(halfedges[edge]);
       } while (edge !== startEdge);
-
-      // Compute and store the cell centroid
-      if (vertexCount > 0) {
-        this.cellGeometricCenters[2 * cid] = sumX / vertexCount;
-        this.cellGeometricCenters[2 * cid + 1] = sumY / vertexCount;
-      }
     }
 
     return {
@@ -214,71 +196,6 @@ export class DualMesh {
       cellVertexIndices: this.cellVertexIndices,
       cellNeighbors: this.cellNeighbors,
       cellTriangleCenters: this.cellTriangleCenters,
-      cellGeometricCenters: this.cellGeometricCenters
     };
-  }
-
-  /**
-   * Get neighbors for a specific cell ID
-   * @param cellId The cell ID to get neighbors for
-   * @returns Array of neighboring cell IDs (-1 for boundary edges)
-   */
-  getCellNeighbors(cellId: number): number[] {
-    if (cellId < 0 || cellId >= this.cellOffsets.length - 1) {
-      return [];
-    }
-
-    const start = this.cellOffsets[cellId];
-    const end = this.cellOffsets[cellId + 1];
-    const neighbors: number[] = [];
-
-    for (let i = start; i < end; i++) {
-      neighbors.push(this.cellNeighbors[i]);
-    }
-
-    return neighbors;
-  }
-
-  /**
-   * Get all valid (non-boundary) neighbors for a specific cell ID
-   * @param cellId The cell ID to get neighbors for
-   * @returns Array of neighboring cell IDs (excluding boundary edges)
-   */
-  getCellValidNeighbors(cellId: number): number[] {
-    return this.getCellNeighbors(cellId).filter((id) => id >= 0);
-  }
-
-  /**
-   * Check if two cells are neighbors
-   * @param cellId1 First cell ID
-   * @param cellId2 Second cell ID
-   * @returns true if the cells are neighbors
-   */
-  areCellsNeighbors(cellId1: number, cellId2: number): boolean {
-    const neighbors = this.getCellNeighbors(cellId1);
-    return neighbors.includes(cellId2);
-  }
-
-  /**
-   * Get the shared edge between two neighboring cells
-   * @param cellId1 First cell ID
-   * @param cellId2 Second cell ID
-   * @returns The index in the cellNeighbors array where cellId2 appears as neighbor of cellId1, or -1 if not neighbors
-   */
-  getSharedEdgeIndex(cellId1: number, cellId2: number): number {
-    if (cellId1 < 0 || cellId1 >= this.cellOffsets.length - 1) {
-      return -1;
-    }
-
-    const start = this.cellOffsets[cellId1];
-    const end = this.cellOffsets[cellId1 + 1];
-
-    for (let i = start; i < end; i++) {
-      if (this.cellNeighbors[i] === cellId2) {
-        return i;
-      }
-    }
-
-    return -1;
   }
 }
