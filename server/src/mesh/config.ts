@@ -1,7 +1,7 @@
-import type { MeshGenerationConfig } from "./types";
+import type { MeshConfig } from "./types";
 
-export const MESH_CONFIG: MeshGenerationConfig = {
-  width: 960, // Update these values to match your actual WIDTH/HEIGHT
+export const MESH_CONFIG: MeshConfig = {
+  width: 960,
   height: 600,
   radiusOptions: {
     small: 20,

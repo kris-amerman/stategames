@@ -15,7 +15,8 @@ async function ensureMeshDataDir(): Promise<void> {
 }
 
 /**
- * Saves generated mesh data to disk as JSON
+ * Saves generated mesh data to disk as JSON (only if file doesn't exist)
+ * TODO: is JSON the best format? Does it matter for our use case?
  */
 export async function saveMeshData(
   size: MapSize,
@@ -23,11 +24,20 @@ export async function saveMeshData(
 ): Promise<void> {
   await ensureMeshDataDir();
 
-  const serialized = serializeMeshData(meshData);
   const filePath = join(MESH_DATA_DIR, getMeshFileName(size));
 
+  // Safety check: never overwrite existing mesh files
+  if (existsSync(filePath)) {
+    throw new Error(
+      `❌ Mesh file ${filePath} already exists! ` +
+      `Overwriting would break existing saved games. ` +
+      `Delete the file manually if you're certain you want to regenerate it.`
+    );
+  }
+
+  const serialized = serializeMeshData(meshData);
   await writeFile(filePath, JSON.stringify(serialized, null, 2));
-  console.log(`Saved ${size} mesh to ${filePath}`);
+  console.log(`✅ Saved ${size} mesh to ${filePath}`);
 }
 
 /**

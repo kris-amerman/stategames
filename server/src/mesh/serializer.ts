@@ -1,3 +1,5 @@
+// TODO is this the best way to store and transmit data? What about binary? Protobuf?
+
 import type { MeshData, SerializedMeshData } from "./types";
 
 /**

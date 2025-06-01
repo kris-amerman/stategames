@@ -8,25 +8,22 @@ export function generateMesh(size: MapSize): MeshData {
   console.time(`${size} mesh generation`);
 
   const { width, height, radiusOptions } = MESH_CONFIG;
-  const mesh = new DualMesh(width, height);
+  const mesh = new DualMesh(width, height); // TODO clean up DualMesh class
   const radius = radiusOptions[size];
 
-  console.time("pointGeneration");
+  console.time("generatePoints");
   const points: Float64Array = generatePoints({ x: width, y: height }, radius);
-  console.timeEnd("pointGeneration");
+  console.timeEnd("generatePoints");
 
-  console.time("triangulation");
+  console.time("Delaunator");
   const delaunay = new Delaunator(points);
-  console.timeEnd("triangulation");
+  console.timeEnd("Delaunator");
 
-  console.time("meshUpdate");
+  console.time("mesh.generate");
   const meshData: MeshData = mesh.generate(points, delaunay);
-  console.timeEnd("meshUpdate");
+  console.timeEnd("mesh.generate");
 
   console.timeEnd(`${size} mesh generation`);
-  console.log(
-    `Generated ${size} mesh with ${meshData.cellOffsets.length - 1} cells`
-  );
 
   return meshData;
 }

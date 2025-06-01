@@ -1,3 +1,5 @@
+// TODO add docs
+
 interface Vector2D {
   x: number;
   y: number;

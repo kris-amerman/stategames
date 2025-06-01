@@ -9,6 +9,8 @@ export class DualMesh {
   private regionWidth: number;
   private regionHeight: number;
 
+  // TODO clarify if these are in CCW order (where applicable)
+
   // raw points that make up cell vertices [x0,y0, x1,y1, …]
   // under the hood, these are the triangle centroids organized by triangle indices
   allVertices: Float64Array = new Float64Array(0);

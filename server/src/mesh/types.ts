@@ -16,7 +16,7 @@ export interface SerializedMeshData {
   cellTriangleCenters: number[];
 }
 
-export interface MeshGenerationConfig {
+export interface MeshConfig {
   width: number;
   height: number;
   radiusOptions: Record<MapSize, number>;

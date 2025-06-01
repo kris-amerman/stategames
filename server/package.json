@@ -5,7 +5,6 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "generate-meshes": "bun run src/scripts/generate-meshes.ts",
-    "generate-meshes:force": "bun run src/scripts/generate-meshes.ts --force",
     "generate-mesh:small": "bun run src/scripts/generate-meshes.ts small",
     "generate-mesh:medium": "bun run src/scripts/generate-meshes.ts medium",
     "generate-mesh:large": "bun run src/scripts/generate-meshes.ts large",
