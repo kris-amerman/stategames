@@ -296,7 +296,6 @@ export function generateTerrain() {
 // Initialize the application
 async function initializeApp() {
   console.log('Initializing app...');
-  console.log(`HELP! ${process.env.VITE_SERVER_URL}`)
   
   // Create UI first
   createUI(elevationConfig, biomeConfig, currentMapSize);
