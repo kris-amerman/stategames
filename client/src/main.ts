@@ -313,4 +313,6 @@ async function initializeApp() {
 initializeApp().catch(error => {
   console.error('Failed to initialize application:', error);
   showError('Failed to initialize application. Please check console.');
+
+  console.log(`HELP! ${process.env.VITE_SERVER_URL}`)
 });
