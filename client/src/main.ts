@@ -10,7 +10,7 @@ const WIDTH  = 960;
 const HEIGHT = 600;
 
 // Server configuration
-const SERVER_BASE_URL = process.env.VITE_SERVER_URL || 'http://localhost:3000';
+const SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
 // Biome color scheme
 export const BIOME_COLORS: { [key: number]: string } = {
