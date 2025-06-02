@@ -20,11 +20,12 @@
   },
   "homepage": "https://github.com/kris-amerman/stategames#readme",
   "devDependencies": {
+    "@types/node": "^22.15.29",
+    "@types/delaunator": "^5.0.3",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
   },
   "dependencies": {
-    "@types/delaunator": "^5.0.3",
     "delaunator": "^5.0.1",
     "simplex-noise": "^4.0.3"
   }
