@@ -20,6 +20,7 @@ export const CORS_HEADERS = {
  */
 const server = Bun.serve({
   port: PORT,
+  hostname: "0.0.0.0",
   routes: {
     "/": () => root(),
     "/health": () => health(),
@@ -31,5 +32,7 @@ const server = Bun.serve({
 });
 
 console.log(`Server running`);
+console.log('PORT environment variable:', process.env.PORT);
+console.log('Server will listen on:', PORT);
 console.log("\nAvailable endpoints:");
 ENDPOINTS.forEach((e) => console.log(`    ${e}`));
