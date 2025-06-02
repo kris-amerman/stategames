@@ -1,7 +1,7 @@
 import { fallback, health, mesh, root } from "./routes";
 
 // TODO move constants to a config
-export const PORT = 3000;
+export const PORT = process.env.PORT || 3000;
 export const ENDPOINTS = [
   "GET /api/mesh/small",
   "GET /api/mesh/medium",
@@ -30,6 +30,6 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Server running on http://localhost:${server.port}`);
+console.log(`Server running`);
 console.log("\nAvailable endpoints:");
 ENDPOINTS.forEach((e) => console.log(`    ${e}`));
