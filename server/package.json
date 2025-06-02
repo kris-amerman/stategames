@@ -1,0 +1,23 @@
+{
+  "name": "server",
+  "module": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "generate-meshes": "bun run src/scripts/generate-meshes.ts",
+    "generate-mesh:small": "bun run src/scripts/generate-meshes.ts small",
+    "generate-mesh:medium": "bun run src/scripts/generate-meshes.ts medium",
+    "generate-mesh:large": "bun run src/scripts/generate-meshes.ts large",
+    "generate-mesh:xl": "bun run src/scripts/generate-meshes.ts xl"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@types/delaunator": "^5.0.3",
+    "delaunator": "^5.0.1"
+  }
+}

@@ -19,6 +19,18 @@ export const BIOMES = {
   DESERT_MOUNTAINS: 14
 } as const;
 
+// TODO move somewhere
+export interface BiomeConfig {
+  waterLevel: number;
+  moistureFrequency: number;
+  moistureAmplitude: number;
+  moistureOctaves: number;
+  temperatureFrequency: number;
+  temperatureAmplitude: number;
+  temperatureOctaves: number;
+  smoothColors: boolean;
+}
+
 // TODO normalize config struct across mapgen modules
 interface NoiseConfig {
   frequency: number;

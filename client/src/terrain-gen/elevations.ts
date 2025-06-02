@@ -1,14 +1,16 @@
 import { createNoise2D } from 'simplex-noise';
 
+// TODO move somewhere
 export interface ElevationConfig {
-  amplitudes?: number[];
-  frequencies?: number[];
-  octaves?: number;
-  seed?: number;
-  waterLevel?: number;
-  redistribution?: 'none' | 'linear' | 'exponential';
-  exponentialPower?: number;
-  elevationShift?: number; // Positive = more land, negative = more water
+  amplitudes: number[];
+  frequencies: number[];
+  octaves: number;
+  seed: number;
+  waterLevel: number;
+  redistribution: 'none' | 'linear' | 'exponential';
+  exponentialPower: number;
+  elevationShift: number; // Positive = more land, negative = more water
+  useIslands: boolean;
 }
 
 
@@ -20,7 +22,7 @@ export interface ElevationConfig {
 // TODO consider having mountain ranges as opposed to just spikes of mountain!
 export function assignElevations(
   cellCenters: Float64Array, 
-  config: ElevationConfig = {}
+  config: ElevationConfig
 ): Float64Array {
   const numCells = cellCenters.length / 2;
   const cellElevations = new Float64Array(numCells);
@@ -87,7 +89,7 @@ export function assignElevations(
 // Utility function to create island-like terrain
 export function assignIslandElevations(
   cellCenters: Float64Array,
-  config: ElevationConfig = {}
+  config: ElevationConfig
 ): Float64Array {
   const numCells = cellCenters.length / 2;
   

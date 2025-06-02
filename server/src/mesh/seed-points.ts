@@ -1,6 +1,8 @@
+// TODO add docs
+
 interface Vector2D {
-  x: number
-  y: number
+  x: number;
+  y: number;
 }
 
 export function generatePoissonPoints(
@@ -9,16 +11,15 @@ export function generatePoissonPoints(
   offset: number,
   rejectLimit: number = 30
 ): Float64Array {
-  
   if (regionSize.x < 0 || regionSize.y < 0) {
-    throw new Error("not enough room for poisson disc sampling")
+    throw new Error("not enough room for poisson disc sampling");
   }
 
-  const cellSize = radius / Math.SQRT2
-  const cols = Math.ceil(regionSize.x / cellSize)
-  const rows = Math.ceil(regionSize.y / cellSize)
-  const radiusSq = radius * radius
-  
+  const cellSize = radius / Math.SQRT2;
+  const cols = Math.ceil(regionSize.x / cellSize);
+  const rows = Math.ceil(regionSize.y / cellSize);
+  const radiusSq = radius * radius;
+
   // Pre-calculate sin/cos lookup table for performance
   const ANGLE_SAMPLES = 64;
   const cosTable = new Float64Array(ANGLE_SAMPLES);
@@ -30,13 +31,13 @@ export function generatePoissonPoints(
   }
 
   // flat grid for cache-friendly access
-  const grid = new Int32Array(cols * rows).fill(-1)
-  // master list of all accepted points 
-  const points: Vector2D[] = []
-  // active front: pool of accepted points from which 
-  // we might still be able to generate new neighbors 
-  const spawnPoints: Vector2D[] = []
-  
+  const grid = new Int32Array(cols * rows).fill(-1);
+  // master list of all accepted points
+  const points: Vector2D[] = [];
+  // active front: pool of accepted points from which
+  // we might still be able to generate new neighbors
+  const spawnPoints: Vector2D[] = [];
+
   // Optimized isValid function
   function isValid(newX: number, newY: number): boolean {
     // Early bounds check (fastest rejection)
@@ -45,7 +46,7 @@ export function generatePoissonPoints(
 
     const cellX = Math.floor(newX / cellSize);
     const cellY = Math.floor(newY / cellSize);
-    
+
     // Tighter bounds calculation
     const startX = Math.max(0, cellX - 2);
     const endX = Math.min(cellX + 2, cols - 1);
@@ -72,26 +73,30 @@ export function generatePoissonPoints(
   }
 
   // seed with center
-  spawnPoints.push({ x: regionSize.x / 2, y: regionSize.y / 2 })
-  
+  spawnPoints.push({ x: regionSize.x / 2, y: regionSize.y / 2 });
+
   let iterations = 0;
   let rejections = 0;
   let validationCalls = 0;
 
   while (spawnPoints.length > 0) {
     iterations++;
-    
+
     // Smarter spawn point selection - bias toward newer points (more likely to succeed)
-    const spawnIndex = spawnPoints.length > 6 
-      ? Math.floor(Math.random() * Math.min(6, spawnPoints.length))
-      : Math.floor(Math.random() * spawnPoints.length);
-    
+    const spawnIndex =
+      spawnPoints.length > 6
+        ? Math.floor(Math.random() * Math.min(6, spawnPoints.length))
+        : Math.floor(Math.random() * spawnPoints.length);
+
     const spawnCenter = spawnPoints[spawnIndex];
     let accepted = false;
 
     // Adaptive reject limit based on grid density
     const density = points.length / (cols * rows * 0.1); // Rough density estimate
-    const adaptiveRejectLimit = Math.max(10, Math.floor(rejectLimit * Math.max(0.3, 1 - density)));
+    const adaptiveRejectLimit = Math.max(
+      10,
+      Math.floor(rejectLimit * Math.max(0.3, 1 - density))
+    );
 
     for (let i = 0; i < adaptiveRejectLimit; i++) {
       // Use lookup table instead of Math.cos/sin
@@ -129,25 +134,24 @@ export function generatePoissonPoints(
   }
 
   // pack into a Float64Array
-  const out = new Float64Array(points.length * 2)
+  const out = new Float64Array(points.length * 2);
   for (let i = 0; i < points.length; i++) {
-    out[2 * i] = points[i].x + offset
-    out[2 * i + 1] = points[i].y + offset
+    out[2 * i] = points[i].x + offset;
+    out[2 * i + 1] = points[i].y + offset;
   }
 
-  return out
+  return out;
 }
 
 export function generateBoundingPoints(
   regionSize: Vector2D,
   radius: number
 ): Float64Array {
-  
   if (regionSize.x % radius != 0 || regionSize.y % radius != 0) {
-    throw new Error("regionSize not divisible by radius")
+    throw new Error("regionSize not divisible by radius");
   }
 
-  const points: Vector2D[] = []
+  const points: Vector2D[] = [];
 
   let outerPoints = 0;
   let innerPoints = 0;
@@ -155,11 +159,16 @@ export function generateBoundingPoints(
   // outer
   for (let j = 0; j <= regionSize.y; j += radius) {
     for (let i = 0; i <= regionSize.x; i += radius) {
-      if (i == 0 || j == 0 || i == regionSize.x || j == regionSize.y){
-        if (i == radius || i == regionSize.x - radius || j == radius || j == regionSize.y - radius){
-          continue
+      if (i == 0 || j == 0 || i == regionSize.x || j == regionSize.y) {
+        if (
+          i == radius ||
+          i == regionSize.x - radius ||
+          j == radius ||
+          j == regionSize.y - radius
+        ) {
+          continue;
         }
-        points.push({ x: i, y: j })
+        points.push({ x: i, y: j });
         outerPoints++;
       }
     }
@@ -168,29 +177,41 @@ export function generateBoundingPoints(
   // inner
   for (let j = radius; j <= regionSize.y - radius; j += radius) {
     for (let i = radius; i <= regionSize.x - radius; i += radius) {
-      if (i == radius || j == radius || i == regionSize.x - radius || j == regionSize.y - radius){
-        points.push({ x: i, y: j })
+      if (
+        i == radius ||
+        j == radius ||
+        i == regionSize.x - radius ||
+        j == regionSize.y - radius
+      ) {
+        points.push({ x: i, y: j });
         innerPoints++;
       }
     }
   }
-  
-  const out = new Float64Array(points.length * 2)
+
+  const out = new Float64Array(points.length * 2);
   for (let i = 0; i < points.length; i++) {
-    out[2 * i] = points[i].x
-    out[2 * i + 1] = points[i].y
+    out[2 * i] = points[i].x;
+    out[2 * i + 1] = points[i].y;
   }
-  
-  return out
+
+  return out;
 }
 
-export function generatePoints(regionSize: Vector2D, radius: number): Float64Array {
+export function generatePoints(
+  regionSize: Vector2D,
+  radius: number
+): Float64Array {
   const boundingPoints = generateBoundingPoints(regionSize, radius);
-  const poissonPoints = generatePoissonPoints({ x: regionSize.x - 4*radius, y: regionSize.y - 4*radius }, radius, 2*radius);
-  const out = new Float64Array(poissonPoints.length + boundingPoints.length)
+  const poissonPoints = generatePoissonPoints(
+    { x: regionSize.x - 4 * radius, y: regionSize.y - 4 * radius },
+    radius,
+    2 * radius
+  );
+  const out = new Float64Array(poissonPoints.length + boundingPoints.length);
 
-  out.set(poissonPoints)
-  out.set(boundingPoints, poissonPoints.length)
+  out.set(poissonPoints);
+  out.set(boundingPoints, poissonPoints.length);
 
-  return out
+  return out;
 }
