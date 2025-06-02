@@ -109,13 +109,13 @@ async function fetchMeshFromServer(size: MapSize): Promise<MeshData | null> {
   meshLoadingStates.set(size, 'loading');
 
   try {
-    console.log(`Fetching ${size} mesh from server...`);
+    console.log(`Fetching ${size} mesh from ${SERVER_BASE_URL}/api/mesh/${size}...`);
     console.time(`fetch-${size}`);
     
     const response = await fetch(`${SERVER_BASE_URL}/api/mesh/${size}`);
     
     if (!response.ok) {
-      throw new Error(`Failed to fetch ${size} mesh: ${response.status} ${response.statusText}`);
+      throw new Error(`❌ Failed to fetch ${size} mesh: ${response.status} ${response.statusText}`);
     }
     
     const data = await response.json();
@@ -157,7 +157,7 @@ async function preloadAllMeshes(): Promise<void> {
   
   // Don't wait for all to complete - they load in background
   Promise.all(fetchPromises).then(() => {
-    console.log('All meshes preloaded!');
+    console.log('All meshes preloaded!'); // TODO only log if successful!
   });
 }
 
