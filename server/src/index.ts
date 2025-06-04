@@ -3,7 +3,7 @@ import { createGame, fallback, getGame, health, joinGame, mesh, root, startGame 
 import { setupWebSocket } from "./websocket";
 
 // TODO move constants to a config
-export const PORT = process.env.PORT || 8080;
+export const PORT = process.env.PORT || 3000;
 export const ENDPOINTS = [
   "GET /api/mesh/small",
   "GET /api/mesh/medium",
@@ -56,13 +56,14 @@ const server = Bun.serve({
 });
 
 // Set up WebSocket server on separate port
-const io = setupWebSocket(server);
+const io = setupWebSocket(Number(PORT));
 
 // Make io available to routes that need it
 export { io };
 
-console.log(`Server running on port ${PORT}`);
+console.log(`Server running`);
 console.log('PORT environment variable:', process.env.PORT);
-console.log(`WebSocket server running on same port: ${PORT}`);
+console.log('Server will listen on:', PORT);
+console.log('WebSocket server will listen on:', PORT);
 console.log("\nAvailable endpoints:");
 ENDPOINTS.forEach((e) => console.log(`    ${e}`));

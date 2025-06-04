@@ -1150,11 +1150,12 @@ function initializeWebSocket() {
     socket.disconnect();
   }
   
-  // Connect to the same URL as your server (no port change needed)
-  socket = io(SERVER_BASE_URL, {
+  // FIXED: Use the same URL as your HTTP server (Railway only exposes one port)
+  const wsUrl = SERVER_BASE_URL; // Remove the port change logic
+  
+  socket = io(wsUrl, {
     transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
     timeout: 5000,
-    path: '/socket.io/' // Explicitly set the path
   });
   
   // Connection events
