@@ -1,7 +1,5 @@
-// TODO add safety checks to make sure that the client is being truthful with the terrain data
-
-// src/routes/games.ts
 import { CORS_HEADERS } from "..";
+import { broadcastPlayerJoined } from "../websocket";
 import pako from 'pako';
 import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -79,8 +77,7 @@ export async function createGame(req: Request) {
       createdAt: new Date().toISOString()
     };
 
-    // TODO: Store game state in database or memory
-    // TODO: redis??
+    // Store game state in memory and persist
     gameStates.set(gameId, gameState);
     await writeFile(`maps/${gameId}.state.json`, JSON.stringify(gameState, null, 2));
 
@@ -144,7 +141,6 @@ export async function joinGame(req: Request) {
 
     // If not in memory, try to load from file system
     if (!gameState) {
-      // This is a fallback - you might want to index by join code instead
       console.log(`Game with join code ${joinCode} not found in memory`);
       return new Response(JSON.stringify({ error: "Game not found" }), {
         status: 404,
@@ -182,6 +178,11 @@ export async function joinGame(req: Request) {
     await writeFile(`maps/${gameId}.state.json`, JSON.stringify(gameState, null, 2));
 
     console.log(`Player ${newPlayerName} joined game ${gameId} (${gameState.players.length} total players)`);
+
+    // Broadcast to other players in the game room
+    // Import io dynamically to avoid circular dependency (TODO -- what does this mean and why dynamic import?)
+    const { io } = await import('../index');
+    broadcastPlayerJoined(io, gameId!, gameState.players, newPlayerName);
 
     return new Response(
       JSON.stringify({
