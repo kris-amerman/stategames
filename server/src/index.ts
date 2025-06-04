@@ -1,5 +1,5 @@
 // src/index.ts - Updated with WebSocket support
-import { createGame, fallback, health, joinGame, mesh, root, startGame } from "./routes";
+import { createGame, fallback, getGame, health, joinGame, mesh, root, startGame } from "./routes";
 import { setupWebSocket } from "./websocket";
 
 // TODO move constants to a config
@@ -13,13 +13,14 @@ export const ENDPOINTS = [
   "POST /api/games",
   "POST /api/games/:joinCode/join",
   "POST /api/games/:gameId/start",
+  "GET /api/games/:gameId",
   `WebSocket :${WS_PORT}/socket.io/`,
   "GET /health",
 ];
 export const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Cell-Count, Content-Encoding",
+  "Access-Control-Allow-Headers": "Content-Type, X-Cell-Count, Content-Encoding, X-Map-Size",
 };
 
 /**
@@ -43,7 +44,12 @@ const server = Bun.serve({
 
     "/api/games/:gameId/start": {
       POST: async req => startGame(req)
+    },
+
+    "/api/games/:gameId": {
+      GET: async req => getGame(req)  // Single consolidated endpoint
     }
+    
   },
   async fetch(req) {
     return fallback(req);

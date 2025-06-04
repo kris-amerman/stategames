@@ -1,18 +1,17 @@
+// server/src/routes/games.ts - Updated with enhanced game state
 import { CORS_HEADERS } from "..";
 import { broadcastPlayerJoined } from "../websocket";
+import { GameService } from "../game-state/service";
+import type { MapSize } from "../game-state/types";
 import pako from 'pako';
-import { readFile, writeFile, mkdir } from 'fs/promises';
-import { existsSync, readdirSync } from 'fs';
-import { join } from 'path';
-
-// In-memory game state store (replace with database later)
-const gameStates = new Map<string, any>();
 
 export async function createGame(req: Request) {
   try {
-    // Get cell count from header
+    // Get cell count and map size from headers
     const cellCount = parseInt(req.headers.get("x-cell-count") || "0");
+    const mapSizeHeader = req.headers.get("x-map-size") as MapSize || "xl";
 
+    // Validate inputs
     if (!cellCount || cellCount <= 0) {
       return new Response(JSON.stringify({ error: "Invalid cell count" }), {
         status: 400,
@@ -23,22 +22,35 @@ export async function createGame(req: Request) {
       });
     }
 
-    // Read the binary data
+    const validMapSizes: MapSize[] = ["small", "medium", "large", "xl"];
+    if (!validMapSizes.includes(mapSizeHeader)) {
+      return new Response(JSON.stringify({ 
+        error: "Invalid map size",
+        validSizes: validMapSizes,
+        received: mapSizeHeader 
+      }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
+    // Read and validate terrain data
     const arrayBuffer = await req.arrayBuffer();
     let biomes: Uint8Array;
 
     // Check if data is compressed
     const contentEncoding = req.headers.get("content-encoding");
     if (contentEncoding === "gzip") {
-      // Decompress the data
       const compressedData = new Uint8Array(arrayBuffer);
       biomes = pako.ungzip(compressedData);
     } else {
-      // Use data as-is
       biomes = new Uint8Array(arrayBuffer);
     }
 
-    // Validate data
+    // Validate terrain data
     if (biomes.length !== cellCount) {
       return new Response(
         JSON.stringify({ 
@@ -57,39 +69,33 @@ export async function createGame(req: Request) {
     }
 
     // Generate game ID and join code
-    const gameId = generateGameId();
-    const joinCode = generateJoinCode();
+    const gameId = GameService.generateGameId();
+    const joinCode = GameService.generateJoinCode();
 
-    // Ensure maps directory exists
-    if (!existsSync('maps')) {
-      await mkdir('maps', { recursive: true });
-    }
-
-    // Persist terrain data
-    await writeFile(`maps/${gameId}.terrain`, biomes);
-
-    // Initialize game state
-    const gameState = {
+    // Create game state using the enhanced system
+    const gameState = await GameService.createGame(
       gameId,
       joinCode,
-      status: "waiting",
-      players: ["player1"],
+      mapSizeHeader,
       cellCount,
-      createdAt: new Date().toISOString()
-    };
+      "player1" // Creator is always player1
+    );
 
-    // Store game state in memory and persist
-    gameStates.set(gameId, gameState);
-    await writeFile(`maps/${gameId}.state.json`, JSON.stringify(gameState, null, 2));
+    // Save terrain data
+    await GameService.saveTerrainData(gameId, biomes);
 
-    console.log(`Created game ${gameId} with join code ${joinCode} (${cellCount} cells)`);
+    console.log(`Created game ${gameId} with join code ${joinCode} (${mapSizeHeader}, ${cellCount} cells)`);
 
     return new Response(
       JSON.stringify({
-        gameId,
-        joinCode,
+        gameId: gameState.gameId,
+        joinCode: gameState.joinCode,
         status: "created",
-        cellCount,
+        mapSize: gameState.mapSize,
+        cellCount: gameState.cellCount,
+        players: gameState.players,
+        currentPlayer: gameState.currentPlayer,
+        turnNumber: gameState.turnNumber,
       }),
       {
         status: 201,
@@ -127,50 +133,10 @@ export async function joinGame(req: Request) {
       });
     }
 
-    // Find game by join code
-    let gameState = null;
-    let gameId = null;
+    // Try to join the game using the service
+    const result = await GameService.joinGame(joinCode);
     
-    // Search through in-memory games first
-    for (const [id, state] of gameStates.entries()) {
-      if (state.joinCode === joinCode.toUpperCase()) {
-        gameState = state;
-        gameId = id;
-        break;
-      }
-    }
-
-    // If not in memory, search through filesystem
-    // TODO: Replace with proper RDBMS lookup when we migrate to database
-    if (!gameState) {
-      console.log(`Game with join code ${joinCode} not found in memory, searching filesystem...`);
-      
-      try {
-        if (existsSync('maps')) {
-          const files = readdirSync('maps').filter(f => f.endsWith('.state.json'));
-          
-          for (const file of files) {
-            const filePath = join('maps', file);
-            const fileContent = await readFile(filePath, 'utf-8');
-            const savedGameState = JSON.parse(fileContent);
-            
-            if (savedGameState.joinCode === joinCode.toUpperCase()) {
-              gameState = savedGameState;
-              gameId = savedGameState.gameId;
-              
-              // Load back into memory for future requests
-              gameStates.set(gameId, gameState);
-              console.log(`✅ Loaded game ${gameId} from filesystem into memory`);
-              break;
-            }
-          }
-        }
-      } catch (fsError) {
-        console.error('Error searching filesystem for games:', fsError);
-      }
-    }
-
-    if (!gameState) {
+    if (!result) {
       return new Response(JSON.stringify({ error: "Game not found" }), {
         status: 404,
         headers: {
@@ -180,48 +146,25 @@ export async function joinGame(req: Request) {
       });
     }
 
-    // Check if game is still waiting
-    if (gameState.status !== "waiting") {
-      return new Response(JSON.stringify({ 
-        error: "Game is no longer accepting players",
-        status: gameState.status 
-      }), {
-        status: 409, // Conflict
-        headers: {
-          "Content-Type": "application/json",
-          ...CORS_HEADERS,
-        },
-      });
-    }
+    const { gameState, playerName } = result;
 
-    // Generate new player name
-    const playerNumber = gameState.players.length + 1;
-    const newPlayerName = `player${playerNumber}`;
-
-    // Add player to game
-    gameState.players.push(newPlayerName);
-    gameState.updatedAt = new Date().toISOString();
-
-    // Update in memory and persist
-    gameStates.set(gameId!, gameState);
-    await writeFile(`maps/${gameId}.state.json`, JSON.stringify(gameState, null, 2));
-
-    console.log(`Player ${newPlayerName} joined game ${gameId} (${gameState.players.length} total players)`);
+    console.log(`Player ${playerName} joined game ${gameState.gameId} (${gameState.players.length} total players)`);
 
     // Broadcast to other players in the game room
-    // Dynamic import to avoid circular dependency - this happens because 
-    // routes/games.ts imports from index.ts, and index.ts imports from routes/games.ts
-    // TODO fix the import
     const { io } = await import('../index');
-    broadcastPlayerJoined(io, gameId!, gameState.players, newPlayerName);
+    broadcastPlayerJoined(io, gameState.gameId, gameState.players, playerName);
 
     return new Response(
       JSON.stringify({
         success: true,
-        gameId,
-        playerName: newPlayerName,
+        gameId: gameState.gameId,
+        playerName,
         players: gameState.players,
         status: gameState.status,
+        mapSize: gameState.mapSize,
+        cellCount: gameState.cellCount,
+        currentPlayer: gameState.currentPlayer,
+        turnNumber: gameState.turnNumber,
       }),
       {
         status: 200,
@@ -232,8 +175,21 @@ export async function joinGame(req: Request) {
       }
     );
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Join game error:", error);
+    
+    // Handle specific game service errors
+    if (error.message.includes("no longer accepting players") || 
+        error.message.includes("Failed to add player")) {
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 409, // Conflict
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
     return new Response(JSON.stringify({ error: "Internal server error" }), {
       status: 500,
       headers: {
@@ -260,8 +216,8 @@ export async function startGame(req: Request) {
       });
     }
 
-    // Find game in memory
-    const gameState = gameStates.get(gameId);
+    // Try to start the game using the service
+    const gameState = await GameService.startGame(gameId);
     
     if (!gameState) {
       return new Response(JSON.stringify({ error: "Game not found" }), {
@@ -273,60 +229,70 @@ export async function startGame(req: Request) {
       });
     }
 
-    // Check if game is in waiting state
-    if (gameState.status !== "waiting") {
-      return new Response(JSON.stringify({ 
-        error: "Game cannot be started",
-        currentStatus: gameState.status 
-      }), {
-        status: 409, // Conflict
-        headers: {
-          "Content-Type": "application/json",
-          ...CORS_HEADERS,
-        },
-      });
-    }
-
-    // Check if enough players (minimum 2)
-    if (gameState.players.length < 2) {
-      return new Response(JSON.stringify({ 
-        error: "Not enough players to start game",
-        currentPlayers: gameState.players.length,
-        minimumRequired: 2
-      }), {
-        status: 400,
-        headers: {
-          "Content-Type": "application/json",
-          ...CORS_HEADERS,
-        },
-      });
-    }
-
-    // Update game state to in_progress
-    gameState.status = "in_progress";
-    gameState.startedAt = new Date().toISOString();
-
-    // Update in memory and persist
-    gameStates.set(gameId, gameState);
-    await writeFile(`maps/${gameId}.state.json`, JSON.stringify(gameState, null, 2));
-
     console.log(`Game ${gameId} started with ${gameState.players.length} players`);
+
+    // Load terrain data for the WebSocket broadcast
+    const terrainData = await GameService.loadTerrainData(gameId);
+    
+    if (!terrainData) {
+      throw new Error('Terrain data not found');
+    }
 
     // Broadcast to all players in the game room via WebSocket
     const { io } = await import('../index');
+    
+    // Create territory summary for broadcast
+    const territoryStats = Array.from(gameState.playerCells.entries()).map(([playerId, cells]) => ({
+      playerId,
+      cellCount: cells.size,
+    }));
+
+    // Create detailed territory data for rendering
+    const territoryDataMapping: { [cellId: string]: string } = {};
+    for (const [playerId, cells] of gameState.playerCells.entries()) {
+      for (const cellId of cells) {
+        territoryDataMapping[cellId.toString()] = playerId;
+      }
+    }
+
+    // Convert terrain data to base64 for JSON transmission
+    const terrainBase64 = Buffer.from(terrainData).toString('base64');
+    
+    // Send complete game data in the WebSocket event
     io.to(gameId).emit('game_started', { 
-      gameId,
-      status: 'in_progress',
-      players: gameState.players 
+      gameId: gameState.gameId,
+      status: gameState.status,
+      players: gameState.players,
+      currentPlayer: gameState.currentPlayer,
+      turnNumber: gameState.turnNumber,
+      
+      // Map information
+      mapSize: gameState.mapSize,
+      cellCount: gameState.cellCount,
+      
+      // Complete terrain data
+      terrain: terrainBase64,
+      
+      // Territory information
+      territoryData: territoryDataMapping,
+      territoryStats,
+      
+      // Timestamps
+      startedAt: gameState.startedAt,
     });
 
     return new Response(
       JSON.stringify({
         success: true,
-        gameId,
-        status: "in_progress",
+        gameId: gameState.gameId,
+        status: gameState.status,
         players: gameState.players,
-        startedAt: gameState.startedAt
+        currentPlayer: gameState.currentPlayer,
+        turnNumber: gameState.turnNumber,
+        startedAt: gameState.startedAt,
+        mapSize: gameState.mapSize,
+        cellCount: gameState.cellCount,
+        territoryStats, // Include territory stats in response
       }),
       {
         status: 200,
@@ -337,8 +303,22 @@ export async function startGame(req: Request) {
       }
     );
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Start game error:", error);
+    
+    // Handle specific game service errors
+    if (error.message.includes("Game cannot be started") || 
+        error.message.includes("Not enough players") ||
+        error.message.includes("Failed to initialize game territories")) {
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
     return new Response(JSON.stringify({ error: "Internal server error" }), {
       status: 500,
       headers: {
@@ -349,11 +329,127 @@ export async function startGame(req: Request) {
   }
 }
 
-function generateGameId() {
-  return Math.random().toString(36).substring(2, 15);
-}
+export async function getGame(req: Request) {
+  try {
+    // Extract game ID from URL path
+    const url = new URL(req.url);
+    const gameId = url.pathname.split('/')[3]; // /api/games/:gameId
+    
+    if (!gameId) {
+      return new Response(JSON.stringify({ error: "Game ID required" }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      });
+    }
 
-function generateJoinCode() {
-  // Generate a 6-character alphanumeric join code
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
+    // Check if terrain data is requested
+    const includeTerrain = url.searchParams.get('include') === 'terrain';
+
+    // Get game state
+    const gameState = await GameService.getGameState(gameId);
+    
+    if (!gameState) {
+      return new Response(JSON.stringify({ error: "Game not found" }), {
+        status: 404,
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
+    // Create territory mapping
+    const territoryData: { [cellId: string]: string } = {};
+    for (const [playerId, cells] of gameState.playerCells.entries()) {
+      for (const cellId of cells) {
+        territoryData[cellId.toString()] = playerId;
+      }
+    }
+
+    // Create territory summary
+    const territoryStats = Array.from(gameState.playerCells.entries()).map(([playerId, cells]) => ({
+      playerId,
+      cellCount: cells.size,
+    }));
+
+    // Create entity summary
+    const entityStats = Array.from(gameState.playerEntities.entries()).map(([playerId, entityIds]) => ({
+      playerId,
+      entityCount: entityIds.size,
+    }));
+
+    // Base response data
+    const responseData: any = {
+      gameId: gameState.gameId,
+      joinCode: gameState.joinCode,
+      status: gameState.status,
+      createdAt: gameState.createdAt,
+      startedAt: gameState.startedAt,
+      mapSize: gameState.mapSize,
+      cellCount: gameState.cellCount,
+      players: gameState.players,
+      currentPlayer: gameState.currentPlayer,
+      turnNumber: gameState.turnNumber,
+      territoryData,
+      territoryStats,
+      entityStats,
+    };
+
+    // Include terrain data if requested and game is in progress
+    if (includeTerrain) {
+      if (gameState.status !== "in_progress") {
+        return new Response(JSON.stringify({ 
+          error: "Terrain data only available for games in progress",
+          status: gameState.status 
+        }), {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json",
+            ...CORS_HEADERS,
+          },
+        });
+      }
+
+      // Load terrain data
+      const terrainData = await GameService.loadTerrainData(gameId);
+      
+      if (!terrainData) {
+        return new Response(JSON.stringify({ error: "Terrain data not found" }), {
+          status: 404,
+          headers: {
+            "Content-Type": "application/json",
+            ...CORS_HEADERS,
+          },
+        });
+      }
+
+      // Convert terrain data to base64 for JSON transmission
+      const terrainBase64 = Buffer.from(terrainData).toString('base64');
+      responseData.terrain = terrainBase64;
+    }
+
+    return new Response(
+      JSON.stringify(responseData),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      }
+    );
+
+  } catch (error) {
+    console.error("Get game error:", error);
+    return new Response(JSON.stringify({ error: "Internal server error" }), {
+      status: 500,
+      headers: {
+        "Content-Type": "application/json",
+        ...CORS_HEADERS,
+      },
+    });
+  }
 }

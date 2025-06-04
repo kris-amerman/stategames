@@ -6,6 +6,9 @@ import pako from 'pako';
 
 import io from 'socket.io-client';
 
+let currentTerritoryData: { [cellId: string]: string } = {};
+let currentGameTerrain: Uint8Array | null = null;
+
 // WebSocket connection and game state
 let socket: SocketIOClient.Socket | null = null;
 let currentGameId: string | null = null;
@@ -686,6 +689,7 @@ document.getElementById("createGame")!.addEventListener("click", async () => {
       headers: {
         'Content-Type': 'application/octet-stream',
         'X-Cell-Count': currentCellCount.toString(),
+        'X-Map-Size': currentMapSize,
         'Content-Encoding': 'gzip'
       },
       body: compressed
@@ -1200,17 +1204,30 @@ function setupGameEventHandlers() {
   });
   
   // Handle game start
-  socket.on('game_started', (data: { gameId: string }) => {
-    console.log('Game started:', data);
+  socket.on('game_started', (data: { 
+    gameId: string, 
+    status: string, 
+    players: string[], 
+    currentPlayer: string,
+    turnNumber: number,
+    mapSize: string,
+    cellCount: number,
+    terrain: string,
+    territoryData: { [cellId: string]: string },
+    territoryStats: any[],
+    startedAt: string
+  }) => {
+    console.log('Game started with complete data:', data);
     
     if (data.gameId === currentGameId) {
       updateGameStatus('in_progress');
-      showGameNotification('Game has started!', 'success');
+      showGameNotification('Game has started! Loading map...', 'success');
 
       const waitingForStartDiv = document.getElementById("waitingForStart");
-  
       if (waitingForStartDiv) waitingForStartDiv.style.display = "none";
-      // TODO: Transition to game view
+      
+      // Process all the game data received in the WebSocket event
+      processGameData(data);
     }
   });
   
@@ -1349,3 +1366,178 @@ window.addEventListener('beforeunload', () => {
     socket.disconnect();
   }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+ * Fetches complete game data (terrain + territories) from server
+ * Used for reconnections and page refreshes
+ */
+async function fetchGameData(gameId: string): Promise<void> {
+  try {
+    console.log(`Fetching game data for game ${gameId}...`);
+    
+    // Use the single endpoint with terrain parameter
+    const response = await fetch(`${SERVER_BASE_URL}/api/games/${gameId}?include=terrain`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch game data: ${response.status}`);
+    }
+    
+    const gameData = await response.json();
+    console.log('Received game data from HTTP:', gameData);
+    
+    // Process the received data
+    processGameData(gameData);
+    
+  } catch (error: any) {
+    console.error('Failed to fetch game data:', error);
+    showError(`Failed to load game data: ${error.message}`);
+  }
+}
+
+/**
+ * Processes game data received from either WebSocket or HTTP
+ */
+function processGameData(gameData: any): void {
+  try {
+    // Store game information
+    currentGameId = gameData.gameId;
+    currentTerritoryData = gameData.territoryData;
+    
+    // Decode terrain data from base64
+    const terrainBuffer = Uint8Array.from(atob(gameData.terrain), c => c.charCodeAt(0));
+    currentGameTerrain = terrainBuffer;
+    
+    // Verify terrain data matches expected size
+    if (terrainBuffer.length !== gameData.cellCount) {
+      throw new Error(`Terrain data size mismatch: expected ${gameData.cellCount}, got ${terrainBuffer.length}`);
+    }
+    
+    console.log(`✅ Game data processed: ${gameData.cellCount} cells, ${Object.keys(gameData.territoryData).length} owned cells`);
+    
+    // Update the current biomes with the game terrain
+    currentCellBiomes = terrainBuffer;
+    currentCellCount = gameData.cellCount;
+    
+    // Update the map size to match the game
+    currentMapSize = gameData.mapSize as MapSize;
+    
+    // Load the appropriate mesh if we don't have it
+    if (!meshData || meshData.cellOffsets.length - 1 !== gameData.cellCount) {
+      console.log(`Loading ${gameData.mapSize} mesh for game...`);
+      loadOrGetMesh(gameData.mapSize as MapSize).then(() => {
+        renderGameState();
+      });
+    } else {
+      // Render immediately if we have the right mesh
+      renderGameState();
+    }
+    
+  } catch (error: any) {
+    console.error('Failed to process game data:', error);
+    showError(`Failed to process game data: ${error.message}`);
+  }
+}
+
+/**
+ * Renders the current game state with terrain and territories
+ */
+function renderGameState(): void {
+  if (!meshData || !currentGameTerrain) {
+    console.warn('Cannot render game state: missing mesh data or terrain');
+    return;
+  }
+  
+  console.time('renderGameState');
+  
+  // Use the game terrain instead of generated terrain
+  const cellBiomes = currentGameTerrain;
+  
+  // Draw the base terrain
+  drawCells(
+    WIDTH,
+    HEIGHT,
+    ctx, 
+    meshData.allVertices, 
+    meshData.cellOffsets, 
+    meshData.cellVertexIndices, 
+    cellBiomes,
+    meshData.cellNeighbors,
+    biomeConfig.smoothColors
+  );
+  
+  // Overlay territory ownership
+  drawTerritoryOverlay();
+  
+  console.timeEnd('renderGameState');
+}
+
+/**
+ * Draws territory ownership overlay on the map
+ */
+function drawTerritoryOverlay(): void {
+  if (!meshData || Object.keys(currentTerritoryData).length === 0) {
+    return;
+  }
+  
+  // Territory colors for each player
+  const territoryColors: { [playerId: string]: string } = {
+    'player1': 'rgba(255, 0, 0, 0.3)',   // Red
+    'player2': 'rgba(0, 0, 255, 0.3)',   // Blue
+    'player3': 'rgba(0, 255, 0, 0.3)',   // Green
+    'player4': 'rgba(255, 255, 0, 0.3)', // Yellow
+    'player5': 'rgba(255, 0, 255, 0.3)', // Magenta
+    'player6': 'rgba(0, 255, 255, 0.3)', // Cyan
+  };
+  
+  // Draw territory ownership
+  for (const [cellIdStr, playerId] of Object.entries(currentTerritoryData)) {
+    const cellId = parseInt(cellIdStr);
+    const color = territoryColors[playerId] || 'rgba(128, 128, 128, 0.3)';
+    
+    // Get cell boundaries
+    const start = meshData.cellOffsets[cellId];
+    const end = meshData.cellOffsets[cellId + 1];
+    
+    if (start >= end) continue;
+    
+    // Draw territory overlay
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    const v0 = meshData.cellVertexIndices[start];
+    ctx.moveTo(meshData.allVertices[v0 * 2], meshData.allVertices[v0 * 2 + 1]);
+    
+    for (let j = start + 1; j < end; j++) {
+      const vi = meshData.cellVertexIndices[j];
+      ctx.lineTo(meshData.allVertices[vi * 2], meshData.allVertices[vi * 2 + 1]);
+    }
+    
+    ctx.closePath();
+    ctx.fill();
+    
+    // Draw territory border
+    ctx.strokeStyle = territoryColors[playerId]?.replace('0.3', '0.8') || 'rgba(128, 128, 128, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
+// Add a function to refresh game data (useful for reconnecting players)
+async function refreshGameData(): Promise<void> {
+  if (currentGameId) {
+    await fetchGameData(currentGameId);
+  }
+}
