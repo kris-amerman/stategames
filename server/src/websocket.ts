@@ -1,18 +1,19 @@
-// src/websocket.ts - WebSocket event handlers
+// src/websocket.ts - WebSocket event handlers updated for Bun server
 import { Server as SocketIOServer } from 'socket.io';
-import { CORS_HEADERS } from './index';
 
 // In-memory store for active game rooms (replace with Redis later)
 const gameRooms = new Map<string, Set<string>>(); // gameId -> Set of socketIds
 const socketToGame = new Map<string, { gameId: string, playerName: string }>(); // socketId -> game info
 
-export function setupWebSocket(port: number): SocketIOServer {
-  const io = new SocketIOServer(port, {
+export function setupWebSocket(server: any): SocketIOServer {
+  // For Bun, we attach Socket.IO to the existing HTTP server
+  const io = new SocketIOServer(server, {
     cors: {
       origin: "*", // Match your CORS_HEADERS
       methods: ["GET", "POST"]
     },
-    transports: ['websocket', 'polling']
+    transports: ['websocket', 'polling'],
+    path: '/socket.io/'
   });
 
   io.on('connection', (socket) => {
