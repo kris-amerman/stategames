@@ -1059,8 +1059,42 @@ function setupCopyJoinCodeButton(joinCode: string) {
 }
 
 function setupStartGameButton() {
-  document.getElementById("startGame")!.addEventListener("click", () => {
-    startGameViaWebSocket();
+  document.getElementById("startGame")!.addEventListener("click", async () => {
+    if (!currentGameId) {
+      console.error('No current game ID');
+      return;
+    }
+
+    const startButton = document.getElementById("startGame") as HTMLButtonElement;
+    startButton.disabled = true;
+    startButton.textContent = "Starting...";
+
+    try {
+      const response = await fetch(`${SERVER_BASE_URL}/api/games/${currentGameId}/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+      
+      const gameData = await response.json();
+      console.log('Game started successfully:', gameData);
+      
+      // The WebSocket will handle the UI update via 'game_started' event
+      
+    } catch (error: any) {
+      console.error('Failed to start game:', error);
+      showGameNotification(error.message || 'Failed to start game', 'error');
+      
+      // Re-enable button on error
+      startButton.disabled = false;
+      startButton.textContent = "Start Game";
+    }
   });
 }
 
@@ -1224,20 +1258,6 @@ function leaveGameRoom() {
   currentGameId = null;
   currentPlayerName = null;
   isGameCreator = false;
-}
-
-// Send start game command (creator only)
-function startGameViaWebSocket() {
-  if (!socket || !currentGameId || !isGameCreator) {
-    console.error('Cannot start game - not creator or not connected');
-    return;
-  }
-  
-  socket.emit('start_game', {
-    gameId: currentGameId
-  });
-  
-  console.log('Sent start game command');
 }
 
 // Utility function to show game notifications

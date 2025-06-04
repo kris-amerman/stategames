@@ -58,25 +58,6 @@ export function setupWebSocket(port: number): SocketIOServer {
       socketToGame.delete(socket.id);
     });
 
-    // Handle start game command (creator only)
-    socket.on('start_game', (data: { gameId: string }) => {
-      const { gameId } = data;
-      const socketInfo = socketToGame.get(socket.id);
-      
-      if (!socketInfo || socketInfo.gameId !== gameId) {
-        socket.emit('game_error', { error: 'Not connected to this game' });
-        return;
-      }
-      
-      console.log(`Starting game ${gameId}`);
-      
-      // Broadcast to all players in the game
-      io.to(gameId).emit('game_started', { gameId });
-      
-      // TODO: Update game state in database/memory
-      // updateGameStatus(gameId, 'in_progress');
-    });
-
     // Handle disconnect
     socket.on('disconnect', (reason) => {
       console.log(`WebSocket client disconnected: ${socket.id} (${reason})`);

@@ -1,8 +1,9 @@
 import { CORS_HEADERS } from "..";
 import { broadcastPlayerJoined } from "../websocket";
 import pako from 'pako';
-import { writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { readFile, writeFile, mkdir } from 'fs/promises';
+import { existsSync, readdirSync } from 'fs';
+import { join } from 'path';
 
 // In-memory game state store (replace with database later)
 const gameStates = new Map<string, any>();
@@ -130,7 +131,7 @@ export async function joinGame(req: Request) {
     let gameState = null;
     let gameId = null;
     
-    // Search through in-memory games
+    // Search through in-memory games first
     for (const [id, state] of gameStates.entries()) {
       if (state.joinCode === joinCode.toUpperCase()) {
         gameState = state;
@@ -139,9 +140,37 @@ export async function joinGame(req: Request) {
       }
     }
 
-    // If not in memory, try to load from file system
+    // If not in memory, search through filesystem
+    // TODO: Replace with proper RDBMS lookup when we migrate to database
     if (!gameState) {
-      console.log(`Game with join code ${joinCode} not found in memory`);
+      console.log(`Game with join code ${joinCode} not found in memory, searching filesystem...`);
+      
+      try {
+        if (existsSync('maps')) {
+          const files = readdirSync('maps').filter(f => f.endsWith('.state.json'));
+          
+          for (const file of files) {
+            const filePath = join('maps', file);
+            const fileContent = await readFile(filePath, 'utf-8');
+            const savedGameState = JSON.parse(fileContent);
+            
+            if (savedGameState.joinCode === joinCode.toUpperCase()) {
+              gameState = savedGameState;
+              gameId = savedGameState.gameId;
+              
+              // Load back into memory for future requests
+              gameStates.set(gameId, gameState);
+              console.log(`✅ Loaded game ${gameId} from filesystem into memory`);
+              break;
+            }
+          }
+        }
+      } catch (fsError) {
+        console.error('Error searching filesystem for games:', fsError);
+      }
+    }
+
+    if (!gameState) {
       return new Response(JSON.stringify({ error: "Game not found" }), {
         status: 404,
         headers: {
@@ -180,7 +209,9 @@ export async function joinGame(req: Request) {
     console.log(`Player ${newPlayerName} joined game ${gameId} (${gameState.players.length} total players)`);
 
     // Broadcast to other players in the game room
-    // Import io dynamically to avoid circular dependency (TODO -- what does this mean and why dynamic import?)
+    // Dynamic import to avoid circular dependency - this happens because 
+    // routes/games.ts imports from index.ts, and index.ts imports from routes/games.ts
+    // TODO fix the import
     const { io } = await import('../index');
     broadcastPlayerJoined(io, gameId!, gameState.players, newPlayerName);
 
@@ -203,6 +234,111 @@ export async function joinGame(req: Request) {
 
   } catch (error) {
     console.error("Join game error:", error);
+    return new Response(JSON.stringify({ error: "Internal server error" }), {
+      status: 500,
+      headers: {
+        "Content-Type": "application/json",
+        ...CORS_HEADERS,
+      },
+    });
+  }
+}
+
+export async function startGame(req: Request) {
+  try {
+    // Extract game ID from URL path
+    const url = new URL(req.url);
+    const gameId = url.pathname.split('/')[3]; // /api/games/:gameId/start
+    
+    if (!gameId) {
+      return new Response(JSON.stringify({ error: "Game ID required" }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
+    // Find game in memory
+    const gameState = gameStates.get(gameId);
+    
+    if (!gameState) {
+      return new Response(JSON.stringify({ error: "Game not found" }), {
+        status: 404,
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
+    // Check if game is in waiting state
+    if (gameState.status !== "waiting") {
+      return new Response(JSON.stringify({ 
+        error: "Game cannot be started",
+        currentStatus: gameState.status 
+      }), {
+        status: 409, // Conflict
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
+    // Check if enough players (minimum 2)
+    if (gameState.players.length < 2) {
+      return new Response(JSON.stringify({ 
+        error: "Not enough players to start game",
+        currentPlayers: gameState.players.length,
+        minimumRequired: 2
+      }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
+    // Update game state to in_progress
+    gameState.status = "in_progress";
+    gameState.startedAt = new Date().toISOString();
+
+    // Update in memory and persist
+    gameStates.set(gameId, gameState);
+    await writeFile(`maps/${gameId}.state.json`, JSON.stringify(gameState, null, 2));
+
+    console.log(`Game ${gameId} started with ${gameState.players.length} players`);
+
+    // Broadcast to all players in the game room via WebSocket
+    const { io } = await import('../index');
+    io.to(gameId).emit('game_started', { 
+      gameId,
+      status: 'in_progress',
+      players: gameState.players 
+    });
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        gameId,
+        status: "in_progress",
+        players: gameState.players,
+        startedAt: gameState.startedAt
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      }
+    );
+
+  } catch (error) {
+    console.error("Start game error:", error);
     return new Response(JSON.stringify({ error: "Internal server error" }), {
       status: 500,
       headers: {

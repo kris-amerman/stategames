@@ -1,5 +1,5 @@
 // src/index.ts - Updated with WebSocket support
-import { createGame, fallback, health, joinGame, mesh, root } from "./routes";
+import { createGame, fallback, health, joinGame, mesh, root, startGame } from "./routes";
 import { setupWebSocket } from "./websocket";
 
 // TODO move constants to a config
@@ -12,6 +12,7 @@ export const ENDPOINTS = [
   "GET /api/mesh/xl",
   "POST /api/games",
   "POST /api/games/:joinCode/join",
+  "POST /api/games/:gameId/start",
   `WebSocket :${WS_PORT}/socket.io/`,
   "GET /health",
 ];
@@ -38,6 +39,10 @@ const server = Bun.serve({
 
     "/api/games/:joinCode/join": {
       POST: async req => joinGame(req)
+    },
+
+    "/api/games/:gameId/start": {
+      POST: async req => startGame(req)
     }
   },
   async fetch(req) {
