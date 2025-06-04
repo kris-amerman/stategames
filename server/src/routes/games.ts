@@ -1,6 +1,6 @@
-// server/src/routes/games.ts - Updated with enhanced game state
+// server/src/routes/games.ts - Updated for Bun WebSocket
 import { CORS_HEADERS } from "..";
-import { broadcastPlayerJoined } from "../websocket";
+import { broadcastPlayerJoined, broadcastGameStarted } from "../index";
 import { GameService } from "../game-state/service";
 import type { MapSize } from "../game-state/types";
 import pako from 'pako';
@@ -151,8 +151,7 @@ export async function joinGame(req: Request) {
     console.log(`Player ${playerName} joined game ${gameState.gameId} (${gameState.players.length} total players)`);
 
     // Broadcast to other players in the game room
-    const { io } = await import('../index');
-    broadcastPlayerJoined(io, gameState.gameId, gameState.players, playerName);
+    broadcastPlayerJoined(gameState.gameId, gameState.players, playerName);
 
     return new Response(
       JSON.stringify({
@@ -238,9 +237,6 @@ export async function startGame(req: Request) {
       throw new Error('Terrain data not found');
     }
 
-    // Broadcast to all players in the game room via WebSocket
-    const { io } = await import('../index');
-    
     // Create territory summary for broadcast
     const territoryStats = Array.from(gameState.playerCells.entries()).map(([playerId, cells]) => ({
       playerId,
@@ -258,8 +254,8 @@ export async function startGame(req: Request) {
     // Convert terrain data to base64 for JSON transmission
     const terrainBase64 = Buffer.from(terrainData).toString('base64');
     
-    // Send complete game data in the WebSocket event
-    io.to(gameId).emit('game_started', { 
+    // Send complete game data via WebSocket
+    const gameData = { 
       gameId: gameState.gameId,
       status: gameState.status,
       players: gameState.players,
@@ -279,7 +275,9 @@ export async function startGame(req: Request) {
       
       // Timestamps
       startedAt: gameState.startedAt,
-    });
+    };
+    
+    broadcastGameStarted(gameId, gameData);
 
     return new Response(
       JSON.stringify({
