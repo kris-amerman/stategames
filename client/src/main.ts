@@ -10,7 +10,7 @@ let currentTerritoryData: { [cellId: string]: string } = {};
 let currentGameTerrain: Uint8Array | null = null;
 
 // WebSocket connection and game state
-let socket: SocketIOClient.Socket | null = null;
+let socket: WebSocket | null = null;
 let currentGameId: string | null = null;
 let currentPlayerName: string | null = null;
 let isGameCreator: boolean = false;
@@ -1147,117 +1147,128 @@ function updatePlayersList(players: string[], currentPlayerName?: string) {
 // Initialize WebSocket connection
 function initializeWebSocket() {
   if (socket) {
-    socket.disconnect();
+    socket.close();
   }
   
-  // Handle different URLs for development vs production
-  let wsUrl: string;
-
-  if (SERVER_BASE_URL.includes('localhost')) {
-    // Development: use different port
-    wsUrl = SERVER_BASE_URL.replace(':3000', ':3001');
-  } else {
-    // Production (Railway): use same URL/port
-    wsUrl = SERVER_BASE_URL;
-  }
+  // Convert HTTP URL to WebSocket URL
+  const wsUrl = SERVER_BASE_URL.replace('http://', 'ws://').replace('https://', 'wss://') + '/ws';
 
   console.log(`Connecting to WebSocket at: ${wsUrl}`);
   
-  socket = io(wsUrl, {
-    transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
-    timeout: 5000,
-  });
+  socket = new WebSocket(wsUrl);
   
   // Connection events
-  socket.on('connect', () => {
-    if (socket) {
-      console.log('Connected to game server:', socket.id);
-    }
-  });
+  socket.onopen = () => {
+    console.log('Connected to game server');
+  };
   
-  socket.on('disconnect', (reason: string) => {
-    console.log('Disconnected from game server:', reason);
-  });
+  socket.onclose = (event) => {
+    console.log('Disconnected from game server:', event.code, event.reason);
+  };
   
-  socket.on('connect_error', (error: any) => {
+  socket.onerror = (error) => {
     console.error('WebSocket connection error:', error);
-  });
+  };
   
-  // Game-specific events
-  setupGameEventHandlers();
+  socket.onmessage = (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      handleWebSocketMessage(message);
+    } catch (error) {
+      console.error('Error parsing WebSocket message:', error);
+    }
+  };
 }
 
-// Set up handlers for game-related WebSocket events
-function setupGameEventHandlers() {
-  if (!socket) return;
+// Handle incoming WebSocket messages
+function handleWebSocketMessage(message: { event: string, data: any }) {
+  const { event, data } = message;
   
-  // Handle player joining
-  socket.on('player_joined', (data: { gameId: string, players: string[], newPlayer: string }) => {
-    console.log('Player joined:', data);
-    
-    if (data.gameId === currentGameId) {
-      // Update the player list in real-time
-      updatePlayersList(data.players, currentPlayerName || undefined);
+  switch (event) {
+    case 'player_joined':
+      handlePlayerJoined(data);
+      break;
       
-      // Show notification for new player
-      showGameNotification(`${data.newPlayer} joined the game!`, 'success');
-    }
-  });
-  
-  // Handle game state updates
-  socket.on('game_state_update', (data: { gameId: string, status: string, players: string[] }) => {
-    console.log('Game state update:', data);
-    
-    if (data.gameId === currentGameId) {
-      updateGameStatus(data.status);
-      updatePlayersList(data.players, currentPlayerName || undefined);
-    }
-  });
-  
-  // Handle game start
-  socket.on('game_started', (data: { 
-    gameId: string, 
-    status: string, 
-    players: string[], 
-    currentPlayer: string,
-    turnNumber: number,
-    mapSize: string,
-    cellCount: number,
-    terrain: string,
-    territoryData: { [cellId: string]: string },
-    territoryStats: any[],
-    startedAt: string
-  }) => {
-    console.log('Game started with complete data:', data);
-    
-    if (data.gameId === currentGameId) {
-      updateGameStatus('in_progress');
-      showGameNotification('Game has started! Loading map...', 'success');
-
-      const startButton = document.getElementById("startGame") as HTMLButtonElement;
-      if (startButton) startButton.remove();
-
-      const waitingForStartDiv = document.getElementById("waitingForStart");
-      if (waitingForStartDiv) waitingForStartDiv.style.display = "none";
+    case 'game_state_update':
+      handleGameStateUpdate(data);
+      break;
       
-      // Process all the game data received in the WebSocket event
-      processGameData(data);
-    }
-  });
+    case 'game_started':
+      handleGameStarted(data);
+      break;
+      
+    case 'game_error':
+      handleGameError(data);
+      break;
+      
+    default:
+      console.log(`Unknown WebSocket event: ${event}`);
+  }
+}
+
+// Send WebSocket message
+function sendWebSocketMessage(event: string, data: any) {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ event, data }));
+  } else {
+    console.error('WebSocket not connected');
+  }
+}
+
+// Handle player joining
+function handlePlayerJoined(data: { gameId: string, players: string[], newPlayer: string }) {
+  console.log('Player joined:', data);
   
-  // Handle errors
-  socket.on('game_error', (data: { error: string, gameId?: string }) => {
-    console.error('Game error:', data);
+  if (data.gameId === currentGameId) {
+    // Update the player list in real-time
+    updatePlayersList(data.players, currentPlayerName || undefined);
     
-    if (!data.gameId || data.gameId === currentGameId) {
-      showGameNotification(data.error, 'error');
-    }
-  });
+    // Show notification for new player
+    showGameNotification(`${data.newPlayer} joined the game!`, 'success');
+  }
+}
+
+// Handle game state updates
+function handleGameStateUpdate(data: { gameId: string, status: string, players: string[] }) {
+  console.log('Game state update:', data);
+  
+  if (data.gameId === currentGameId) {
+    updateGameStatus(data.status);
+    updatePlayersList(data.players, currentPlayerName || undefined);
+  }
+}
+
+// Handle game start
+function handleGameStarted(data: any) {
+  console.log('Game started with complete data:', data);
+  
+  if (data.gameId === currentGameId) {
+    updateGameStatus('in_progress');
+    showGameNotification('Game has started! Loading map...', 'success');
+
+    const startButton = document.getElementById("startGame") as HTMLButtonElement;
+    if (startButton) startButton.remove();
+
+    const waitingForStartDiv = document.getElementById("waitingForStart");
+    if (waitingForStartDiv) waitingForStartDiv.style.display = "none";
+    
+    // Process all the game data received in the WebSocket event
+    processGameData(data);
+  }
+}
+
+// Handle errors
+function handleGameError(data: { error: string, gameId?: string }) {
+  console.error('Game error:', data);
+  
+  if (!data.gameId || data.gameId === currentGameId) {
+    showGameNotification(data.error, 'error');
+  }
 }
 
 // Join a game room via WebSocket
 function joinGameRoom(gameId: string, playerName: string, creator: boolean = false) {
-  if (!socket) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
     console.error('WebSocket not connected');
     return;
   }
@@ -1266,7 +1277,7 @@ function joinGameRoom(gameId: string, playerName: string, creator: boolean = fal
   currentPlayerName = playerName;
   isGameCreator = creator;
   
-  socket.emit('join_game_room', {
+  sendWebSocketMessage('join_game_room', {
     gameId: gameId,
     playerName: playerName,
     isCreator: creator
@@ -1279,7 +1290,7 @@ function joinGameRoom(gameId: string, playerName: string, creator: boolean = fal
 function leaveGameRoom() {
   if (!socket || !currentGameId) return;
   
-  socket.emit('leave_game_room', {
+  sendWebSocketMessage('leave_game_room', {
     gameId: currentGameId,
     playerName: currentPlayerName
   });
@@ -1290,6 +1301,26 @@ function leaveGameRoom() {
   currentPlayerName = null;
   isGameCreator = false;
 }
+
+// Initialize WebSocket when the page loads
+document.addEventListener('DOMContentLoaded', () => {
+  initializeWebSocket();
+});
+
+// Clean up WebSocket connection when leaving
+window.addEventListener('beforeunload', () => {
+  leaveGameRoom();
+  if (socket) {
+    socket.close();
+  }
+});
+
+
+
+
+
+
+
 
 // Utility function to show game notifications
 function showGameNotification(message: string, type: 'success' | 'warning' | 'error' = 'success') {
@@ -1367,19 +1398,6 @@ function updateGameStatus(status: string) {
       statusElement.style.color = '#FFA500';
   }
 }
-
-// Initialize WebSocket when the page loads
-document.addEventListener('DOMContentLoaded', () => {
-  initializeWebSocket();
-});
-
-// Clean up WebSocket connection when leaving
-window.addEventListener('beforeunload', () => {
-  leaveGameRoom();
-  if (socket) {
-    socket.disconnect();
-  }
-});
 
 
 
