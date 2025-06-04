@@ -1150,8 +1150,18 @@ function initializeWebSocket() {
     socket.disconnect();
   }
   
-  // FIXED: Use the same URL as your HTTP server (Railway only exposes one port)
-  const wsUrl = SERVER_BASE_URL; // Remove the port change logic
+  // Handle different URLs for development vs production
+  let wsUrl: string;
+
+  if (SERVER_BASE_URL.includes('localhost')) {
+    // Development: use different port
+    wsUrl = SERVER_BASE_URL.replace(':3000', ':3001');
+  } else {
+    // Production (Railway): use same URL/port
+    wsUrl = SERVER_BASE_URL;
+  }
+
+  console.log(`Connecting to WebSocket at: ${wsUrl}`);
   
   socket = io(wsUrl, {
     transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
