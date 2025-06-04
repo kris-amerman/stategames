@@ -1223,6 +1223,9 @@ function setupGameEventHandlers() {
       updateGameStatus('in_progress');
       showGameNotification('Game has started! Loading map...', 'success');
 
+      const startButton = document.getElementById("startGame") as HTMLButtonElement;
+      if (startButton) startButton.remove();
+
       const waitingForStartDiv = document.getElementById("waitingForStart");
       if (waitingForStartDiv) waitingForStartDiv.style.display = "none";
       
