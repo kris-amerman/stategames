@@ -1150,11 +1150,11 @@ function initializeWebSocket() {
     socket.disconnect();
   }
   
-  // Connect to WebSocket port (3001 by default)
-  const wsUrl = SERVER_BASE_URL.replace(':3000', ':3001'); // or use a separate WS_BASE_URL
-  socket = io(wsUrl, {
+  // Connect to the same URL as your server (no port change needed)
+  socket = io(SERVER_BASE_URL, {
     transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
     timeout: 5000,
+    path: '/socket.io/' // Explicitly set the path
   });
   
   // Connection events
