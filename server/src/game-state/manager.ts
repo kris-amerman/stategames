@@ -31,17 +31,19 @@ export class GameStateManager {
       cellCount,
       
       players,
-      currentPlayer: players[0],
+      currentPlayer: players[0], // First player starts
       turnNumber: 1,
       
+      // Initialize empty ownership maps
       cellOwnership: new Map(),
       playerCells: new Map(players.map(p => [p, new Set()])),
       
+      // Initialize empty entity tracking
       entities: new Map(),
       cellEntities: new Map(),
       playerEntities: new Map(players.map(p => [p, new Set()])),
       entitiesByType: new Map(),
-      nextEntityId: "1", // Start with string "1"
+      nextEntityId: 1,
     };
   }
 
@@ -62,13 +64,18 @@ export class GameStateManager {
       currentPlayer: gameState.currentPlayer,
       turnNumber: gameState.turnNumber,
       
-      cellOwnership: Object.fromEntries(gameState.cellOwnership),
+      // Convert Map keys to strings for JSON compatibility
+      cellOwnership: Object.fromEntries(
+        Array.from(gameState.cellOwnership.entries()).map(([k, v]) => [k.toString(), v])
+      ),
       playerCells: Object.fromEntries(
         Array.from(gameState.playerCells.entries()).map(([k, v]) => [k, Array.from(v)])
       ),
-      entities: Object.fromEntries(gameState.entities),
+      entities: Object.fromEntries(
+        Array.from(gameState.entities.entries()).map(([k, v]) => [k.toString(), v])
+      ),
       cellEntities: Object.fromEntries(
-        Array.from(gameState.cellEntities.entries()).map(([k, v]) => [k, Array.from(v)])
+        Array.from(gameState.cellEntities.entries()).map(([k, v]) => [k.toString(), Array.from(v)])
       ),
       playerEntities: Object.fromEntries(
         Array.from(gameState.playerEntities.entries()).map(([k, v]) => [k, Array.from(v)])
@@ -76,7 +83,7 @@ export class GameStateManager {
       entitiesByType: Object.fromEntries(
         Array.from(gameState.entitiesByType.entries()).map(([k, v]) => [k, Array.from(v)])
       ),
-      nextEntityId: gameState.nextEntityId, // String to string
+      nextEntityId: gameState.nextEntityId,
     };
   }
 
@@ -95,13 +102,13 @@ export class GameStateManager {
       currentPlayer: data.currentPlayer,
       turnNumber: data.turnNumber,
       
-      cellOwnership: new Map(Object.entries(data.cellOwnership)),
+      cellOwnership: new Map(Object.entries(data.cellOwnership).map(([k, v]) => [Number(k), v])),
       playerCells: new Map(
         Object.entries(data.playerCells).map(([k, v]) => [k, new Set(v)])
       ),
-      entities: new Map(Object.entries(data.entities)),
+      entities: new Map(Object.entries(data.entities).map(([k, v]) => [Number(k), v])),
       cellEntities: new Map(
-        Object.entries(data.cellEntities).map(([k, v]) => [k, new Set(v)])
+        Object.entries(data.cellEntities).map(([k, v]) => [Number(k), new Set(v)])
       ),
       playerEntities: new Map(
         Object.entries(data.playerEntities).map(([k, v]) => [k, new Set(v)])
@@ -109,7 +116,7 @@ export class GameStateManager {
       entitiesByType: new Map(
         Object.entries(data.entitiesByType).map(([k, v]) => [k as EntityType, new Set(v)])
       ),
-      nextEntityId: data.nextEntityId, // String to string
+      nextEntityId: data.nextEntityId,
     };
   }
 
@@ -216,13 +223,7 @@ export class GameStateManager {
   }
 
   static getNextEntityId(gameState: GameState): EntityId {
-    const currentId = gameState.nextEntityId;
-    
-    // Increment: parse to number, add 1, convert back to string
-    const nextIdNumber = parseInt(currentId) + 1;
-    gameState.nextEntityId = nextIdNumber.toString();
-    
-    return currentId; // Return the current ID (before increment)
+    return gameState.nextEntityId++;
   }
 
   // === ENTITY QUERIES ===

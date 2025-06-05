@@ -1,8 +1,8 @@
 // server/src/game-state/types.ts
 export type MapSize = "small" | "medium" | "large" | "xl";
 export type PlayerId = string; // e.g., "player1", "player2"
-export type CellId = string; // 0-based cell index
-export type EntityId = string;
+export type CellId = number; // 0-based cell index
+export type EntityId = number;
 
 export enum EntityType {
   UNIT = "unit",
