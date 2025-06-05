@@ -4,6 +4,13 @@ import { drawCells } from './drawCells';
 
 import pako from 'pako';
 
+let isMyTurn: boolean = false;
+
+let selectedUnitId: string | null = null;
+let selectedCellId: number | null = null;
+
+let currentGameEntities: { [entityId: string]: any } = {};
+
 let currentTerritoryData: { [cellId: string]: string } = {};
 let currentGameTerrain: Uint8Array | null = null;
 
@@ -326,6 +333,8 @@ async function initializeApp() {
   
   // Create UI first
   createUI();
+
+  setupGameplayEventListeners();
   
   // Start preloading all meshes in background (non-blocking)
   preloadAllMeshes();
@@ -1198,9 +1207,92 @@ function handleWebSocketMessage(message: { event: string, data: any }) {
     case 'game_error':
       handleGameError(data);
       break;
+
+    case 'action_result':
+      handleActionResult(data);
+      break;
+      
+    case 'game_state_changed':
+      handleGameStateChanged(data);
+      break;
       
     default:
       console.log(`Unknown WebSocket event: ${event}`);
+  }
+}
+
+// Add function to handle action results
+function handleActionResult(data: any): void {
+  console.log('Action result received:', data);
+  
+  if (data.success) {
+    showGameNotification(data.message || 'Action completed successfully', 'success');
+  } else {
+    showGameNotification(data.error || 'Action failed', 'error');
+  }
+}
+
+function handleGameStateChanged(data: any): void {
+  console.log('Game state changed:', data);
+  
+  // Update current game state
+  if (data.gameId === currentGameId) {
+    // Check if turn changed
+    const turnChanged = data.currentPlayer !== undefined && 
+                       (data.currentPlayer !== isMyTurn ? currentPlayerName : '');
+    
+    // Update turn information
+    if (data.currentPlayer !== undefined) {
+      isMyTurn = data.currentPlayer === currentPlayerName;
+      updateTurnIndicator(data.currentPlayer, data.turnNumber);
+      
+      // Show turn change notification
+      if (turnChanged) {
+        if (isMyTurn) {
+          showGameNotification('It\'s your turn!', 'success');
+        } else {
+          showGameNotification(`${data.currentPlayer}'s turn`, 'success');
+        }
+      }
+    }
+    
+    // Update territory data if provided
+    if (data.territoryData) {
+      currentTerritoryData = data.territoryData;
+    }
+    
+    // Update entity data if provided
+    if (data.entities) {
+      currentGameEntities = data.entities;
+      console.log('Updated entities:', currentGameEntities);
+    }
+    
+    // Re-render the game state to show new entities/changes
+    renderGameState();
+    
+    // Show notification for significant events (but not for turn changes)
+    if (data.lastAction && data.lastAction.actionType !== 'end_turn') {
+      const { actionType, playerId, details } = data.lastAction;
+      if (playerId !== currentPlayerName) {
+        showGameNotification(`${playerId} ${getActionDescription(actionType, details)}`, 'success');
+      }
+    }
+  }
+}
+
+// Helper function to get action descriptions
+function getActionDescription(actionType: string, details: any): string {
+  switch (actionType) {
+    case 'place_entity':
+      return `placed a ${details.entityType} on cell ${details.cellId}`;
+    case 'move_unit':
+      return `moved a unit from cell ${details.fromCellId} to ${details.toCellId}`;
+    case 'attack':
+      return `attacked with ${details.entityType}`;
+    case 'end_turn':
+      return 'ended their turn';
+    default:
+      return `performed ${actionType}`;
   }
 }
 
@@ -1244,6 +1336,12 @@ function handleGameStarted(data: any) {
     updateGameStatus('in_progress');
     showGameNotification('Game has started!', 'success');
 
+    // Check if it's my turn
+    isMyTurn = data.currentPlayer === currentPlayerName;
+    
+    // Update turn indicator
+    updateTurnIndicator(data.currentPlayer, data.turnNumber);
+
     const startButton = document.getElementById("startGame") as HTMLButtonElement;
     if (startButton) startButton.remove();
 
@@ -1253,6 +1351,402 @@ function handleGameStarted(data: any) {
     // Process all the game data received in the WebSocket event
     processGameData(data);
   }
+}
+
+function updateTurnIndicator(currentPlayer: string, turnNumber: number): void {
+  let turnIndicator = document.getElementById('turnIndicator');
+  
+  if (!turnIndicator) {
+    // Create turn indicator element
+    turnIndicator = document.createElement('div');
+    turnIndicator.id = 'turnIndicator';
+    turnIndicator.style.cssText = `
+      position: fixed;
+      top: 70px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 15px 25px;
+      border-radius: 8px;
+      color: white;
+      font-family: Arial, sans-serif;
+      font-size: 16px;
+      font-weight: bold;
+      z-index: 1500;
+      text-align: center;
+      min-width: 250px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    `;
+    document.body.appendChild(turnIndicator);
+  }
+  
+  if (isMyTurn) {
+    turnIndicator.style.background = 'rgba(76, 175, 80, 0.9)';
+    turnIndicator.innerHTML = `
+      <div>Your Turn - Turn ${turnNumber}</div>
+      <button id="endTurnButton" style="
+        background: #4CAF50;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: bold;
+        transition: background-color 0.2s;
+      ">End Turn</button>
+    `;
+    
+    // Add event listener to the end turn button
+    const endTurnButton = document.getElementById('endTurnButton');
+    if (endTurnButton) {
+      endTurnButton.addEventListener('click', endTurn);
+      endTurnButton.addEventListener('mouseenter', (e) => {
+        (e.target as HTMLElement).style.background = '#45a049';
+      });
+      endTurnButton.addEventListener('mouseleave', (e) => {
+        (e.target as HTMLElement).style.background = '#4CAF50';
+      });
+    }
+  } else {
+    turnIndicator.style.background = 'rgba(255, 193, 7, 0.9)';
+    turnIndicator.innerHTML = `
+      <div>Waiting for ${currentPlayer} - Turn ${turnNumber}</div>
+    `;
+  }
+}
+
+function endTurn(): void {
+  if (!isMyTurn) {
+    showGameNotification('It is not your turn', 'error');
+    return;
+  }
+  
+  // Disable the end turn button to prevent double-clicking
+  const endTurnButton = document.getElementById('endTurnButton') as HTMLButtonElement;
+  if (endTurnButton) {
+    endTurnButton.disabled = true;
+    endTurnButton.textContent = 'Ending Turn...';
+    endTurnButton.style.background = '#cccccc';
+  }
+  
+  // Deselect any selected units
+  deselectUnit();
+  
+  // Send end turn action to server
+  sendGameAction('end_turn', {
+    gameId: currentGameId,
+    playerId: currentPlayerName
+  });
+  
+  console.log(`${currentPlayerName} ending turn`);
+}
+
+function handleCellClick(event: MouseEvent): void {
+  if (!isMyTurn || !meshData || currentGameTerrain?.length === 0) {
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+
+  // Find which cell was clicked
+  const clickedCellId = findCellAtPosition(x, y);
+  
+  if (clickedCellId !== -1) {
+    // Check if there's a unit on this cell
+    const unitOnCell = findUnitOnCell(clickedCellId);
+    
+    if (unitOnCell && unitOnCell.owner === currentPlayerName) {
+      // Player clicked on their own unit - select it
+      selectUnit(unitOnCell.id, clickedCellId);
+    } else if (selectedUnitId !== null) {
+      // Player has a unit selected - try to move it
+      moveUnit(selectedUnitId, selectedCellId!, clickedCellId);
+    } else {
+      // No unit selected and no unit on cell - try to place new unit
+      const cellOwner = currentTerritoryData[clickedCellId.toString()];
+      
+      if (cellOwner === currentPlayerName) {
+        placeEntity(clickedCellId);
+      } else if (cellOwner) {
+        showGameNotification(`This cell belongs to ${cellOwner}`, 'warning');
+      } else {
+        showGameNotification('You can only place units on your territory', 'warning');
+      }
+    }
+  }
+}
+
+function findUnitOnCell(cellId: number): any | null {
+  for (const [entityId, entity] of Object.entries(currentGameEntities)) {
+    if (entity.cellId === cellId && entity.type === 'unit') {
+      return { id: entityId, ...entity };
+    }
+  }
+  return null;
+}
+
+function selectUnit(unitId: string, cellId: number): void {
+  selectedUnitId = unitId;
+  selectedCellId = cellId;
+  showGameNotification(`Unit selected. Click an adjacent cell to move.`, 'success');
+  
+  // Re-render to show selection highlight
+  drawEntities();
+}
+
+function deselectUnit(): void {
+  selectedUnitId = null;
+  selectedCellId = null;
+  drawEntities();
+}
+
+function moveUnit(unitId: string, fromCellId: number, toCellId: number): void {
+  console.log('Sending move action:', { unitId, fromCellId, toCellId });
+  
+  // Send move action to server
+  sendGameAction('move_unit', {
+    unitId: unitId, // Keep as string
+    fromCellId: fromCellId, // Should be number
+    toCellId: toCellId, // Should be number
+    gameId: currentGameId,
+    playerId: currentPlayerName
+  });
+  
+  // Deselect the unit
+  deselectUnit();
+  
+  console.log(`Sending move_unit action: unit ${unitId} from cell ${fromCellId} to cell ${toCellId}`);
+}
+
+function findCellAtPosition(x: number, y: number): number {
+  if (!meshData) return -1;
+
+  const nCells = meshData.cellOffsets.length - 1;
+
+  for (let cellId = 0; cellId < nCells; cellId++) {
+    const start = meshData.cellOffsets[cellId];
+    const end = meshData.cellOffsets[cellId + 1];
+    
+    if (start >= end) continue;
+
+    // Check if point is inside this cell using ray casting algorithm
+    if (isPointInCell(x, y, cellId)) {
+      return cellId;
+    }
+  }
+
+  return -1;
+}
+
+function isPointInCell(x: number, y: number, cellId: number): boolean {
+  if (!meshData) return false;
+
+  const start = meshData.cellOffsets[cellId];
+  const end = meshData.cellOffsets[cellId + 1];
+  
+  if (start >= end) return false;
+
+  // Ray casting algorithm to check if point is inside polygon
+  let inside = false;
+  let j = end - 1;
+
+  for (let i = start; i < end; i++) {
+    const vi = meshData.cellVertexIndices[i];
+    const vj = meshData.cellVertexIndices[j];
+    
+    const xi = meshData.allVertices[vi * 2];
+    const yi = meshData.allVertices[vi * 2 + 1];
+    const xj = meshData.allVertices[vj * 2];
+    const yj = meshData.allVertices[vj * 2 + 1];
+
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+    j = i;
+  }
+
+  return inside;
+}
+
+function placeEntity(cellId: number): void {
+  // Send action to server
+  sendGameAction('place_entity', {
+    cellId: cellId,
+    entityType: 'unit', // For now, always place units
+    gameId: currentGameId,
+    playerId: currentPlayerName
+  });
+  
+  console.log(`Sending place_entity action for cell ${cellId} by ${currentPlayerName}`);
+}
+
+function sendGameAction(actionType: string, actionData: any): void {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    console.error('WebSocket not connected - cannot send action');
+    showGameNotification('Connection lost - action failed', 'error');
+    return;
+  }
+  
+  if (!currentGameId || !currentPlayerName) {
+    console.error('Missing game context - cannot send action');
+    return;
+  }
+  
+  sendWebSocketMessage('game_action', {
+    actionType,
+    gameId: currentGameId,
+    playerId: currentPlayerName,
+    ...actionData
+  });
+}
+
+// Add this function to draw entity markers
+function drawEntityMarker(cellId: number, owner: string, isSelected: boolean = false): void {
+  if (!meshData) return;
+
+  // Get the center of the cell for placing the entity marker
+  const centerX = meshData.cellTriangleCenters[cellId * 2];
+  const centerY = meshData.cellTriangleCenters[cellId * 2 + 1];
+
+  // Use different colors for different players
+  const playerColors: { [playerId: string]: string } = {
+    'player1': '#FF0000', // Red
+    'player2': '#0000FF', // Blue
+    'player3': '#00FF00', // Green
+    'player4': '#FFFF00', // Yellow
+    'player5': '#FF00FF', // Magenta
+    'player6': '#00FFFF', // Cyan
+  };
+  
+  const fillColor = playerColors[owner] || '#888888';
+  
+  // Draw selection ring if selected
+  if (isSelected) {
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 12, 0, 2 * Math.PI);
+    ctx.stroke();
+  }
+  
+  ctx.fillStyle = fillColor;
+  // ctx.strokeStyle = '#000000';
+  // ctx.lineWidth = 2;
+  
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 8, 0, 2 * Math.PI);
+  ctx.fill();
+  ctx.stroke();
+  
+  // Add a small indicator for the unit type
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = '10px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('⚔️', centerX, centerY);
+}
+
+function updateCanvasHover(event: MouseEvent): void {
+  if (!isMyTurn) return;
+  
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  
+  const hoveredCellId = findCellAtPosition(x, y);
+  
+  if (hoveredCellId !== -1) {
+    if (selectedUnitId !== null) {
+      // Unit is selected - show if we can move there
+      if (canMoveToCell(selectedCellId!, hoveredCellId)) {
+        canvas.style.cursor = 'pointer';
+      } else {
+        canvas.style.cursor = 'not-allowed';
+      }
+    } else {
+      // No unit selected - normal hover logic
+      const unitOnCell = findUnitOnCell(hoveredCellId);
+      const cellOwner = currentTerritoryData[hoveredCellId.toString()];
+      
+      if (unitOnCell && unitOnCell.owner === currentPlayerName) {
+        canvas.style.cursor = 'pointer'; // Can select unit
+      } else if (cellOwner === currentPlayerName) {
+        canvas.style.cursor = 'pointer'; // Can place unit
+      } else {
+        canvas.style.cursor = 'not-allowed';
+      }
+    }
+  } else {
+    canvas.style.cursor = 'default';
+  }
+}
+
+function canMoveToCell(fromCellId: number, toCellId: number): boolean {
+  if (!meshData) return false;
+  
+  // Check if target cell has a unit
+  const unitOnTarget = findUnitOnCell(toCellId);
+  if (unitOnTarget) return false;
+  
+  // Check if cells are adjacent (distance = 1)
+  const distance = calculateCellDistance(fromCellId, toCellId);
+  return distance === 1;
+}
+
+function calculateCellDistance(cellId1: number, cellId2: number): number {
+  if (!meshData) return Infinity;
+  
+  // Use BFS to find shortest path distance
+  const visited = new Set<number>();
+  const queue: { cellId: number; distance: number }[] = [{ cellId: cellId1, distance: 0 }];
+  
+  while (queue.length > 0) {
+    const { cellId, distance } = queue.shift()!;
+    
+    if (cellId === cellId2) {
+      return distance;
+    }
+    
+    if (visited.has(cellId) || distance >= 10) { // Max search depth
+      continue;
+    }
+    
+    visited.add(cellId);
+    
+    // Add neighbors
+    const start = meshData.cellOffsets[cellId];
+    const end = meshData.cellOffsets[cellId + 1];
+    
+    for (let i = start; i < end; i++) {
+      const neighborId = meshData.cellNeighbors[i];
+      if (neighborId >= 0 && !visited.has(neighborId)) {
+        queue.push({ cellId: neighborId, distance: distance + 1 });
+      }
+    }
+  }
+  
+  return Infinity; // Not reachable
+}
+
+// Event listener setup function to be called during initialization
+function setupGameplayEventListeners(): void {
+  // Add click handler to canvas for entity placement and movement
+  canvas.addEventListener('click', handleCellClick);
+  
+  // Add hover effect to show which cell would be selected
+  canvas.addEventListener('mousemove', updateCanvasHover);
+  
+  // Add keyboard handler to deselect units
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && selectedUnitId !== null) {
+      deselectUnit();
+      showGameNotification('Unit deselected', 'success');
+    }
+  });
 }
 
 // Handle errors
@@ -1447,6 +1941,16 @@ function processGameData(gameData: any): void {
     currentGameId = gameData.gameId;
     currentTerritoryData = gameData.territoryData;
     
+    // Update turn state
+    isMyTurn = gameData.currentPlayer === currentPlayerName;
+    updateTurnIndicator(gameData.currentPlayer, gameData.turnNumber);
+    
+    // Update entities if provided
+    if (gameData.entities) {
+      currentGameEntities = gameData.entities;
+      console.log('Initial entities:', currentGameEntities);
+    }
+    
     // Decode terrain data from base64
     const terrainBuffer = Uint8Array.from(atob(gameData.terrain), c => c.charCodeAt(0));
     currentGameTerrain = terrainBuffer;
@@ -1457,6 +1961,7 @@ function processGameData(gameData: any): void {
     }
     
     console.log(`✅ Game data processed: ${gameData.cellCount} cells, ${Object.keys(gameData.territoryData).length} owned cells`);
+    console.log(`Current player: ${gameData.currentPlayer}, My turn: ${isMyTurn}`);
     
     // Update the current biomes with the game terrain
     currentCellBiomes = terrainBuffer;
@@ -1512,7 +2017,23 @@ function renderGameState(): void {
   // Overlay territory ownership
   drawTerritoryOverlay();
   
+  // Draw entities if we have entity data
+  if (currentGameEntities) {
+    drawEntities();
+  }
+  
   console.timeEnd('renderGameState');
+}
+
+function drawEntities(): void {
+  if (!meshData) return;
+  
+  for (const [entityId, entity] of Object.entries(currentGameEntities)) {
+    if (entity.type === 'unit') {
+      const isSelected = selectedUnitId === entityId;
+      drawEntityMarker(entity.cellId, entity.owner, isSelected);
+    }
+  }
 }
 
 /**

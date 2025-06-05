@@ -75,6 +75,20 @@ export async function startGame(gameId: string) {
       territoryData: territoryDataMapping,
       territoryStats,
 
+      // Entity information
+      entities: Object.fromEntries(
+        Array.from(gameState.entities.entries()).map(([entityId, entity]) => [
+          entityId.toString(),
+          {
+            id: entity.id,
+            type: entity.type,
+            owner: entity.owner,
+            cellId: entity.cellId,
+            data: entity.data
+          }
+        ])
+      ),
+
       // Timestamps
       startedAt: gameState.startedAt,
     };

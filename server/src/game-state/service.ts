@@ -18,7 +18,7 @@ export class GameService {
     }
   }
 
-  private static async saveGameState(gameState: GameState): Promise<void> {
+  static async saveGameState(gameState: GameState): Promise<void> {
     await this.ensureMapsDir();
     
     const serialized = GameStateManager.serialize(gameState);
@@ -181,7 +181,7 @@ export class GameService {
         gameState,
         meshData.cellNeighbors,
         meshData.cellOffsets,
-        3 // TODO set in config and figure out better divvy
+        15 // TODO set in config and figure out better divvy
       );
       
       // Persist updated state

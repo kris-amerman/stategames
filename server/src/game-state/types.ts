@@ -6,8 +6,6 @@ export type EntityId = number;
 
 export enum EntityType {
   UNIT = "unit",
-  BUILDING = "building",
-  RESOURCE = "resource",
 }
 
 export interface Entity {

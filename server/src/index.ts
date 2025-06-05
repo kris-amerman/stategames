@@ -148,6 +148,39 @@ export function broadcastGameStarted(gameId: string, gameData: any) {
   broadcastToRoom(gameId, 'game_started', gameData);
 }
 
+export function broadcastGameStateChange(gameId: string, gameState: any, lastAction?: any) {
+  console.log(`Broadcasting game state change for game ${gameId}`);
+  
+  // Create territory mapping
+  const territoryData: { [cellId: string]: string } = {};
+  for (const [playerId, cells] of gameState.playerCells.entries()) {
+    for (const cellId of cells) {
+      territoryData[cellId.toString()] = playerId;
+    }
+  }
+  
+  // Create entity mapping
+  const entityData: { [entityId: string]: any } = {};
+  for (const [entityId, entity] of gameState.entities.entries()) {
+    entityData[entityId.toString()] = {
+      id: entity.id,
+      type: entity.type,
+      owner: entity.owner,
+      cellId: entity.cellId,
+      data: entity.data
+    };
+  }
+  
+  broadcastToRoom(gameId, 'game_state_changed', {
+    gameId,
+    currentPlayer: gameState.currentPlayer,
+    turnNumber: gameState.turnNumber,
+    territoryData,
+    entities: entityData,
+    lastAction
+  });
+}
+
 console.log(`Server running`);
 console.log('PORT environment variable:', process.env.PORT);
 console.log('NODE_ENV:', process.env.NODE_ENV);
