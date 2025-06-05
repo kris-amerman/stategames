@@ -1483,6 +1483,7 @@ function handleCellClick(event: MouseEvent): void {
 function findUnitOnCell(cellId: number): any | null {
   for (const [entityId, entity] of Object.entries(currentGameEntities)) {
     if (entity.cellId === cellId && entity.type === 'unit') {
+      console.log("HERE")
       return { id: entityId, ...entity };
     }
   }
@@ -1650,41 +1651,6 @@ function drawEntityMarker(cellId: number, owner: string, isSelected: boolean = f
   ctx.fillText('⚔️', centerX, centerY);
 }
 
-function updateCanvasHover(event: MouseEvent): void {
-  if (!isMyTurn) return;
-  
-  const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-  
-  const hoveredCellId = findCellAtPosition(x, y);
-  
-  if (hoveredCellId !== -1) {
-    if (selectedUnitId !== null) {
-      // Unit is selected - show if we can move there
-      if (canMoveToCell(selectedCellId!, hoveredCellId)) {
-        canvas.style.cursor = 'pointer';
-      } else {
-        canvas.style.cursor = 'not-allowed';
-      }
-    } else {
-      // No unit selected - normal hover logic
-      const unitOnCell = findUnitOnCell(hoveredCellId);
-      const cellOwner = currentTerritoryData[hoveredCellId.toString()];
-      
-      if (unitOnCell && unitOnCell.owner === currentPlayerName) {
-        canvas.style.cursor = 'pointer'; // Can select unit
-      } else if (cellOwner === currentPlayerName) {
-        canvas.style.cursor = 'pointer'; // Can place unit
-      } else {
-        canvas.style.cursor = 'not-allowed';
-      }
-    }
-  } else {
-    canvas.style.cursor = 'default';
-  }
-}
-
 function canMoveToCell(fromCellId: number, toCellId: number): boolean {
   if (!meshData) return false;
   
@@ -1736,9 +1702,6 @@ function calculateCellDistance(cellId1: number, cellId2: number): number {
 function setupGameplayEventListeners(): void {
   // Add click handler to canvas for entity placement and movement
   canvas.addEventListener('click', handleCellClick);
-  
-  // Add hover effect to show which cell would be selected
-  canvas.addEventListener('mousemove', updateCanvasHover);
   
   // Add keyboard handler to deselect units
   document.addEventListener('keydown', (event) => {
