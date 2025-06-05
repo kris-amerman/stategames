@@ -1483,7 +1483,6 @@ function handleCellClick(event: MouseEvent): void {
 function findUnitOnCell(cellId: number): any | null {
   for (const [entityId, entity] of Object.entries(currentGameEntities)) {
     if (entity.cellId === cellId && entity.type === 'unit') {
-      console.log("HERE")
       return { id: entityId, ...entity };
     }
   }
