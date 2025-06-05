@@ -1,5 +1,8 @@
 export { fallback } from "./fallback";
 export { health } from "./health";
-export { mesh } from "./mesh";
+export { getMesh } from "./getMesh";
 export { root } from "./root";
-export { createGame, joinGame, startGame, getGame } from "./games";
+export { createGame } from "./createGame";
+export { joinGame } from "./joinGame";
+export { startGame } from "./startGame";
+export { getGame } from "./getGame";

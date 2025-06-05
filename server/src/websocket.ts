@@ -1,4 +1,3 @@
-// src/websocket.ts - Bun native WebSocket handler
 import type { ServerWebSocket } from "bun";
 import { gameRooms, socketToGame } from "./index";
 

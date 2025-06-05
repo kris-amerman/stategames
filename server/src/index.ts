@@ -1,5 +1,4 @@
-// src/index.ts - Bun server with native WebSocket support
-import { createGame, fallback, getGame, health, joinGame, mesh, root, startGame } from "./routes";
+import { createGame, fallback, getGame, getMesh, health, joinGame, root, startGame } from "./routes";
 import { setupWebSocketHandler } from "./websocket";
 import type { ServerWebSocket } from "bun";
 
@@ -37,22 +36,25 @@ const server = Bun.serve({
   routes: {
     "/": () => root(),
     "/health": () => health(),
-    "/api/mesh/:sizeParam": req => mesh(req.params.sizeParam),
+
+    "/api/mesh/:sizeParam": {
+      GET: async req => getMesh(req.params.sizeParam)
+    },
     
-    "/api/games": {
+    "/api/games/create": {
       POST: async req => createGame(req)
     },
 
     "/api/games/:joinCode/join": {
-      POST: async req => joinGame(req)
+      POST: async req => joinGame(req.params.joinCode)
     },
 
     "/api/games/:gameId/start": {
-      POST: async req => startGame(req)
+      POST: async req => startGame(req.params.gameId)
     },
 
     "/api/games/:gameId": {
-      GET: async req => getGame(req)
+      GET: async req => getGame(req.params.gameId)
     }
   },
 

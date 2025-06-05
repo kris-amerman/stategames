@@ -5,7 +5,7 @@ import { meshService } from "../mesh-service";
 /**
  * Dynamic routes for static map meshes
  */
-export async function mesh(sizeParam: string): Promise<Response> {
+export async function getMesh(sizeParam: string): Promise<Response> {
   const validSizes: MapSize[] = ["small", "medium", "large", "xl"];
 
   if (!sizeParam || !validSizes.includes(sizeParam as MapSize)) {
