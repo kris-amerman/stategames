@@ -803,8 +803,8 @@ function showCreatorGameUI(gameData: any) {
   setupCopyJoinCodeButton(gameData.joinCode);
   setupStartGameButton();
   
-  // Join WebSocket room as creator
-  joinGameRoom(gameData.gameId, 'player1', true);
+  // Add WebSocket to room as creator
+  addToRoom(gameData.gameId, 'player1', true);
   
   toggleGameButtons(false);
 }
@@ -860,8 +860,8 @@ function showJoinerGameUI(gameData: any) {
     </div>
   `;
   
-  // Join WebSocket room as joiner
-  joinGameRoom(gameData.gameId, gameData.playerName, false);
+  // Connect WebSocket to room as joiner
+  addToRoom(gameData.gameId, gameData.playerName, false);
   
   toggleGameButtons(false);
 }
@@ -1264,8 +1264,8 @@ function handleGameError(data: { error: string, gameId?: string }) {
   }
 }
 
-// Join a game room via WebSocket
-function joinGameRoom(gameId: string, playerName: string, creator: boolean = false) {
+// Add WebSocket to game room
+function addToRoom(gameId: string, playerName: string, creator: boolean = false) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     console.error('WebSocket not connected');
     return;
@@ -1275,25 +1275,25 @@ function joinGameRoom(gameId: string, playerName: string, creator: boolean = fal
   currentPlayerName = playerName;
   isGameCreator = creator;
   
-  sendWebSocketMessage('join_game_room', {
+  sendWebSocketMessage('add_to_room', {
     gameId: gameId,
     playerName: playerName,
     isCreator: creator
   });
   
-  console.log(`Joined game room: ${gameId} as ${playerName} (creator: ${creator})`);
+  console.log(`Added ws to game room: ${gameId} as ${playerName} (creator: ${creator})`);
 }
 
-// Leave current game room
-function leaveGameRoom() {
+// Remove ws from game room
+function removeFromRoom() {
   if (!socket || !currentGameId) return;
   
-  sendWebSocketMessage('leave_game_room', {
+  sendWebSocketMessage('remove_from_room', {
     gameId: currentGameId,
     playerName: currentPlayerName
   });
   
-  console.log(`Left game room: ${currentGameId}`);
+  console.log(`Removed ws from game room: ${currentGameId}`);
   
   currentGameId = null;
   currentPlayerName = null;
@@ -1307,7 +1307,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Clean up WebSocket connection when leaving
 window.addEventListener('beforeunload', () => {
-  leaveGameRoom();
+  removeFromRoom();
   if (socket) {
     socket.close();
   }

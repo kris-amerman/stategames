@@ -12,12 +12,12 @@ export function setupWebSocketHandler(ws: ServerWebSocket<any>, message: string 
     const parsed: WebSocketMessage = JSON.parse(messageStr);
     
     switch (parsed.event) {
-      case 'join_game_room':
-        handleJoinGameRoom(ws, parsed.data);
+      case 'add_to_room':
+        handleAddToRoom(ws, parsed.data);
         break;
         
-      case 'leave_game_room':
-        handleLeaveGameRoom(ws, parsed.data);
+      case 'remove_from_room':
+        handleRemoveFromRoom(ws, parsed.data);
         break;
         
       default:
@@ -28,10 +28,10 @@ export function setupWebSocketHandler(ws: ServerWebSocket<any>, message: string 
   }
 }
 
-function handleJoinGameRoom(ws: ServerWebSocket<any>, data: { gameId: string, playerName: string, isCreator: boolean }) {
+function handleAddToRoom(ws: ServerWebSocket<any>, data: { gameId: string, playerName: string, isCreator: boolean }) {
   const { gameId, playerName, isCreator } = data;
   
-  console.log(`${playerName} joining room ${gameId} (creator: ${isCreator})`);
+  console.log(`Adding ${playerName} to room for game ${gameId} (creator: ${isCreator})`);
   
   // Add to room
   if (!gameRooms.has(gameId)) {
@@ -42,13 +42,13 @@ function handleJoinGameRoom(ws: ServerWebSocket<any>, data: { gameId: string, pl
   // Track socket to game mapping
   socketToGame.set(ws, { gameId, playerName });
   
-  console.log(`Room ${gameId} now has ${gameRooms.get(gameId)!.size} connected players`);
+  console.log(`Room for game ${gameId} now has ${gameRooms.get(gameId)!.size} connected players`);
 }
 
-function handleLeaveGameRoom(ws: ServerWebSocket<any>, data: { gameId: string, playerName: string }) {
+function handleRemoveFromRoom(ws: ServerWebSocket<any>, data: { gameId: string, playerName: string }) {
   const { gameId, playerName } = data;
   
-  console.log(`${playerName} leaving room ${gameId}`);
+  console.log(`Removing ${playerName} from room for game ${gameId}`);
   
   // Remove from room
   const room = gameRooms.get(gameId);
