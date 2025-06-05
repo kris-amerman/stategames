@@ -4,8 +4,6 @@ import { drawCells } from './drawCells';
 
 import pako from 'pako';
 
-import io from 'socket.io-client';
-
 let currentTerritoryData: { [cellId: string]: string } = {};
 let currentGameTerrain: Uint8Array | null = null;
 
@@ -684,7 +682,7 @@ document.getElementById("createGame")!.addEventListener("click", async () => {
     // Compress the data
     const compressed = pako.gzip(currentCellBiomes);
 
-    const response = await fetch(`${SERVER_BASE_URL}/api/games`, {
+    const response = await fetch(`${SERVER_BASE_URL}/api/games/create`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/octet-stream',
@@ -1244,7 +1242,7 @@ function handleGameStarted(data: any) {
   
   if (data.gameId === currentGameId) {
     updateGameStatus('in_progress');
-    showGameNotification('Game has started! Loading map...', 'success');
+    showGameNotification('Game has started!', 'success');
 
     const startButton = document.getElementById("startGame") as HTMLButtonElement;
     if (startButton) startButton.remove();
@@ -1422,7 +1420,7 @@ async function fetchGameData(gameId: string): Promise<void> {
     console.log(`Fetching game data for game ${gameId}...`);
     
     // Use the single endpoint with terrain parameter
-    const response = await fetch(`${SERVER_BASE_URL}/api/games/${gameId}?include=terrain`);
+    const response = await fetch(`${SERVER_BASE_URL}/api/games/${gameId}`);
     
     if (!response.ok) {
       throw new Error(`Failed to fetch game data: ${response.status}`);
@@ -1559,11 +1557,6 @@ function drawTerritoryOverlay(): void {
     
     ctx.closePath();
     ctx.fill();
-    
-    // Draw territory border
-    ctx.strokeStyle = territoryColors[playerId]?.replace('0.3', '0.8') || 'rgba(128, 128, 128, 0.8)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
   }
 }
 
