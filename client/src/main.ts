@@ -6,12 +6,12 @@ import pako from 'pako';
 
 let isMyTurn: boolean = false;
 
-let selectedUnitId: string | null = null;
+let selectedUnitId: number | null = null;
 let selectedCellId: number | null = null;
 
-let currentGameEntities: { [entityId: string]: any } = {};
+let currentGameEntities: { [entityId: number]: any } = {};
 
-let currentTerritoryData: { [cellId: string]: string } = {};
+let currentTerritoryData: { [cellId: number]: string } = {};
 let currentGameTerrain: Uint8Array | null = null;
 
 // WebSocket connection and game state
@@ -1226,7 +1226,7 @@ function handleActionResult(data: any): void {
   console.log('Action result received:', data);
   
   if (data.success) {
-    showGameNotification(data.message || 'Action completed successfully', 'success');
+    // showGameNotification(data.message || 'Action completed successfully', 'success');
   } else {
     showGameNotification(data.error || 'Action failed', 'error');
   }
@@ -1247,13 +1247,13 @@ function handleGameStateChanged(data: any): void {
       updateTurnIndicator(data.currentPlayer, data.turnNumber);
       
       // Show turn change notification
-      if (turnChanged) {
-        if (isMyTurn) {
-          showGameNotification('It\'s your turn!', 'success');
-        } else {
-          showGameNotification(`${data.currentPlayer}'s turn`, 'success');
-        }
-      }
+      // if (turnChanged) {
+      //   if (isMyTurn) {
+      //     showGameNotification('It\'s your turn!', 'success');
+      //   } else {
+      //     showGameNotification(`${data.currentPlayer}'s turn`, 'success');
+      //   }
+      // }
     }
     
     // Update territory data if provided
@@ -1271,12 +1271,12 @@ function handleGameStateChanged(data: any): void {
     renderGameState();
     
     // Show notification for significant events (but not for turn changes)
-    if (data.lastAction && data.lastAction.actionType !== 'end_turn') {
-      const { actionType, playerId, details } = data.lastAction;
-      if (playerId !== currentPlayerName) {
-        showGameNotification(`${playerId} ${getActionDescription(actionType, details)}`, 'success');
-      }
-    }
+    // if (data.lastAction && data.lastAction.actionType !== 'end_turn') {
+    //   const { actionType, playerId, details } = data.lastAction;
+    //   if (playerId !== currentPlayerName) {
+    //     showGameNotification(`${playerId} ${getActionDescription(actionType, details)}`, 'success');
+    //   }
+    // }
   }
 }
 
@@ -1388,7 +1388,7 @@ function updateTurnIndicator(currentPlayer: string, turnNumber: number): void {
       <button id="endTurnButton" style="
         background: #4CAF50;
         color: white;
-        border: none;
+        border: solid 3px rgba(80, 182, 80, 0.9);;
         padding: 8px 16px;
         border-radius: 4px;
         cursor: pointer;
@@ -1460,14 +1460,14 @@ function handleCellClick(event: MouseEvent): void {
     const unitOnCell = findUnitOnCell(clickedCellId);
     
     if (unitOnCell && unitOnCell.owner === currentPlayerName) {
-      // Player clicked on their own unit - select it
+      // Player clicked on their own unit - select it using numeric ID
       selectUnit(unitOnCell.id, clickedCellId);
     } else if (selectedUnitId !== null) {
       // Player has a unit selected - try to move it
       moveUnit(selectedUnitId, selectedCellId!, clickedCellId);
     } else {
       // No unit selected and no unit on cell - try to place new unit
-      const cellOwner = currentTerritoryData[clickedCellId.toString()];
+      const cellOwner = currentTerritoryData[clickedCellId];
       
       if (cellOwner === currentPlayerName) {
         placeEntity(clickedCellId);
@@ -1483,35 +1483,37 @@ function handleCellClick(event: MouseEvent): void {
 function findUnitOnCell(cellId: number): any | null {
   for (const [entityId, entity] of Object.entries(currentGameEntities)) {
     if (entity.cellId === cellId && entity.type === 'unit') {
-      return { id: entityId, ...entity };
+      return entity; // Entity already has correct numeric id
     }
   }
   return null;
 }
 
-function selectUnit(unitId: string, cellId: number): void {
-  selectedUnitId = unitId;
+function selectUnit(unitId: number, cellId: number): void {
+  selectedUnitId = unitId; // Keep as number
   selectedCellId = cellId;
-  showGameNotification(`Unit selected. Click an adjacent cell to move.`, 'success');
+  // showGameNotification(`Unit selected. Click an adjacent cell to move.`, 'success');
+
+  console.log(`NEW SELECTED UNIT ID: ${selectedUnitId}`)
   
   // Re-render to show selection highlight
-  drawEntities();
+  renderGameState();
 }
 
 function deselectUnit(): void {
   selectedUnitId = null;
   selectedCellId = null;
-  drawEntities();
+  renderGameState();
 }
 
-function moveUnit(unitId: string, fromCellId: number, toCellId: number): void {
+function moveUnit(unitId: number, fromCellId: number, toCellId: number): void {
   console.log('Sending move action:', { unitId, fromCellId, toCellId });
   
-  // Send move action to server
+  // Send move action to server with all numeric IDs
   sendGameAction('move_unit', {
-    unitId: unitId, // Keep as string
-    fromCellId: fromCellId, // Should be number
-    toCellId: toCellId, // Should be number
+    unitId: unitId,
+    fromCellId: fromCellId,
+    toCellId: toCellId,
     gameId: currentGameId,
     playerId: currentPlayerName
   });
@@ -1604,7 +1606,6 @@ function sendGameAction(actionType: string, actionData: any): void {
   });
 }
 
-// Add this function to draw entity markers
 function drawEntityMarker(cellId: number, owner: string, isSelected: boolean = false): void {
   if (!meshData) return;
 
@@ -1626,6 +1627,7 @@ function drawEntityMarker(cellId: number, owner: string, isSelected: boolean = f
   
   // Draw selection ring if selected
   if (isSelected) {
+    console.log(`UNIT ON ${cellId} selected`)
     ctx.strokeStyle = '#FFFFFF';
     ctx.lineWidth = 4;
     ctx.beginPath();
@@ -1634,8 +1636,8 @@ function drawEntityMarker(cellId: number, owner: string, isSelected: boolean = f
   }
   
   ctx.fillStyle = fillColor;
-  // ctx.strokeStyle = '#000000';
-  // ctx.lineWidth = 2;
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 2;
   
   ctx.beginPath();
   ctx.arc(centerX, centerY, 8, 0, 2 * Math.PI);
@@ -1650,52 +1652,52 @@ function drawEntityMarker(cellId: number, owner: string, isSelected: boolean = f
   ctx.fillText('⚔️', centerX, centerY);
 }
 
-function canMoveToCell(fromCellId: number, toCellId: number): boolean {
-  if (!meshData) return false;
+// function canMoveToCell(fromCellId: number, toCellId: number): boolean {
+//   if (!meshData) return false;
   
-  // Check if target cell has a unit
-  const unitOnTarget = findUnitOnCell(toCellId);
-  if (unitOnTarget) return false;
+//   // Check if target cell has a unit
+//   const unitOnTarget = findUnitOnCell(toCellId);
+//   if (unitOnTarget) return false;
   
-  // Check if cells are adjacent (distance = 1)
-  const distance = calculateCellDistance(fromCellId, toCellId);
-  return distance === 1;
-}
+//   // Check if cells are adjacent (distance = 1)
+//   const distance = calculateCellDistance(fromCellId, toCellId);
+//   return distance === 1;
+// }
 
-function calculateCellDistance(cellId1: number, cellId2: number): number {
-  if (!meshData) return Infinity;
+// function calculateCellDistance(cellId1: number, cellId2: number): number {
+//   if (!meshData) return Infinity;
   
-  // Use BFS to find shortest path distance
-  const visited = new Set<number>();
-  const queue: { cellId: number; distance: number }[] = [{ cellId: cellId1, distance: 0 }];
+//   // Use BFS to find shortest path distance
+//   const visited = new Set<number>();
+//   const queue: { cellId: number; distance: number }[] = [{ cellId: cellId1, distance: 0 }];
   
-  while (queue.length > 0) {
-    const { cellId, distance } = queue.shift()!;
+//   while (queue.length > 0) {
+//     const { cellId, distance } = queue.shift()!;
     
-    if (cellId === cellId2) {
-      return distance;
-    }
+//     if (cellId === cellId2) {
+//       return distance;
+//     }
     
-    if (visited.has(cellId) || distance >= 10) { // Max search depth
-      continue;
-    }
+//     if (visited.has(cellId) || distance >= 10) { // Max search depth
+//       continue;
+//     }
     
-    visited.add(cellId);
+//     visited.add(cellId);
     
-    // Add neighbors
-    const start = meshData.cellOffsets[cellId];
-    const end = meshData.cellOffsets[cellId + 1];
+//     // Add neighbors
+//     const start = meshData.cellOffsets[cellId];
+//     const end = meshData.cellOffsets[cellId + 1];
     
-    for (let i = start; i < end; i++) {
-      const neighborId = meshData.cellNeighbors[i];
-      if (neighborId >= 0 && !visited.has(neighborId)) {
-        queue.push({ cellId: neighborId, distance: distance + 1 });
-      }
-    }
-  }
+//     for (let i = start; i < end; i++) {
+//       const neighborId = meshData.cellNeighbors[i];
+//       if (neighborId >= 0 && !visited.has(neighborId)) {
+//         queue.push({ cellId: neighborId, distance: distance + 1 });
+//       }
+//     }
+//   }
   
-  return Infinity; // Not reachable
-}
+//   return Infinity; // Not reachable
+// }
 
 // Event listener setup function to be called during initialization
 function setupGameplayEventListeners(): void {
@@ -1992,7 +1994,9 @@ function drawEntities(): void {
   
   for (const [entityId, entity] of Object.entries(currentGameEntities)) {
     if (entity.type === 'unit') {
-      const isSelected = selectedUnitId === entityId;
+      // Compare numeric selectedUnitId with numeric entityId
+      const isSelected = selectedUnitId === parseInt(entityId);
+      console.log(`DRAWING UNIT ${entityId} (selected = ${isSelected})`)
       drawEntityMarker(entity.cellId, entity.owner, isSelected);
     }
   }
