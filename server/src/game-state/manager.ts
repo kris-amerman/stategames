@@ -19,16 +19,14 @@ export class GameStateManager {
     joinCode: string,
     players: PlayerId[],
     mapSize: MapSize,
-    cellCount: number
+    cellCount: number,
+    biomes: Uint8Array
   ): GameState {
     return {
       gameId,
       joinCode,
       status: "waiting",
       createdAt: new Date().toISOString(),
-      
-      mapSize,
-      cellCount,
       
       players,
       currentPlayer: players[0], // First player starts
@@ -44,6 +42,10 @@ export class GameStateManager {
       playerEntities: new Map(players.map(p => [p, new Set()])),
       entitiesByType: new Map(),
       nextEntityId: 1,
+
+      // Map information
+      mapSize,
+      biomes
     };
   }
 
@@ -55,10 +57,6 @@ export class GameStateManager {
       joinCode: gameState.joinCode,
       status: gameState.status,
       createdAt: gameState.createdAt,
-      startedAt: gameState.startedAt,
-      
-      mapSize: gameState.mapSize,
-      cellCount: gameState.cellCount,
       
       players: gameState.players,
       currentPlayer: gameState.currentPlayer,
@@ -84,6 +82,9 @@ export class GameStateManager {
         Array.from(gameState.entitiesByType.entries()).map(([k, v]) => [k, Array.from(v)])
       ),
       nextEntityId: gameState.nextEntityId,
+
+      mapSize: gameState.mapSize,
+      biomes: gameState.biomes
     };
   }
 
@@ -93,10 +94,6 @@ export class GameStateManager {
       joinCode: data.joinCode,
       status: data.status,
       createdAt: data.createdAt,
-      startedAt: data.startedAt,
-      
-      mapSize: data.mapSize,
-      cellCount: data.cellCount,
       
       players: data.players,
       currentPlayer: data.currentPlayer,
@@ -117,6 +114,9 @@ export class GameStateManager {
         Object.entries(data.entitiesByType).map(([k, v]) => [k as EntityType, new Set(v)])
       ),
       nextEntityId: data.nextEntityId,
+
+      mapSize: data.mapSize,
+      biomes: data.biomes
     };
   }
 
@@ -257,7 +257,6 @@ export class GameStateManager {
 
   static startGame(gameState: GameState): void {
     gameState.status = "in_progress";
-    gameState.startedAt = new Date().toISOString();
   }
 
   // === STARTING TERRITORY ASSIGNMENT ===
@@ -266,10 +265,10 @@ export class GameStateManager {
     gameState: GameState, 
     cellNeighbors: Int32Array, 
     cellOffsets: Uint32Array,
-    cellsPerPlayer: number = 50
+    cellCount: number,
+    cellsPerPlayer: number
   ): void {
     const players = gameState.players;
-    const totalCells = gameState.cellCount;
     
     console.log(`Assigning ${cellsPerPlayer} starting cells to ${players.length} players`);
 
@@ -278,7 +277,7 @@ export class GameStateManager {
     
     for (const playerId of players) {
       const startingCells = this.findContiguousRegion(
-        totalCells,
+        cellCount,
         cellNeighbors,
         cellOffsets,
         claimedCells,

@@ -13,6 +13,7 @@ export function serializeMeshData(meshData: MeshData): SerializedMeshData {
     cellVertexIndices: Array.from(meshData.cellVertexIndices),
     cellNeighbors: Array.from(meshData.cellNeighbors),
     cellTriangleCenters: Array.from(meshData.cellTriangleCenters),
+    cellCount: meshData.cellCount
   };
 }
 
@@ -27,5 +28,6 @@ export function deserializeMeshData(serialized: SerializedMeshData): MeshData {
     cellVertexIndices: new Uint32Array(serialized.cellVertexIndices),
     cellNeighbors: new Int32Array(serialized.cellNeighbors),
     cellTriangleCenters: new Float64Array(serialized.cellTriangleCenters),
+    cellCount: serialized.cellCount
   };
 }

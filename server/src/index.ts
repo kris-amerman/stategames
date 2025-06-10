@@ -1,8 +1,8 @@
-import { createGame, fallback, getGame, getMesh, health, joinGame, root, startGame } from "./routes";
+import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame } from "./routes";
 import { setupWebSocketHandler } from "./websocket";
 import type { ServerWebSocket } from "bun";
 
-// TODO move constants to a config
+// TODO move constants and endpoints to a config to have source of truth for what is live
 export const PORT = process.env.PORT || 3000;
 export const ENDPOINTS = [
   "GET /api/mesh/small",
@@ -35,7 +35,6 @@ const server = Bun.serve({
   
   routes: {
     "/": () => root(),
-    "/health": () => health(),
 
     "/api/mesh/:sizeParam": {
       GET: async req => getMesh(req.params.sizeParam)
@@ -53,8 +52,8 @@ const server = Bun.serve({
       POST: async req => startGame(req.params.gameId)
     },
 
-    "/api/games/:gameId": {
-      GET: async req => getGame(req.params.gameId)
+    "/api/games/:gameId/load": {
+      GET: async req => loadGame(req.params.gameId)
     }
   },
 
@@ -123,23 +122,6 @@ export function broadcastPlayerJoined(gameId: string, players: string[], newPlay
     gameId,
     players,
     newPlayer
-  });
-}
-
-export function broadcastGameStateUpdate(gameId: string, status: string, players: string[]) {
-  console.log(`Broadcasting game_state_update for game ${gameId}: ${status}`);
-  broadcastToRoom(gameId, 'game_state_update', {
-    gameId,
-    status,
-    players
-  });
-}
-
-export function broadcastGameError(gameId: string, error: string) {
-  console.log(`Broadcasting game_error for game ${gameId}: ${error}`);
-  broadcastToRoom(gameId, 'game_error', {
-    gameId,
-    error
   });
 }
 

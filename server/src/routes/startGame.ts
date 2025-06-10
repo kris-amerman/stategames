@@ -1,6 +1,9 @@
 import { broadcastGameStarted, CORS_HEADERS } from "..";
-import { GameService } from "../game-state";
+import { GameService, type GameState } from "../game-state";
 
+/**
+ * Given gameId, perform game initialization and broadcast game state via WS.
+ */
 export async function startGame(gameId: string) {
   try {
     if (!gameId) {
@@ -37,14 +40,6 @@ export async function startGame(gameId: string) {
       throw new Error("Terrain data not found");
     }
 
-    // Create territory summary for broadcast
-    const territoryStats = Array.from(gameState.playerCells.entries()).map(
-      ([playerId, cells]) => ({
-        playerId,
-        cellCount: cells.size,
-      })
-    );
-
     // Create detailed territory data for rendering
     const territoryDataMapping: { [cellId: string]: string } = {};
     for (const [playerId, cells] of gameState.playerCells.entries()) {
@@ -56,7 +51,7 @@ export async function startGame(gameId: string) {
     // Convert terrain data to base64 for JSON transmission
     const terrainBase64 = Buffer.from(terrainData).toString("base64");
 
-    // Send complete game data via WebSocket
+    // Send complete game data via WebSocket (TODO FIX THIS TO BE GAME STATE)
     const gameData = {
       gameId: gameState.gameId,
       status: gameState.status,
@@ -66,14 +61,12 @@ export async function startGame(gameId: string) {
 
       // Map information
       mapSize: gameState.mapSize,
-      cellCount: gameState.cellCount,
 
       // Complete terrain data
       terrain: terrainBase64,
 
       // Territory information
       territoryData: territoryDataMapping,
-      territoryStats,
 
       // Entity information
       entities: Object.fromEntries(
@@ -88,25 +81,13 @@ export async function startGame(gameId: string) {
           }
         ])
       ),
-
-      // Timestamps
-      startedAt: gameState.startedAt,
     };
 
-    broadcastGameStarted(gameId, gameData);
+    broadcastGameStarted(gameId, gameData); // TODO revisit this game state broadcast data
 
     return new Response(
       JSON.stringify({
-        success: true,
-        gameId: gameState.gameId,
-        status: gameState.status,
-        players: gameState.players,
-        currentPlayer: gameState.currentPlayer,
-        turnNumber: gameState.turnNumber,
-        startedAt: gameState.startedAt,
-        mapSize: gameState.mapSize,
-        cellCount: gameState.cellCount,
-        territoryStats, // Include territory stats in response
+        message: "success"
       }),
       {
         status: 200,

@@ -3,6 +3,9 @@ import { GameService } from "../game-state";
 import type { MapSize } from "../game-state/types";
 import pako from 'pako';
 
+/**
+ * Given client-generated terrain data (Uint8Array of biomes), returns gameId and joinCode on success.
+ */
 export async function createGame(req: Request) {
   try {
     // Get cell count and map size from headers
@@ -20,7 +23,7 @@ export async function createGame(req: Request) {
       });
     }
 
-    const validMapSizes: MapSize[] = ["small", "medium", "large", "xl"];
+    const validMapSizes: MapSize[] = ["small", "medium", "large", "xl"]; // TODO move to a config
     if (!validMapSizes.includes(mapSizeHeader)) {
       return new Response(
         JSON.stringify({
@@ -73,13 +76,14 @@ export async function createGame(req: Request) {
     const gameId = GameService.generateGameId();
     const joinCode = GameService.generateJoinCode();
 
-    // Create game state using the enhanced system
+    // Create game state
     const gameState = await GameService.createGame(
       gameId,
       joinCode,
       mapSizeHeader,
       cellCount,
-      "player1" // Creator is always player1
+      "player1", // Creator is always player1 (TODO CHANGE THIS TO PLAYER ACCOUNT ID/USERNAME)
+      biomes
     );
 
     // Save terrain data
@@ -93,12 +97,6 @@ export async function createGame(req: Request) {
       JSON.stringify({
         gameId: gameState.gameId,
         joinCode: gameState.joinCode,
-        status: "created",
-        mapSize: gameState.mapSize,
-        cellCount: gameState.cellCount,
-        players: gameState.players,
-        currentPlayer: gameState.currentPlayer,
-        turnNumber: gameState.turnNumber,
       }),
       {
         status: 201,

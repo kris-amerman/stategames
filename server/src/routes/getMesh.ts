@@ -1,12 +1,12 @@
 import { CORS_HEADERS } from "..";
-import type { MapSize } from "../mesh";
+import type { MapSize, SerializedMeshData } from "../mesh";
 import { meshService } from "../mesh-service";
 
 /**
- * Dynamic routes for static map meshes
+ * Dynamic routes for static map meshes. Returns SerializedMeshData on success.
  */
 export async function getMesh(sizeParam: string): Promise<Response> {
-  const validSizes: MapSize[] = ["small", "medium", "large", "xl"];
+  const validSizes: MapSize[] = ["small", "medium", "large", "xl"]; // TODO move to a config outside (single source of truth)
 
   if (!sizeParam || !validSizes.includes(sizeParam as MapSize)) {
     return new Response(
@@ -26,23 +26,10 @@ export async function getMesh(sizeParam: string): Promise<Response> {
 
   try {
     console.log(`Serving ${size} mesh data...`);
-    const startTime = Date.now();
-
-    const meshData = await meshService.getSerializedMeshData(size);
-
-    const duration = Date.now() - startTime;
-    console.log(`✅ Served ${size} mesh in ${duration}ms`);
-
+    const meshData: SerializedMeshData = await meshService.getSerializedMeshData(size);
     return new Response(
       JSON.stringify({
-        size,
         meshData,
-        meta: {
-          cellCount: meshData.cellOffsets.length - 1,
-          vertexCount: meshData.allVertices.length / 2,
-          generatedAt: new Date().toISOString(),
-          responseTimeMs: duration,
-        },
       }),
       {
         headers: {

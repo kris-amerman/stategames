@@ -1,6 +1,9 @@
 import { broadcastPlayerJoined, CORS_HEADERS } from "..";
 import { GameService } from "../game-state";
 
+/**
+ * Given joinCode, returns gameId and players on success.
+ */
 export async function joinGame(joinCode: string) {
   try {
     if (!joinCode) {
@@ -26,7 +29,7 @@ export async function joinGame(joinCode: string) {
       });
     }
 
-    const { gameState, playerName } = result;
+    const { gameState, playerName } = result; // TODO: get player name from joiner's account ID/username
 
     console.log(
       `Player ${playerName} joined game ${gameState.gameId} (${gameState.players.length} total players)`
@@ -37,15 +40,9 @@ export async function joinGame(joinCode: string) {
 
     return new Response(
       JSON.stringify({
-        success: true,
         gameId: gameState.gameId,
-        playerName,
         players: gameState.players,
-        status: gameState.status,
-        mapSize: gameState.mapSize,
-        cellCount: gameState.cellCount,
-        currentPlayer: gameState.currentPlayer,
-        turnNumber: gameState.turnNumber,
+        // mapSize: gameState.mapSize,
       }),
       {
         status: 200,

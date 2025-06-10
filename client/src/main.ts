@@ -1330,7 +1330,7 @@ function handleGameStateUpdate(data: { gameId: string, status: string, players: 
 
 // Handle game start
 function handleGameStarted(data: any) {
-  console.log('Game started with complete data:', data);
+  console.log('Game started. Received data:', data);
   
   if (data.gameId === currentGameId) {
     updateGameStatus('in_progress');
@@ -1873,28 +1873,28 @@ function updateGameStatus(status: string) {
  * Fetches complete game data (terrain + territories) from server
  * Used for reconnections and page refreshes
  */
-async function fetchGameData(gameId: string): Promise<void> {
-  try {
-    console.log(`Fetching game data for game ${gameId}...`);
+// async function fetchGameData(gameId: string): Promise<void> {
+//   try {
+//     console.log(`Fetching game data for game ${gameId}...`);
     
-    // Use the single endpoint with terrain parameter
-    const response = await fetch(`${SERVER_BASE_URL}/api/games/${gameId}`);
+//     // Use the single endpoint with terrain parameter
+//     const response = await fetch(`${SERVER_BASE_URL}/api/games/${gameId}/load`);
     
-    if (!response.ok) {
-      throw new Error(`Failed to fetch game data: ${response.status}`);
-    }
+//     if (!response.ok) {
+//       throw new Error(`Failed to fetch game data: ${response.status}`);
+//     }
     
-    const gameData = await response.json();
-    console.log('Received game data from HTTP:', gameData);
+//     const gameData = await response.json();
+//     console.log('Received game data from HTTP:', gameData);
     
-    // Process the received data
-    processGameData(gameData);
+//     // Process the received data
+//     processGameData(gameData);
     
-  } catch (error: any) {
-    console.error('Failed to fetch game data:', error);
-    showError(`Failed to load game data: ${error.message}`);
-  }
-}
+//   } catch (error: any) {
+//     console.error('Failed to fetch game data:', error);
+//     showError(`Failed to load game data: ${error.message}`);
+//   }
+// }
 
 /**
  * Processes game data received from either WebSocket or HTTP
@@ -1918,11 +1918,6 @@ function processGameData(gameData: any): void {
     // Decode terrain data from base64
     const terrainBuffer = Uint8Array.from(atob(gameData.terrain), c => c.charCodeAt(0));
     currentGameTerrain = terrainBuffer;
-    
-    // Verify terrain data matches expected size
-    if (terrainBuffer.length !== gameData.cellCount) {
-      throw new Error(`Terrain data size mismatch: expected ${gameData.cellCount}, got ${terrainBuffer.length}`);
-    }
     
     console.log(`✅ Game data processed: ${gameData.cellCount} cells, ${Object.keys(gameData.territoryData).length} owned cells`);
     console.log(`Current player: ${gameData.currentPlayer}, My turn: ${isMyTurn}`);
@@ -2047,9 +2042,9 @@ function drawTerritoryOverlay(): void {
   }
 }
 
-// Add a function to refresh game data (useful for reconnecting players)
-async function refreshGameData(): Promise<void> {
-  if (currentGameId) {
-    await fetchGameData(currentGameId);
-  }
-}
+// // Add a function to refresh game data (useful for reconnecting players)
+// async function refreshGameData(): Promise<void> {
+//   if (currentGameId) {
+//     await fetchGameData(currentGameId);
+//   }
+// }

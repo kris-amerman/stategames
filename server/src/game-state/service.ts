@@ -51,14 +51,16 @@ export class GameService {
     joinCode: string,
     mapSize: MapSize,
     cellCount: number,
-    creatorName: string = "player1"
+    creatorName: string,
+    biomes: Uint8Array
   ): Promise<GameState> {
     const gameState = GameStateManager.createInitialState(
       gameId,
       joinCode,
       [creatorName], // Start with just the creator
       mapSize,
-      cellCount
+      cellCount,
+      biomes
     );
 
     // Store in memory
@@ -181,7 +183,8 @@ export class GameService {
         gameState,
         meshData.cellNeighbors,
         meshData.cellOffsets,
-        15 // TODO set in config and figure out better divvy
+        meshData.cellCount,
+        15 //CELLS PER PLAYER TODO set in config and figure out better divvy
       );
       
       // Persist updated state

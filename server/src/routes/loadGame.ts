@@ -1,7 +1,13 @@
+// TODO: right now we store terrain data in a binary format but nothing else...we should standardize for object storage
+
+// Not being used for anything right now, but will be used (probably) when loading a game that you have already created/joined in the past
 import { CORS_HEADERS } from "..";
 import { GameService } from "../game-state";
 
-export async function getGame(gameId: string) {
+/**
+ * Return the game state for a given gameId.
+ */
+export async function loadGame(gameId: string) {
   try {
     if (!gameId) {
       return new Response(JSON.stringify({ error: "Game ID required" }), {
@@ -34,24 +40,8 @@ export async function getGame(gameId: string) {
       }
     }
 
-    // Create territory summary
-    const territoryStats = Array.from(gameState.playerCells.entries()).map(
-      ([playerId, cells]) => ({
-        playerId,
-        cellCount: cells.size,
-      })
-    );
-
-    // Create entity summary
-    const entityStats = Array.from(gameState.playerEntities.entries()).map(
-      ([playerId, entityIds]) => ({
-        playerId,
-        entityCount: entityIds.size,
-      })
-    );
-
     // Base response data
-    const responseData: any = {
+    const responseData: any = { // TODO standardize game state interface
       gameId: gameState.gameId,
       joinCode: gameState.joinCode,
       status: gameState.status,
@@ -63,8 +53,6 @@ export async function getGame(gameId: string) {
       currentPlayer: gameState.currentPlayer,
       turnNumber: gameState.turnNumber,
       territoryData,
-      territoryStats,
-      entityStats,
     };
 
     if (gameState.status !== "in_progress") {
