@@ -23,7 +23,7 @@ export async function createGame(req: Request) {
       });
     }
 
-    const validMapSizes: MapSize[] = ["small", "medium", "large", "xl"]; // TODO move to a config
+    const validMapSizes: MapSize[] = ["small", "medium", "large", "xl"]; // TODO LATER: move to a config
     if (!validMapSizes.includes(mapSizeHeader)) {
       return new Response(
         JSON.stringify({
@@ -82,7 +82,7 @@ export async function createGame(req: Request) {
       joinCode,
       mapSizeHeader,
       cellCount,
-      "player1", // Creator is always player1 (TODO CHANGE THIS TO PLAYER ACCOUNT ID/USERNAME)
+      "player1", // TODO LATER: change this to player account id/username
       biomes
     );
 

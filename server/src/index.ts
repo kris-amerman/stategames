@@ -2,7 +2,7 @@ import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame } fr
 import { setupWebSocketHandler } from "./websocket";
 import type { ServerWebSocket } from "bun";
 
-// TODO move constants and endpoints to a config to have source of truth for what is live
+// TODO LATER: move constants to a config
 export const PORT = process.env.PORT || 3000;
 export const ENDPOINTS = [
   "GET /api/mesh/small",

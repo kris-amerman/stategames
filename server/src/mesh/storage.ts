@@ -16,7 +16,6 @@ async function ensureMeshDataDir(): Promise<void> {
 
 /**
  * Saves generated mesh data to disk as JSON (only if file doesn't exist)
- * TODO: is JSON the best format? Does it matter for our use case?
  */
 export async function saveMeshData(
   size: MapSize,

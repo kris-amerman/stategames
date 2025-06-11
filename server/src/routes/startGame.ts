@@ -51,7 +51,7 @@ export async function startGame(gameId: string) {
     // Convert terrain data to base64 for JSON transmission
     const terrainBase64 = Buffer.from(terrainData).toString("base64");
 
-    // Send complete game data via WebSocket (TODO FIX THIS TO BE GAME STATE)
+    // Send complete game data via WebSocket
     const gameData = {
       gameId: gameState.gameId,
       status: gameState.status,
@@ -83,7 +83,7 @@ export async function startGame(gameId: string) {
       ),
     };
 
-    broadcastGameStarted(gameId, gameData); // TODO revisit this game state broadcast data
+    broadcastGameStarted(gameId, gameData);
 
     return new Response(
       JSON.stringify({

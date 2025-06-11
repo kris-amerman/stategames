@@ -8,7 +8,7 @@ export function generateMesh(size: MapSize): MeshData {
   console.time(`${size} mesh generation`);
 
   const { width, height, radiusOptions } = MESH_CONFIG;
-  const mesh = new DualMesh(width, height); // TODO clean up DualMesh class
+  const mesh = new DualMesh(width, height);
   const radius = radiusOptions[size];
 
   console.time("generatePoints");

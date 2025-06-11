@@ -1,5 +1,3 @@
-// TODO: right now we store terrain data in a binary format but nothing else...we should standardize for object storage
-
 // Not being used for anything right now, but will be used (probably) when loading a game that you have already created/joined in the past
 import { CORS_HEADERS } from "..";
 import { GameService } from "../game-state";
@@ -41,7 +39,7 @@ export async function loadGame(gameId: string) {
     }
 
     // Base response data
-    const responseData: any = { // TODO standardize game state interface
+    const responseData: any = {
       gameId: gameState.gameId,
       joinCode: gameState.joinCode,
       status: gameState.status,

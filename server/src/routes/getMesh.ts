@@ -6,7 +6,7 @@ import { meshService } from "../mesh-service";
  * Dynamic routes for static map meshes. Returns SerializedMeshData on success.
  */
 export async function getMesh(sizeParam: string): Promise<Response> {
-  const validSizes: MapSize[] = ["small", "medium", "large", "xl"]; // TODO move to a config outside (single source of truth)
+  const validSizes: MapSize[] = ["small", "medium", "large", "xl"]; // TODO LATER: move to a config outside (single source of truth)
 
   if (!sizeParam || !validSizes.includes(sizeParam as MapSize)) {
     return new Response(

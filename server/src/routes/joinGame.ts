@@ -29,7 +29,7 @@ export async function joinGame(joinCode: string) {
       });
     }
 
-    const { gameState, playerName } = result; // TODO: get player name from joiner's account ID/username
+    const { gameState, playerName } = result; // TODO LATER: get player name from joiner's account ID/username
 
     console.log(
       `Player ${playerName} joined game ${gameState.gameId} (${gameState.players.length} total players)`

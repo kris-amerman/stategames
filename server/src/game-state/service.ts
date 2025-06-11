@@ -184,7 +184,7 @@ export class GameService {
         meshData.cellNeighbors,
         meshData.cellOffsets,
         meshData.cellCount,
-        15 //CELLS PER PLAYER TODO set in config and figure out better divvy
+        15 // TODO LATER: set cells per player in config or pass from client and figure out better divvy
       );
       
       // Persist updated state

@@ -9,7 +9,7 @@ export class DualMesh {
   private regionWidth: number;
   private regionHeight: number;
 
-  // TODO clarify if these are in CCW order (where applicable)
+  // TODO LATER: clarify if these are in CCW order (where applicable)
 
   // raw points that make up cell vertices [x0,y0, x1,y1, …]
   // under the hood, these are the triangle centroids organized by triangle indices
@@ -75,7 +75,7 @@ export class DualMesh {
       let cx = (x0 + x1 + x2) / 3;
       let cy = (y0 + y1 + y2) / 3;
 
-      // TODO fix the "5" boundary math (supposedly half of radius)
+      // TODO LATER: fix the "5" boundary math (supposedly half of radius)
       // if any vertex sits on the left or right boundary, clamp x
       if (x0 === 0 || x1 === 0 || x2 === 0) cx = 5; 
       else if (x0 === width || x1 === width || x2 === width) cx = width - 5;
