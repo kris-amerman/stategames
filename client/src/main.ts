@@ -136,14 +136,14 @@ async function fetchMeshFromServer(size: MapSize): Promise<MeshData | null> {
     const response = await fetch(`${SERVER_BASE_URL}/api/mesh/${size}`);
     
     if (!response.ok) {
-      throw new Error(`❌ Failed to fetch ${size} mesh: ${response.status} ${response.statusText}`);
+      throw new Error(`❌ ${response.status} ${response.statusText}`);
     }
     
     const data = await response.json();
     console.timeEnd(`fetch-${size}`);
 
     // Deserialize the mesh data
-    const meshData = deserializeMeshData(data.meshData);
+    const meshData = deserializeMeshData(data);
     
     // Cache the mesh
     meshCache.set(size, meshData);
@@ -153,7 +153,7 @@ async function fetchMeshFromServer(size: MapSize): Promise<MeshData | null> {
     
     return meshData;
   } catch (error) {
-    console.error(`❌ Failed to fetch ${size} mesh:`, error);
+    console.error(error);
     meshLoadingStates.set(size, 'error');
     return null;
   }
@@ -688,9 +688,6 @@ document.getElementById("createGame")!.addEventListener("click", async () => {
   setGameButtonsState(false, "Creating...", "Join Game");
   
   try {
-    // Compress the data
-    const compressed = pako.gzip(currentCellBiomes);
-
     const response = await fetch(`${SERVER_BASE_URL}/api/games/create`, {
       method: 'POST',
       headers: {
@@ -699,7 +696,7 @@ document.getElementById("createGame")!.addEventListener("click", async () => {
         'X-Map-Size': currentMapSize,
         'Content-Encoding': 'gzip'
       },
-      body: compressed
+      body: currentCellBiomes
     });
     
     if (!response.ok) {
