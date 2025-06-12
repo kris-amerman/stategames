@@ -53,7 +53,15 @@ export interface GameMeta {
 
 /**
  * Static map/terrain information that doesn't change during gameplay.
- * Contains the environmental data that defines the unique game world.
+ * Contains ONLY the physical geography and terrain data that defines 
+ * the unique game world layout.
+ * 
+ * This data is immutable after map generation and represents the 
+ * "physical reality" of the game world - terrain types, elevation, 
+ * climate zones, etc.
+ * 
+ * Resource deposits, infrastructure, and other gameplay elements 
+ * should be stored in GameState as they can change during play.
  */
 export interface GameMap {
   /**
@@ -128,7 +136,6 @@ export interface GameState {
  * Used for transmitting the full game state over the network, typically:
  * - When a player first joins a game (initial state download)
  * - When a player reconnects after a disconnection
- * - For game state persistence
  * 
  * For incremental updates during gameplay (turn-by-turn changes), 
  * use GameStateUpdate instead to avoid retransmitting static map data and metadata.
