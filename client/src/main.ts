@@ -2,8 +2,6 @@ import { assignElevations, assignIslandElevations, ElevationConfig } from './ter
 import { assignBiomes, BiomeConfig, getBiomeName } from './terrain-gen/biomes';
 import { drawCells } from './drawCells';
 
-import pako from 'pako';
-
 let isMyTurn: boolean = false;
 
 let selectedUnitId: number | null = null;

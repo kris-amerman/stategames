@@ -22,14 +22,12 @@
   "devDependencies": {
     "@types/delaunator": "^5.0.3",
     "@types/node": "^22.15.29",
-    "@types/pako": "^2.0.3",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
   },
   "dependencies": {
     "@msgpack/msgpack": "^3.1.2",
     "delaunator": "^5.0.1",
-    "pako": "^2.1.0",
     "simplex-noise": "^4.0.3"
   }
 }
