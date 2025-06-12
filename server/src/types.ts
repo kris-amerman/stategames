@@ -1,7 +1,7 @@
 export type MapSize = "small" | "medium" | "large" | "xl";
 export type PlayerId = string;
-export type CellId = string;
-export type EntityId = string;
+export type CellId = number;
+export type EntityId = number;
 
 export type EntityType = 
   | "unit";
