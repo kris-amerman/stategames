@@ -1,4 +1,4 @@
-import { CORS_HEADERS, ENDPOINTS } from "..";
+import { CORS_HEADERS, ENDPOINTS } from "../constants";
 
 /**
  * Root endpoint - list available endpoints

@@ -1,23 +1,10 @@
+// server/src/index.ts
 import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame } from "./routes";
 import { setupWebSocketHandler } from "./websocket";
+import { ENDPOINTS, PORT } from "./constants";
+import { encode } from '@msgpack/msgpack';
 import type { ServerWebSocket } from "bun";
-
-// TODO LATER: move constants to a config
-export const PORT = process.env.PORT || 3000;
-export const ENDPOINTS = [
-  "GET /",
-  "GET /api/mesh/:sizeParam",
-  "POST /api/games/create",
-  "POST /api/games/:joinCode/join",
-  "POST /api/games/:gameId/start",
-  "GET /api/games/:gameId/load",
-  `WebSocket :${PORT}/ws`,
-];
-export const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Cell-Count, Content-Encoding, X-Map-Size",
-};
+import type { GameState, Game, GameStateUpdate } from "./types";
 
 // WebSocket state management
 export const gameRooms = new Map<string, Set<ServerWebSocket<any>>>();
@@ -99,13 +86,14 @@ const server = Bun.serve({
 });
 
 // Helper functions for WebSocket broadcasting
-export function broadcastToRoom(gameId: string, event: string, data: any) {
+export function broadcastToRoom(gameId: string, messageType: string, data: any) {
   const room = gameRooms.get(gameId);
   if (room) {
-    const message = JSON.stringify({ event, data });
+    const message = { type: messageType, data };
+    const binaryMessage = encode(message);
     room.forEach(ws => {
       try {
-        ws.send(message);
+        ws.send(binaryMessage);
       } catch (error) {
         console.error('Failed to send message to WebSocket:', error);
       }
@@ -115,49 +103,28 @@ export function broadcastToRoom(gameId: string, event: string, data: any) {
 
 export function broadcastPlayerJoined(gameId: string, players: string[], newPlayer: string) {
   console.log(`Broadcasting player_joined for ${newPlayer} in game ${gameId}`);
-  broadcastToRoom(gameId, 'player_joined', {
+  broadcastToRoom(gameId, 'PLAYER_JOINED', {
     gameId,
     players,
     newPlayer
   });
 }
 
-export function broadcastGameStarted(gameId: string, gameData: any) {
+export function broadcastGameStarted(gameId: string, game: Game) {
   console.log(`Broadcasting game_started for game ${gameId}`);
-  broadcastToRoom(gameId, 'game_started', gameData);
+  broadcastToRoom(gameId, 'FULL_GAME', game);
 }
 
-export function broadcastGameStateChange(gameId: string, gameState: any, lastAction?: any) {
-  console.log(`Broadcasting game state change for game ${gameId}`);
+export function broadcastGameStateUpdate(gameId: string, gameState: GameState, lastAction?: any) {
+  console.log(`Broadcasting game state update for game ${gameId}`);
   
-  // Create territory mapping
-  const territoryData: { [cellId: string]: string } = {};
-  for (const [playerId, cells] of gameState.playerCells.entries()) {
-    for (const cellId of cells) {
-      territoryData[cellId.toString()] = playerId;
-    }
-  }
-  
-  // Create entity mapping
-  const entityData: { [entityId: string]: any } = {};
-  for (const [entityId, entity] of gameState.entities.entries()) {
-    entityData[entityId.toString()] = {
-      id: entity.id,
-      type: entity.type,
-      owner: entity.owner,
-      cellId: entity.cellId,
-      data: entity.data
-    };
-  }
-  
-  broadcastToRoom(gameId, 'game_state_changed', {
+  const update: GameStateUpdate = {
     gameId,
-    currentPlayer: gameState.currentPlayer,
-    turnNumber: gameState.turnNumber,
-    territoryData,
-    entities: entityData,
+    state: gameState,
     lastAction
-  });
+  };
+  
+  broadcastToRoom(gameId, 'GAME_UPDATE', update);
 }
 
 console.log(`Server running`);

@@ -1,16 +1,25 @@
-import { CORS_HEADERS } from "..";
+// server/src/routes/createGame.ts
+import { CORS_HEADERS, MAP_SIZES, MAX_BIOME_ID } from "../constants";
 import { GameService } from "../game-state";
+import { decode } from '@msgpack/msgpack';
 import type { MapSize } from "../types";
-import pako from 'pako';
 
 /**
- * Given client-generated terrain data (Uint8Array of biomes), returns gameId and joinCode on success.
+ * Supported biome data formats for terrain upload
+ */
+const SUPPORTED_CONTENT_TYPES = [
+  'application/octet-stream',  // Raw binary Uint8Array
+] as const;
+
+/**
+ * Given client-generated binary terrain data, returns gameId and joinCode on success.
  */
 export async function createGame(req: Request) {
   try {
     // Get cell count and map size from headers
     const cellCount = parseInt(req.headers.get("x-cell-count") || "0");
     const mapSizeHeader = (req.headers.get("x-map-size") as MapSize) || "xl";
+    const contentType = req.headers.get("content-type") || "application/octet-stream";
 
     // Validate inputs
     if (!cellCount || cellCount <= 0) {
@@ -23,12 +32,11 @@ export async function createGame(req: Request) {
       });
     }
 
-    const validMapSizes: MapSize[] = ["small", "medium", "large", "xl"]; // TODO LATER: move to a config
-    if (!validMapSizes.includes(mapSizeHeader)) {
+    if (!MAP_SIZES.includes(mapSizeHeader)) {
       return new Response(
         JSON.stringify({
           error: "Invalid map size",
-          validSizes: validMapSizes,
+          validSizes: MAP_SIZES,
           received: mapSizeHeader,
         }),
         {
@@ -41,26 +49,90 @@ export async function createGame(req: Request) {
       );
     }
 
-    // Read and validate terrain data
-    const arrayBuffer = await req.arrayBuffer();
-    let biomes: Uint8Array;
-
-    // Check if data is compressed
-    const contentEncoding = req.headers.get("content-encoding");
-    if (contentEncoding === "gzip") {
-      const compressedData = new Uint8Array(arrayBuffer);
-      biomes = pako.ungzip(compressedData);
-    } else {
-      biomes = new Uint8Array(arrayBuffer);
+    // Validate content type
+    if (!SUPPORTED_CONTENT_TYPES.includes(contentType as any)) {
+      return new Response(
+        JSON.stringify({
+          error: "Unsupported content type for biome data",
+          supportedTypes: SUPPORTED_CONTENT_TYPES,
+          received: contentType
+        }),
+        {
+          status: 415, // Unsupported Media Type
+          headers: {
+            "Content-Type": "application/json",
+            ...CORS_HEADERS,
+          },
+        }
+      );
     }
 
-    // Validate terrain data
+    // Parse biome data based on content type
+    let biomes: Uint8Array;
+    
+    try {
+      switch (contentType) {
+        case 'application/octet-stream':
+          // Raw binary data - should already be Uint8Array
+          const arrayBuffer = await req.arrayBuffer();
+          biomes = new Uint8Array(arrayBuffer);
+          break;
+          
+        default:
+          throw new Error(`Unsupported content type: ${contentType}`);
+      }
+    } catch (parseError: any) {
+      return new Response(
+        JSON.stringify({
+          error: "Failed to parse biome data",
+          contentType,
+          details: parseError.message,
+          hint: "Ensure data format matches content-type header"
+        }),
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json",
+            ...CORS_HEADERS,
+          },
+        }
+      );
+    }
+
+    // Validate biome data length
     if (biomes.length !== cellCount) {
       return new Response(
         JSON.stringify({
           error: "Biome data length mismatch",
           expected: cellCount,
           received: biomes.length,
+          hint: "Biome array length must match x-cell-count header"
+        }),
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json",
+            ...CORS_HEADERS,
+          },
+        }
+      );
+    }
+
+    // Validate biome values are in valid range (0-MAX_BIOME_ID)
+    const invalidIndices: number[] = [];
+    for (let i = 0; i < biomes.length && invalidIndices.length < 5; i++) {
+      if (biomes[i] > MAX_BIOME_ID) {
+        invalidIndices.push(i);
+      }
+    }
+    
+    if (invalidIndices.length > 0) {
+      return new Response(
+        JSON.stringify({
+          error: "Invalid biome values detected",
+          invalidIndices: invalidIndices.slice(0, 5),
+          maxValue: MAX_BIOME_ID,
+          hint: `All biome values must be 0-${MAX_BIOME_ID}`
         }),
         {
           status: 400,
@@ -76,27 +148,24 @@ export async function createGame(req: Request) {
     const gameId = GameService.generateGameId();
     const joinCode = GameService.generateJoinCode();
 
-    // Create game state
-    const gameState = await GameService.createGame(
+    // Create game
+    const game = await GameService.createGame(
       gameId,
       joinCode,
       mapSizeHeader,
       cellCount,
-      "player1", // TODO LATER: change this to player account id/username
+      "player1", // TODO: change this to player account id/username
       biomes
     );
 
-    // Save terrain data
-    await GameService.saveTerrainData(gameId, biomes);
-
     console.log(
-      `Created game ${gameId} with join code ${joinCode} (${mapSizeHeader}, ${cellCount} cells)`
+      `Created game ${gameId} with join code ${joinCode} (${mapSizeHeader}, ${cellCount} cells, ${contentType})`
     );
 
     return new Response(
       JSON.stringify({
-        gameId: gameState.gameId,
-        joinCode: gameState.joinCode,
+        gameId: game.meta.gameId,
+        joinCode: game.meta.joinCode,
       }),
       {
         status: 201,

@@ -1,8 +1,9 @@
+// server/src/mesh/generator.ts
 import Delaunator from "delaunator";
 import { generatePoints } from "./seed-points";
 import { DualMesh } from "./dual-mesh";
-import { MESH_CONFIG } from "./config";
-import type { MeshData, MapSize } from "./types";
+import type { MeshData, MapSize } from "../types";
+import { MESH_CONFIG } from "../constants";
 
 export function generateMesh(size: MapSize): MeshData {
   console.time(`${size} mesh generation`);

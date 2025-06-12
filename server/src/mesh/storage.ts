@@ -1,9 +1,10 @@
+// server/src/mesh/storage.ts
 import { writeFile, readFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
-import { MESH_DATA_DIR, getMeshFileName } from "./config";
-import { serializeMeshData, deserializeMeshData } from "./serializer";
-import type { MeshData, SerializedMeshData, MapSize } from "./types";
+import { encode, decode } from '@msgpack/msgpack';
+import type { MeshData, MapSize } from "../types";
+import { MESH_DATA_DIR } from "../constants";
 
 /**
  * Ensures the mesh data directory exists
@@ -15,7 +16,15 @@ async function ensureMeshDataDir(): Promise<void> {
 }
 
 /**
- * Saves generated mesh data to disk as JSON (only if file doesn't exist)
+ * Gets the full file path for a mesh file (always binary)
+ */
+function getMeshFilePath(size: MapSize): string {
+  const filename = `${size}-mesh.msgpack`;
+  return join(MESH_DATA_DIR, filename);
+}
+
+/**
+ * Saves generated mesh data to disk as MessagePack binary (only if file doesn't exist)
  */
 export async function saveMeshData(
   size: MapSize,
@@ -23,7 +32,7 @@ export async function saveMeshData(
 ): Promise<void> {
   await ensureMeshDataDir();
 
-  const filePath = join(MESH_DATA_DIR, getMeshFileName(size));
+  const filePath = getMeshFilePath(size);
 
   // Safety check: never overwrite existing mesh files
   if (existsSync(filePath)) {
@@ -34,8 +43,9 @@ export async function saveMeshData(
     );
   }
 
-  const serialized = serializeMeshData(meshData);
-  await writeFile(filePath, JSON.stringify(serialized, null, 2));
+  const binaryData = encode(meshData);
+  await writeFile(filePath, binaryData);
+
   console.log(`✅ Saved ${size} mesh to ${filePath}`);
 }
 
@@ -43,16 +53,15 @@ export async function saveMeshData(
  * Loads mesh data from disk
  */
 export async function loadMeshData(size: MapSize): Promise<MeshData | null> {
-  const filePath = join(MESH_DATA_DIR, getMeshFileName(size));
+  const filePath = getMeshFilePath(size);
 
   if (!existsSync(filePath)) {
     return null;
   }
 
   try {
-    const fileContent = await readFile(filePath, "utf-8");
-    const serialized: SerializedMeshData = JSON.parse(fileContent);
-    return deserializeMeshData(serialized);
+    const binaryData = await readFile(filePath);
+    return decode(binaryData) as MeshData;
   } catch (error) {
     console.error(`Failed to load mesh data for ${size}:`, error);
     return null;
@@ -63,6 +72,6 @@ export async function loadMeshData(size: MapSize): Promise<MeshData | null> {
  * Checks if mesh data exists for a given size
  */
 export function meshDataExists(size: MapSize): boolean {
-  const filePath = join(MESH_DATA_DIR, getMeshFileName(size));
+  const filePath = getMeshFilePath(size);
   return existsSync(filePath);
 }

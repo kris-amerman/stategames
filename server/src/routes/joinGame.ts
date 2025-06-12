@@ -1,5 +1,7 @@
-import { broadcastPlayerJoined, CORS_HEADERS } from "..";
+// server/src/routes/joinGame.ts
+import { CORS_HEADERS } from "../constants";
 import { GameService } from "../game-state";
+import { broadcastPlayerJoined } from "..";
 
 /**
  * Given joinCode, returns gameId and players on success.
@@ -29,20 +31,19 @@ export async function joinGame(joinCode: string) {
       });
     }
 
-    const { gameState, playerName } = result; // TODO LATER: get player name from joiner's account ID/username
+    const { game, playerName } = result;
 
     console.log(
-      `Player ${playerName} joined game ${gameState.gameId} (${gameState.players.length} total players)`
+      `Player ${playerName} joined game ${game.meta.gameId} (${game.meta.players.length} total players)`
     );
 
     // Broadcast to other players in the game room
-    broadcastPlayerJoined(gameState.gameId, gameState.players, playerName);
+    broadcastPlayerJoined(game.meta.gameId, game.meta.players, playerName);
 
     return new Response(
       JSON.stringify({
-        gameId: gameState.gameId,
-        players: gameState.players,
-        // mapSize: gameState.mapSize,
+        gameId: game.meta.gameId,
+        players: game.meta.players,
       }),
       {
         status: 200,

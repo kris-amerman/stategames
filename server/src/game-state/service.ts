@@ -1,12 +1,15 @@
 // server/src/game-state/service.ts
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { encode, decode } from '@msgpack/msgpack';
 import { GameStateManager } from './manager';
-import type { GameState, SerializableGameState, MapSize } from '../types';
+import type { Game, GameState, GameMeta, GameMap, MapSize } from '../types';
 
-// In-memory game state store (replace with database later)
-const gameStates = new Map<string, GameState>();
+// In-memory game store (replace with database later)
+const gameStates = new Map<string, Game>();
+
+// Configuration flag for serialization format
+const USE_BINARY_STORAGE = false; // Set to true to use MessagePack for GameMeta/GameState
 
 export class GameService {
   
@@ -18,29 +21,84 @@ export class GameService {
     }
   }
 
-  static async saveGameState(gameState: GameState): Promise<void> {
+  static async saveGame(game: Game): Promise<void> {
     await this.ensureMapsDir();
     
-    const serialized = GameStateManager.serialize(gameState);
-    const filePath = `maps/${gameState.gameId}.state.json`;
-    
-    await writeFile(filePath, JSON.stringify(serialized, null, 2));
+    if (USE_BINARY_STORAGE) {
+      // MessagePack binary storage
+      const filePath = `maps/${game.meta.gameId}.game.msgpack`;
+      const binaryData = encode(game);
+      await writeFile(filePath, binaryData);
+    } else {
+      // JSON storage for debugging
+      const filePath = `maps/${game.meta.gameId}.game.json`;
+      await writeFile(filePath, JSON.stringify(game, null, 2));
+    }
   }
 
-  private static async loadGameState(gameId: string): Promise<GameState | null> {
-    const filePath = `maps/${gameId}.state.json`;
+  static async saveGameMap(gameId: string, gameMap: GameMap): Promise<void> {
+    await this.ensureMapsDir();
+    
+    // Always use MessagePack for GameMap due to large Uint8Array
+    const filePath = `maps/${gameId}.map.msgpack`;
+    const binaryData = encode(gameMap);
+    await writeFile(filePath, binaryData);
+  }
+
+  static async loadGameMap(gameId: string): Promise<GameMap | null> {
+    const filePath = `maps/${gameId}.map.msgpack`;
     
     if (!existsSync(filePath)) {
       return null;
     }
 
     try {
-      const fileContent = await readFile(filePath, 'utf-8');
-      const serialized: SerializableGameState = JSON.parse(fileContent);
-      return GameStateManager.deserialize(serialized);
+      const data = await readFile(filePath);
+      return decode(data) as GameMap;
     } catch (error) {
-      console.error(`Failed to load game state for ${gameId}:`, error);
+      console.error(`Failed to load game map for ${gameId}:`, error);
       return null;
+    }
+  }
+
+  private static async loadGame(gameId: string): Promise<Game | null> {
+    if (USE_BINARY_STORAGE) {
+      // MessagePack binary loading
+      const filePath = `maps/${gameId}.game.msgpack`;
+      
+      if (!existsSync(filePath)) {
+        return null;
+      }
+
+      try {
+        const data = await readFile(filePath);
+        return decode(data) as Game;
+      } catch (error) {
+        console.error(`Failed to load game for ${gameId}:`, error);
+        return null;
+      }
+    } else {
+      // JSON loading
+      const filePath = `maps/${gameId}.game.json`;
+      
+      if (!existsSync(filePath)) {
+        return null;
+      }
+
+      try {
+        const fileContent = await readFile(filePath, 'utf-8');
+        const game: Game = JSON.parse(fileContent);
+        
+        // Convert biomes back to Uint8Array if it was serialized as regular array
+        if (Array.isArray(game.map.biomes)) {
+          game.map.biomes = new Uint8Array(game.map.biomes);
+        }
+        
+        return game;
+      } catch (error) {
+        console.error(`Failed to load game for ${gameId}:`, error);
+        return null;
+      }
     }
   }
 
@@ -53,67 +111,97 @@ export class GameService {
     cellCount: number,
     creatorName: string,
     biomes: Uint8Array
-  ): Promise<GameState> {
-    const gameState = GameStateManager.createInitialState(
+  ): Promise<Game> {
+    const game = GameStateManager.createCompleteGame(
       gameId,
       joinCode,
       [creatorName], // Start with just the creator
       mapSize,
-      cellCount,
       biomes
     );
 
     // Store in memory
-    gameStates.set(gameId, gameState);
+    gameStates.set(gameId, game);
     
     // Persist to disk
-    await this.saveGameState(gameState);
+    await this.saveGame(game);
+    await this.saveGameMap(gameId, game.map);
     
     console.log(`Created game ${gameId} with join code ${joinCode} (${mapSize}, ${cellCount} cells)`);
     
-    return gameState;
+    return game;
   }
 
-  static async getGameState(gameId: string): Promise<GameState | null> {
+  static async getGame(gameId: string): Promise<Game | null> {
     // Check in-memory first
     if (gameStates.has(gameId)) {
       return gameStates.get(gameId)!;
     }
 
     // Try to load from disk
-    const gameState = await this.loadGameState(gameId);
-    if (gameState) {
+    const game = await this.loadGame(gameId);
+    if (game) {
+      // Load the map separately
+      const gameMap = await this.loadGameMap(gameId);
+      if (gameMap) {
+        game.map = gameMap;
+      }
+      
       // Cache in memory for future requests
-      gameStates.set(gameId, gameState);
-      return gameState;
+      gameStates.set(gameId, game);
+      return game;
     }
 
     return null;
   }
 
-  static async findGameByJoinCode(joinCode: string): Promise<GameState | null> {
+  static async getGameState(gameId: string): Promise<GameState | null> {
+    const game = await this.getGame(gameId);
+    return game ? game.state : null;
+  }
+
+  static async getGameMeta(gameId: string): Promise<GameMeta | null> {
+    const game = await this.getGame(gameId);
+    return game ? game.meta : null;
+  }
+
+  static async getGameMap(gameId: string): Promise<GameMap | null> {
+    const game = await this.getGame(gameId);
+    return game ? game.map : null;
+  }
+
+  static async saveGameState(gameState: GameState, gameId: string): Promise<void> {
+    const game = gameStates.get(gameId);
+    if (game) {
+      game.state = gameState;
+      await this.saveGame(game);
+    }
+  }
+
+  static async findGameByJoinCode(joinCode: string): Promise<Game | null> {
     const upperJoinCode = joinCode.toUpperCase();
 
     // Search in-memory games first
-    for (const gameState of gameStates.values()) {
-      if (gameState.joinCode === upperJoinCode) {
-        return gameState;
+    for (const game of gameStates.values()) {
+      if (game.meta.joinCode === upperJoinCode) {
+        return game;
       }
     }
 
     // Search filesystem if not found in memory
     try {
       if (existsSync('maps')) {
-        const files = readdirSync('maps').filter(f => f.endsWith('.state.json'));
+        const fileExtension = USE_BINARY_STORAGE ? '.game.msgpack' : '.game.json';
+        const files = readdirSync('maps').filter(f => f.endsWith(fileExtension));
         
         for (const file of files) {
-          const gameId = file.replace('.state.json', '');
-          const gameState = await this.loadGameState(gameId);
+          const gameId = file.replace(fileExtension, '');
+          const game = await this.loadGame(gameId);
           
-          if (gameState && gameState.joinCode === upperJoinCode) {
+          if (game && game.meta.joinCode === upperJoinCode) {
             // Cache in memory for future requests
-            gameStates.set(gameId, gameState);
-            return gameState;
+            gameStates.set(gameId, game);
+            return game;
           }
         }
       }
@@ -124,48 +212,51 @@ export class GameService {
     return null;
   }
 
-  static async joinGame(joinCode: string): Promise<{ gameState: GameState; playerName: string } | null> {
-    const gameState = await this.findGameByJoinCode(joinCode);
+  static async joinGame(joinCode: string): Promise<{ game: Game; playerName: string } | null> {
+    const game = await this.findGameByJoinCode(joinCode);
     
-    if (!gameState) {
+    if (!game) {
       return null;
     }
 
-    if (!GameStateManager.canPlayerJoin(gameState)) {
-      throw new Error(`Game is no longer accepting players (status: ${gameState.status})`);
+    if (!GameStateManager.canPlayerJoin(game.state)) {
+      throw new Error(`Game is no longer accepting players (status: ${game.state.status})`);
     }
 
     // Generate new player name
-    const playerNumber = gameState.players.length + 1;
+    const playerNumber = game.meta.players.length + 1;
     const newPlayerName = `player${playerNumber}`;
 
+    // Update meta with new player
+    game.meta.players.push(newPlayerName);
+
     // Add player to game state
-    const success = GameStateManager.addPlayer(gameState, newPlayerName);
+    const success = GameStateManager.addPlayer(game.state, newPlayerName);
     if (!success) {
       throw new Error('Failed to add player to game');
     }
 
     // Persist updated state
-    await this.saveGameState(gameState);
+    await this.saveGame(game);
 
-    console.log(`Player ${newPlayerName} joined game ${gameState.gameId} (${gameState.players.length} total players)`);
+    console.log(`Player ${newPlayerName} joined game ${game.meta.gameId} (${game.meta.players.length} total players)`);
 
-    return { gameState, playerName: newPlayerName };
+    return { game, playerName: newPlayerName };
   }
 
-  static async startGame(gameId: string): Promise<GameState | null> {
-    const gameState = await this.getGameState(gameId);
+  static async startGame(gameId: string): Promise<Game | null> {
+    const game = await this.getGame(gameId);
     
-    if (!gameState) {
+    if (!game) {
       return null;
     }
 
-    if (gameState.status !== "waiting") {
-      throw new Error(`Game cannot be started (current status: ${gameState.status})`);
+    if (game.state.status !== "waiting") {
+      throw new Error(`Game cannot be started (current status: ${game.state.status})`);
     }
 
-    if (gameState.players.length < 2) {
-      throw new Error(`Not enough players to start game (${gameState.players.length}/2 minimum)`);
+    if (game.meta.players.length < 2) {
+      throw new Error(`Not enough players to start game (${game.meta.players.length}/2 minimum)`);
     }
 
     // Import mesh service to get the mesh data for territory assignment
@@ -173,26 +264,26 @@ export class GameService {
     
     try {
       // Get mesh data for this game's map size
-      const meshData = await meshService.getMeshData(gameState.mapSize);
+      const meshData = await meshService.getMeshData(game.meta.mapSize);
       
       // Update game state to started
-      GameStateManager.startGame(gameState);
+      GameStateManager.startGame(game.state);
       
       // Assign starting territories using the mesh data
       GameStateManager.assignStartingTerritories(
-        gameState,
+        game.state,
         meshData.cellNeighbors,
         meshData.cellOffsets,
         meshData.cellCount,
-        15 // TODO LATER: set cells per player in config or pass from client and figure out better divvy
+        15 // TODO: set cells per player in config or pass from client and figure out better divvy
       );
       
       // Persist updated state
-      await this.saveGameState(gameState);
+      await this.saveGame(game);
 
-      console.log(`Game ${gameId} started with ${gameState.players.length} players, territories assigned`);
+      console.log(`Game ${gameId} started with ${game.meta.players.length} players, territories assigned`);
 
-      return gameState;
+      return game;
       
     } catch (error) {
       console.error(`Failed to assign starting territories for game ${gameId}:`, error);
@@ -200,27 +291,17 @@ export class GameService {
     }
   }
 
-  // === TERRAIN DATA ===
+  // === TERRAIN DATA (LEGACY METHODS - DEPRECATED) ===
 
   static async saveTerrainData(gameId: string, biomes: Uint8Array): Promise<void> {
-    await this.ensureMapsDir();
-    await writeFile(`maps/${gameId}.terrain`, biomes);
+    // This is now handled by saveGameMap
+    const gameMap: GameMap = { biomes };
+    await this.saveGameMap(gameId, gameMap);
   }
 
   static async loadTerrainData(gameId: string): Promise<Uint8Array | null> {
-    const filePath = `maps/${gameId}.terrain`;
-    
-    if (!existsSync(filePath)) {
-      return null;
-    }
-
-    try {
-      const data = await readFile(filePath);
-      return new Uint8Array(data);
-    } catch (error) {
-      console.error(`Failed to load terrain data for ${gameId}:`, error);
-      return null;
-    }
+    const gameMap = await this.loadGameMap(gameId);
+    return gameMap ? gameMap.biomes : null;
   }
 
   // === UTILITY ===
@@ -233,7 +314,7 @@ export class GameService {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
   }
 
-  static getAllGameStates(): GameState[] {
+  static getAllGames(): Game[] {
     return Array.from(gameStates.values());
   }
 

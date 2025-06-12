@@ -1,12 +1,10 @@
-// Fix 1: Move the websocket handler to a separate file that doesn't create circular dependencies
-// Create server/src/game-actions/handler.ts
-
+// server/src/game-actions/handler.ts
 import type { ServerWebSocket } from "bun";
 import { GameService } from "../game-state";
 import { GameStateManager } from "../game-state";
 import { meshService } from "../mesh-service";
-import { EntityType } from "../types";
-import { broadcastGameStateChange } from "../index";
+import type { Entity } from "../types";
+import { broadcastGameStateUpdate } from "../index";
 
 export async function handleGameAction(ws: ServerWebSocket<any>, data: any) {
   const { actionType, gameId, playerId, ...actionData } = data;
@@ -50,10 +48,10 @@ export async function handleGameAction(ws: ServerWebSocket<any>, data: any) {
     }
     
     if (actionResult.success) {
-      await GameService.saveGameState(gameState);
+      await GameService.saveGameState(gameState, gameId);
       sendActionResult(ws, true, actionResult.message);
       
-      broadcastGameStateChange(gameId, gameState, {
+      broadcastGameStateUpdate(gameId, gameState, {
         actionType,
         playerId,
         details: actionData
@@ -79,7 +77,7 @@ export async function handlePlaceEntityAction(gameState: any, playerId: string, 
   const { cellId, entityType } = actionData;
   
   // Validate the action
-  if (typeof cellId !== 'number' || cellId < 0 || cellId >= gameState.cellCount) {
+  if (typeof cellId !== 'number' || cellId < 0) {
     return { success: false, error: 'Invalid cell ID' };
   }
   
@@ -88,23 +86,23 @@ export async function handlePlaceEntityAction(gameState: any, playerId: string, 
   }
   
   // Check if player owns the cell
-  const cellOwner = gameState.cellOwnership.get(cellId);
+  const cellOwner = gameState.cellOwnership[cellId];
   if (cellOwner !== playerId) {
     return { success: false, error: 'You can only place entities on your own territory' };
   }
   
   // Check if cell already has entities (for now, limit one unit per cell)
-  const existingEntities = gameState.cellEntities.get(cellId) || new Set();
-  if (existingEntities.size > 0) {
+  const existingEntities = gameState.cellEntities[cellId] || [];
+  if (existingEntities.length > 0) {
     return { success: false, error: 'Cell already contains an entity' };
   }
   
   // Create the entity
   const entityId = GameStateManager.getNextEntityId(gameState);
   
-  const entity = {
+  const entity: Entity = {
     id: entityId,
-    type: EntityType.UNIT,
+    type: "unit",
     owner: playerId,
     cellId: cellId,
     data: {
@@ -160,11 +158,6 @@ export async function handleMoveUnitAction(gameState: any, playerId: string, act
     return { success: false, error: 'Invalid action parameters' };
   }
   
-  if (parsedFromCellId < 0 || parsedFromCellId >= gameState.cellCount || 
-      parsedToCellId < 0 || parsedToCellId >= gameState.cellCount) {
-    return { success: false, error: 'Invalid cell IDs' };
-  }
-  
   // Get the entity - try both string and number versions of unitId
   let entity = GameStateManager.getEntity(gameState, parseInt(parsedUnitId));
   if (!entity) {
@@ -175,7 +168,7 @@ export async function handleMoveUnitAction(gameState: any, playerId: string, act
   if (!entity) {
     console.log('Entity not found:', { 
       parsedUnitId, 
-      availableEntities: Array.from(gameState.entities.keys())
+      availableEntities: Object.keys(gameState.entities)
     });
     return { success: false, error: 'Unit not found' };
   }
@@ -203,7 +196,12 @@ export async function handleMoveUnitAction(gameState: any, playerId: string, act
   }
   
   // Get mesh data to validate adjacency
-  const meshData = await meshService.getMeshData(gameState.mapSize);
+  const game = await GameService.getGame(gameState.gameId);
+  if (!game) {
+    return { success: false, error: 'Game not found' };
+  }
+  
+  const meshData = await meshService.getMeshData(game.meta.mapSize);
   
   // Check if movement is within unit's range
   const moveDistance = calculateCellDistance(parsedFromCellId, parsedToCellId, meshData);
@@ -304,10 +302,16 @@ export async function handleEndTurnAction(gameState: any, playerId: string, acti
   // Reset unit movement flags for the current player
   resetPlayerUnitMovement(gameState, playerId);
   
+  // Get the game to access player list from meta
+  const game = await GameService.getGame(gameState.gameId);
+  if (!game) {
+    return { success: false, error: 'Game not found' };
+  }
+  
   // Advance to next player
-  const currentPlayerIndex = gameState.players.indexOf(playerId);
-  const nextPlayerIndex = (currentPlayerIndex + 1) % gameState.players.length;
-  const nextPlayer = gameState.players[nextPlayerIndex];
+  const currentPlayerIndex = game.meta.players.indexOf(playerId);
+  const nextPlayerIndex = (currentPlayerIndex + 1) % game.meta.players.length;
+  const nextPlayer = game.meta.players[nextPlayerIndex];
   
   // Update game state
   gameState.currentPlayer = nextPlayer;
@@ -326,10 +330,10 @@ export async function handleEndTurnAction(gameState: any, playerId: string, acti
 }
 
 function resetPlayerUnitMovement(gameState: any, playerId: string): void {
-  const playerEntities = gameState.playerEntities.get(playerId) || new Set();
+  const playerEntities = gameState.playerEntities[playerId] || [];
   
   for (const entityId of playerEntities) {
-    const entity = gameState.entities.get(entityId);
+    const entity = gameState.entities[entityId];
     if (entity && entity.data.hasMoved) {
       entity.data.hasMoved = false;
       console.log(`Reset movement for unit ${entityId}`);
