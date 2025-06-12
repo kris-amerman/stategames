@@ -8,7 +8,7 @@ import type {
   Entity, 
   EntityType,
   MapSize 
-} from './types';
+} from '../types';
 
 export class GameStateManager {
   

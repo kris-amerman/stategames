@@ -1,6 +1,6 @@
 import { CORS_HEADERS } from "..";
 import { GameService } from "../game-state";
-import type { MapSize } from "../game-state/types";
+import type { MapSize } from "../types";
 import pako from 'pako';
 
 /**

@@ -5,7 +5,7 @@ import type { ServerWebSocket } from "bun";
 import { GameService } from "../game-state";
 import { GameStateManager } from "../game-state";
 import { meshService } from "../mesh-service";
-import { EntityType } from "../game-state/types";
+import { EntityType } from "../types";
 import { broadcastGameStateChange } from "../index";
 
 export async function handleGameAction(ws: ServerWebSocket<any>, data: any) {

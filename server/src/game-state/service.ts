@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { GameStateManager } from './manager';
-import type { GameState, SerializableGameState, MapSize } from './types';
+import type { GameState, SerializableGameState, MapSize } from '../types';
 
 // In-memory game state store (replace with database later)
 const gameStates = new Map<string, GameState>();

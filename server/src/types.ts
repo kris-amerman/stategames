@@ -3,9 +3,8 @@ export type PlayerId = string;
 export type CellId = string;
 export type EntityId = string;
 
-export enum EntityType {
-  UNIT = "unit",
-}
+export type EntityType = 
+  | "unit";
 
 export interface Entity {
   id: EntityId;
@@ -15,27 +14,37 @@ export interface Entity {
   data: Record<string, any>;
 }
 
+export type ActionType =
+  | "move"
+  | "attack"
+  | "build"
+  | "end_turn"
+  | "research"
+  | "recruit";
+
 /**
  * Static game metadata that never changes after game creation.
  * This includes basic information about the game session and its participants.
+ * 
+ * 
  */
 export interface GameMeta {
   /** Unique identifier for this game instance */
   gameId: string;
-  
+
   /** Short code players can use to join this game (e.g., "ABC123") */
   joinCode: string;
-  
+
   /** ISO timestamp of when this game was created */
   createdAt: string;
-  
-  /** 
+
+  /**
    * List of all players in this game, in turn order.
    * The first player in the array goes first, etc.
    */
   players: PlayerId[];
-  
-  /** 
+
+  /**
    * Size of the map for this game.
    * Determines which mesh to use.
    */
@@ -47,7 +56,7 @@ export interface GameMeta {
  * Contains the environmental data that defines the unique game world.
  */
 export interface GameMap {
-  /** 
+  /**
    * Biome for each cell on the map.
    * Each byte represents a biome ID for the corresponding cell.
    * Array length equals the number of cells in the associated mesh.
@@ -62,50 +71,50 @@ export interface GameMap {
 export interface GameState {
   /** Current phase of the game */
   status: "waiting" | "in_progress" | "finished";
-  
+
   /** ID of the player whose turn it currently is */
   currentPlayer: PlayerId;
-  
+
   /** Current turn number (increments when all players have taken their turn) */
   turnNumber: number;
 
-  /** 
+  /**
    * Maps each cell to its current owner.
    * Key: CellId, Value: PlayerId who owns that cell
    */
   cellOwnership: { [cellId: CellId]: PlayerId };
-  
-  /** 
+
+  /**
    * Maps each player to the cells they own.
    * Key: PlayerId, Value: Array of CellIds owned by that player
    */
   playerCells: { [playerId: PlayerId]: CellId[] };
 
-  /** 
+  /**
    * Maps entity IDs to their full entity data.
    * Key: EntityId, Value: Complete Entity object
    */
   entities: { [entityId: EntityId]: Entity };
-  
-  /** 
+
+  /**
    * Maps each cell to the entities currently on it.
    * Key: CellId, Value: Array of EntityIds on that cell
    */
   cellEntities: { [cellId: CellId]: EntityId[] };
-  
-  /** 
+
+  /**
    * Maps each player to the entities they own.
    * Key: PlayerId, Value: Array of EntityIds owned by that player
    */
   playerEntities: { [playerId: PlayerId]: EntityId[] };
-  
-  /** 
+
+  /**
    * Maps entity types to all entities of that type.
    * Key: EntityType as string, Value: Array of EntityIds of that type
    */
-  entitiesByType: { [entityType: string]: EntityId[] };
-  
-  /** 
+  entitiesByType: { [K in EntityType]: EntityId[] };
+
+  /**
    * Counter for generating unique entity IDs.
    * Incremented each time a new entity is created.
    */
@@ -115,64 +124,111 @@ export interface GameState {
 /**
  * Complete game representation containing all game data.
  * This is the main interface that combines metadata, map, and dynamic state.
+ * 
+ * Used for transmitting the full game state over the network, typically:
+ * - When a player first joins a game (initial state download)
+ * - When a player reconnects after a disconnection
+ * - For game state persistence
+ * 
+ * For incremental updates during gameplay (turn-by-turn changes), 
+ * use GameStateUpdate instead to avoid retransmitting static map data and metadata.
+ * 
+ * NOTE: This interface may contain TypedArrays (e.g., Uint8Array),
+ * complex nested objects, and other data types that are not directly JSON-serializable.
+ * Consider using binary serialization formats (e.g., MessagePack) for network
+ * transmission, or implement custom serialization logic if using JSON.
  */
 export interface Game {
   /** Static game metadata (never changes) */
   meta: GameMeta;
-  
+
   /** Static map/terrain data (never changes during gameplay) */
   map: GameMap;
-  
+
   /** Dynamic game state (changes as game progresses) */
   state: GameState;
-}
-
-// ============================================================================
-// TRANSMISSION FORMATS
-// ============================================================================
-
-/**
- * Format for transmitting complete game data over WebSocket.
- * Used when clients need the full game state (e.g., on game start).
- * 
- * The mapData is compressed binary data to minimize transmission size.
- * Clients receive this as a binary WebSocket message with embedded JSON.
- */
-export interface GameTransmission {
-  /** Static game metadata */
-  meta: GameMeta;
-  
-  /** Current dynamic game state */
-  state: GameState;
-  
-  /** 
-   * Compressed binary representation of the GameMap.
-   * Contains gzipped biome data that clients must decompress.
-   */
-  compressedMap: ArrayBuffer;
 }
 
 /**
  * Format for transmitting game state updates during gameplay.
  * Used for incremental updates when only the game state changes
  * (territory ownership, entity movements, turn progression, etc.).
- * 
+ *
  * Does not include map data since terrain doesn't change during gameplay.
+ * 
+ * NOTE: Like the Game interface, this may contain TypedArrays
+ * and complex nested objects that require binary serialization for network transmission.
  */
 export interface GameStateUpdate {
   /** ID of the game being updated */
   gameId: string;
-  
+
   /** The updated game state */
   state: GameState;
-  
-  /** 
+
+  /**
    * Optional information about the last action that caused this update.
-   * Used for displaying notifications and game history.
+   * Should be omitted for system-generated updates.
    */
   lastAction?: {
-    actionType: string;
+    actionType: ActionType;
     playerId: PlayerId;
     details: Record<string, any>;
   };
+}
+
+/**
+ * Geometric mesh data for a dual-cell mesh constructed from a Delaunay triangulation.
+ * 
+ * This represents the dual mesh where each cell corresponds to an interior point from
+ * the original Delaunay triangulation, and the cell vertices are the centroids of 
+ * triangles that surround that point.
+ * 
+ * NOTE: Uses TypedArrays that require binary serialization 
+ * (e.g., MessagePack) for efficient storage and network transmission.
+ */
+export interface MeshData {
+  /**
+   * Raw coordinates of all cell vertices in the mesh.
+   * Format: [x0, y0, x1, y1, x2, y2, ...]
+   * These are triangle centroids from the original Delaunay triangulation.
+   */
+  allVertices: Float64Array;
+
+  /**
+   * Offset array for accessing cell data in other arrays.
+   * Length: cellCount + 1
+   * 
+   * For cell i:
+   * - Cell vertices: cellVertexIndices[cellOffsets[i]] to cellVertexIndices[cellOffsets[i+1]-1]
+   * - Cell neighbors: cellNeighbors[cellOffsets[i]] to cellNeighbors[cellOffsets[i+1]-1]
+   */
+  cellOffsets: Uint32Array;
+
+  /**
+   * Flattened list of vertex indices for each cell in counter-clockwise order.
+   * Each index references a vertex in allVertices (divide by 2 for coordinate pairs).
+   * Use cellOffsets to determine which indices belong to each cell.
+   */
+  cellVertexIndices: Uint32Array;
+
+  /**
+   * Flattened list of neighboring cell IDs for each cell.
+   * Parallel array to cellVertexIndices - same structure and indexing.
+   * A value of -1 indicates a boundary edge (no neighbor).
+   */
+  cellNeighbors: Int32Array;
+
+  /**
+   * Coordinates of the original triangle vertices that define each cell's center.
+   * Format: [x0, y0, x1, y1, x2, y2, ...] ordered by cell ID.
+   * These are the actual Delaunay triangulation points, not the dual mesh centroids.
+   */
+  cellTriangleCenters: Float64Array;
+
+  /**
+   * Total number of cells in the mesh.
+   * Only includes interior cells (boundary points are excluded).
+   */
+  cellCount: number;
 }
