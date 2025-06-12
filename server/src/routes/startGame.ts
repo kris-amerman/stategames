@@ -2,7 +2,7 @@ import { broadcastGameStarted, CORS_HEADERS } from "..";
 import { GameService, type GameState } from "../game-state";
 
 /**
- * Given gameId, perform game initialization and broadcast game state via WS.
+ * Given gameId, perform game initialization and broadcast game via WS.
  */
 export async function startGame(gameId: string) {
   try {

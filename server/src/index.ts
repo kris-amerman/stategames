@@ -5,16 +5,13 @@ import type { ServerWebSocket } from "bun";
 // TODO LATER: move constants to a config
 export const PORT = process.env.PORT || 3000;
 export const ENDPOINTS = [
-  "GET /api/mesh/small",
-  "GET /api/mesh/medium",
-  "GET /api/mesh/large",
-  "GET /api/mesh/xl",
-  "POST /api/games",
+  "GET /",
+  "GET /api/mesh/:sizeParam",
+  "POST /api/games/create",
   "POST /api/games/:joinCode/join",
   "POST /api/games/:gameId/start",
-  "GET /api/games/:gameId",
+  "GET /api/games/:gameId/load",
   `WebSocket :${PORT}/ws`,
-  "GET /health",
 ];
 export const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",

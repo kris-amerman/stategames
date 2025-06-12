@@ -3,7 +3,7 @@ import { CORS_HEADERS } from "..";
 import { GameService } from "../game-state";
 
 /**
- * Return the game state for a given gameId.
+ * Return the game for a given gameId.
  */
 export async function loadGame(gameId: string) {
   try {
