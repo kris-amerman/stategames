@@ -3,7 +3,7 @@ import type { ServerWebSocket } from "bun";
 import { GameService } from "../game-state";
 import { GameStateManager } from "../game-state";
 import { meshService } from "../mesh-service";
-import type { Entity } from "../types";
+import type { Entity, Game, GameState } from "../types";
 import { broadcastGameStateUpdate } from "../index";
 
 export async function handleGameAction(ws: ServerWebSocket<any>, data: any) {
@@ -34,13 +34,13 @@ export async function handleGameAction(ws: ServerWebSocket<any>, data: any) {
     let actionResult;
     switch (actionType) {
       case 'place_entity':
-        actionResult = await handlePlaceEntityAction(gameState, playerId, actionData);
+        actionResult = await handlePlaceEntityAction(gameId, gameState, playerId, actionData);
         break;
       case 'move_unit':
-        actionResult = await handleMoveUnitAction(gameState, playerId, actionData);
+        actionResult = await handleMoveUnitAction(gameId, gameState, playerId, actionData);
         break;
       case 'end_turn':
-        actionResult = await handleEndTurnAction(gameState, playerId, actionData);
+        actionResult = await handleEndTurnAction(gameId, gameState, playerId, actionData);
         break;
       default:
         sendActionResult(ws, false, `Unknown action type: ${actionType}`);
@@ -66,7 +66,7 @@ export async function handleGameAction(ws: ServerWebSocket<any>, data: any) {
   }
 }
 
-export async function handlePlaceEntityAction(gameState: any, playerId: string, actionData: any): Promise<{
+export async function handlePlaceEntityAction(gameId: string, gameState: GameState, playerId: string, actionData: any): Promise<{
   success: true;
   message: string;
   entityId: number;
@@ -124,7 +124,7 @@ export async function handlePlaceEntityAction(gameState: any, playerId: string, 
   };
 }
 
-export async function handleMoveUnitAction(gameState: any, playerId: string, actionData: any): Promise<{
+export async function handleMoveUnitAction(gameId: string, gameState: GameState, playerId: string, actionData: any): Promise<{
   success: true;
   message: string;
 } | {
@@ -196,12 +196,12 @@ export async function handleMoveUnitAction(gameState: any, playerId: string, act
   }
   
   // Get mesh data to validate adjacency
-  const game = await GameService.getGame(gameState.gameId);
-  if (!game) {
+  const gameMeta = await GameService.getGameMeta(gameId);
+  if (!gameMeta) {
     return { success: false, error: 'Game not found' };
   }
   
-  const meshData = await meshService.getMeshData(game.meta.mapSize);
+  const meshData = await meshService.getMeshData(gameMeta.mapSize);
   
   // Check if movement is within unit's range
   const moveDistance = calculateCellDistance(parsedFromCellId, parsedToCellId, meshData);
@@ -285,7 +285,7 @@ function calculateCellDistance(cellId1: number, cellId2: number, meshData: any):
   return Infinity; // Not reachable
 }
 
-export async function handleEndTurnAction(gameState: any, playerId: string, actionData: any): Promise<{
+export async function handleEndTurnAction(gameId: string, gameState: GameState, playerId: string, actionData: any): Promise<{
   success: true;
   message: string;
 } | {
@@ -301,17 +301,17 @@ export async function handleEndTurnAction(gameState: any, playerId: string, acti
   
   // Reset unit movement flags for the current player
   resetPlayerUnitMovement(gameState, playerId);
-  
+
   // Get the game to access player list from meta
-  const game = await GameService.getGame(gameState.gameId);
-  if (!game) {
+  const gameMeta = await GameService.getGameMeta(gameId);
+  if (!gameMeta) {
     return { success: false, error: 'Game not found' };
   }
-  
+
   // Advance to next player
-  const currentPlayerIndex = game.meta.players.indexOf(playerId);
-  const nextPlayerIndex = (currentPlayerIndex + 1) % game.meta.players.length;
-  const nextPlayer = game.meta.players[nextPlayerIndex];
+  const currentPlayerIndex = gameMeta.players.indexOf(playerId);
+  const nextPlayerIndex = (currentPlayerIndex + 1) % gameMeta.players.length;
+  const nextPlayer = gameMeta.players[nextPlayerIndex];
   
   // Update game state
   gameState.currentPlayer = nextPlayer;
@@ -329,7 +329,7 @@ export async function handleEndTurnAction(gameState: any, playerId: string, acti
   };
 }
 
-function resetPlayerUnitMovement(gameState: any, playerId: string): void {
+function resetPlayerUnitMovement(gameState: GameState, playerId: string): void {
   const playerEntities = gameState.playerEntities[playerId] || [];
   
   for (const entityId of playerEntities) {

@@ -6,7 +6,7 @@ import { GameStateManager } from './manager';
 import type { Game, GameState, GameMeta, GameMap, MapSize } from '../types';
 
 // In-memory game store (replace with database later)
-const gameStates = new Map<string, Game>();
+const games = new Map<string, Game>();
 
 export class GameService {
   
@@ -90,7 +90,7 @@ export class GameService {
     );
 
     // Store in memory
-    gameStates.set(gameId, game);
+    games.set(gameId, game);
     
     // Persist to disk
     await this.saveGame(game);
@@ -103,8 +103,8 @@ export class GameService {
 
   static async getGame(gameId: string): Promise<Game | null> {
     // Check in-memory first
-    if (gameStates.has(gameId)) {
-      return gameStates.get(gameId)!;
+    if (games.has(gameId)) {
+      return games.get(gameId)!;
     }
 
     // Try to load from disk
@@ -117,7 +117,7 @@ export class GameService {
       }
       
       // Cache in memory for future requests
-      gameStates.set(gameId, game);
+      games.set(gameId, game);
       return game;
     }
 
@@ -140,7 +140,7 @@ export class GameService {
   }
 
   static async saveGameState(gameState: GameState, gameId: string): Promise<void> {
-    const game = gameStates.get(gameId);
+    const game = games.get(gameId);
     if (game) {
       game.state = gameState;
       await this.saveGame(game);
@@ -151,7 +151,7 @@ export class GameService {
     const upperJoinCode = joinCode.toUpperCase();
 
     // Search in-memory games first
-    for (const game of gameStates.values()) {
+    for (const game of games.values()) {
       if (game.meta.joinCode === upperJoinCode) {
         return game;
       }
@@ -169,7 +169,7 @@ export class GameService {
           
           if (game && game.meta.joinCode === upperJoinCode) {
             // Cache in memory for future requests
-            gameStates.set(gameId, game);
+            games.set(gameId, game);
             return game;
           }
         }
@@ -284,10 +284,10 @@ export class GameService {
   }
 
   static getAllGames(): Game[] {
-    return Array.from(gameStates.values());
+    return Array.from(games.values());
   }
 
   static getGameCount(): number {
-    return gameStates.size;
+    return games.size;
   }
 }

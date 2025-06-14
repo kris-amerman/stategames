@@ -13,15 +13,15 @@ export function setupWebSocketHandler(ws: ServerWebSocket<any>, message: string 
     const parsed: WebSocketMessage = JSON.parse(messageStr);
     
     switch (parsed.event) {
-      case 'ADD_TO_ROOM':
+      case 'add_to_room':
         handleAddToRoom(ws, parsed.data);
         break;
         
-      case 'REMOVE_FROM_ROOM':
+      case 'remove_from_room':
         handleRemoveFromRoom(ws, parsed.data);
         break;
         
-      case 'GAME_ACTION':
+      case 'game_action':
         handleGameAction(ws, parsed.data);
         break;
         

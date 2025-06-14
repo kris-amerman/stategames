@@ -89,7 +89,7 @@ const server = Bun.serve({
 export function broadcastToRoom(gameId: string, messageType: string, data: any) {
   const room = gameRooms.get(gameId);
   if (room) {
-    const message = { type: messageType, data };
+    const message = { event: messageType, data };
     const messageString = encode(message);
     room.forEach(ws => {
       try {
