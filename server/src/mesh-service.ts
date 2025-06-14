@@ -1,5 +1,4 @@
 // server/src/mesh-service.ts
-import { encode } from '@msgpack/msgpack';
 import {
   loadMeshData,
   generateMesh,
@@ -60,13 +59,7 @@ class MeshService {
     return meshData;
   }
 
-  /**
-   * Gets binary mesh data ready for MessagePack transmission
-   */
-  async getBinaryMeshData(size: MapSize): Promise<Uint8Array> {
-    const meshData = await this.getMeshData(size);
-    return encode(meshData);
-  }
+
 
   /**
    * Preloads all mesh sizes into cache (useful for server startup)

@@ -1,7 +1,7 @@
 // server/src/routes/loadGame.ts
 import { CORS_HEADERS } from "../constants";
 import { GameService } from "../game-state";
-import { encode } from '@msgpack/msgpack';
+import { encode } from '../serialization';
 
 /**
  * Return the game for a given gameId.
@@ -47,12 +47,12 @@ export async function loadGame(gameId: string) {
       );
     }
 
-    // Return complete game as MessagePack binary
-    const binaryData = encode(game);
-    return new Response(binaryData, {
+    // Return complete game as JSON
+    const gameData = encode(game);
+    return new Response(gameData, {
       status: 200,
       headers: {
-        "Content-Type": "application/msgpack",
+        "Content-Type": "application/json",
         ...CORS_HEADERS,
       },
     });

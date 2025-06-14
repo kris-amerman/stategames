@@ -2,7 +2,7 @@
 import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame } from "./routes";
 import { setupWebSocketHandler } from "./websocket";
 import { ENDPOINTS, PORT } from "./constants";
-import { encode } from '@msgpack/msgpack';
+import { encode } from "./serialization";
 import type { ServerWebSocket } from "bun";
 import type { GameState, Game, GameStateUpdate } from "./types";
 
@@ -90,10 +90,10 @@ export function broadcastToRoom(gameId: string, messageType: string, data: any) 
   const room = gameRooms.get(gameId);
   if (room) {
     const message = { type: messageType, data };
-    const binaryMessage = encode(message);
+    const messageString = encode(message);
     room.forEach(ws => {
       try {
-        ws.send(binaryMessage);
+        ws.send(messageString);
       } catch (error) {
         console.error('Failed to send message to WebSocket:', error);
       }
@@ -103,7 +103,7 @@ export function broadcastToRoom(gameId: string, messageType: string, data: any) 
 
 export function broadcastPlayerJoined(gameId: string, players: string[], newPlayer: string) {
   console.log(`Broadcasting player_joined for ${newPlayer} in game ${gameId}`);
-  broadcastToRoom(gameId, 'PLAYER_JOINED', {
+  broadcastToRoom(gameId, 'player_joined', {
     gameId,
     players,
     newPlayer
@@ -112,7 +112,7 @@ export function broadcastPlayerJoined(gameId: string, players: string[], newPlay
 
 export function broadcastGameStarted(gameId: string, game: Game) {
   console.log(`Broadcasting game_started for game ${gameId}`);
-  broadcastToRoom(gameId, 'FULL_GAME', game);
+  broadcastToRoom(gameId, 'full_game', game);
 }
 
 export function broadcastGameStateUpdate(gameId: string, gameState: GameState, lastAction?: any) {
@@ -124,7 +124,7 @@ export function broadcastGameStateUpdate(gameId: string, gameState: GameState, l
     lastAction
   };
   
-  broadcastToRoom(gameId, 'GAME_UPDATE', update);
+  broadcastToRoom(gameId, 'game_update', update);
 }
 
 console.log(`Server running`);

@@ -2,9 +2,10 @@
 import { CORS_HEADERS, MAP_SIZES } from "../constants";
 import type { MapSize } from "../types";
 import { meshService } from "../mesh-service";
+import { encode } from "../serialization";
 
 /**
- * Dynamic routes for static map meshes. Returns binary MessagePack mesh data.
+ * Dynamic routes for static map meshes. Returns binary JSON mesh data.
  */
 export async function getMesh(sizeParam: string): Promise<Response> {
   if (!sizeParam || !MAP_SIZES.includes(sizeParam as MapSize)) {
@@ -25,12 +26,13 @@ export async function getMesh(sizeParam: string): Promise<Response> {
 
   try {
     console.log(`Serving ${size} mesh data...`);
-    const binaryMeshData = await meshService.getBinaryMeshData(size);
+    const meshData = await meshService.getMeshData(size);
+    const serializedData = encode(meshData);
     
-    return new Response(binaryMeshData, {
+    return new Response(serializedData, {
       headers: {
         ...CORS_HEADERS,
-        "Content-Type": "application/msgpack",
+        "Content-Type": "application/json",
         "Cache-Control": "public, max-age=3600",
       },
     });

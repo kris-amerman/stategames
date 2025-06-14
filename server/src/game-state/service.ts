@@ -1,15 +1,12 @@
 // server/src/game-state/service.ts
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
-import { encode, decode } from '@msgpack/msgpack';
+import { encode, decode } from '../serialization';
 import { GameStateManager } from './manager';
 import type { Game, GameState, GameMeta, GameMap, MapSize } from '../types';
 
 // In-memory game store (replace with database later)
 const gameStates = new Map<string, Game>();
-
-// Configuration flag for serialization format
-const USE_BINARY_STORAGE = false; // Set to true to use MessagePack for GameMeta/GameState
 
 export class GameService {
   
@@ -24,37 +21,31 @@ export class GameService {
   static async saveGame(game: Game): Promise<void> {
     await this.ensureMapsDir();
     
-    if (USE_BINARY_STORAGE) {
-      // MessagePack binary storage
-      const filePath = `maps/${game.meta.gameId}.game.msgpack`;
-      const binaryData = encode(game);
-      await writeFile(filePath, binaryData);
-    } else {
-      // JSON storage for debugging
-      const filePath = `maps/${game.meta.gameId}.game.json`;
-      await writeFile(filePath, JSON.stringify(game, null, 2));
-    }
+    // JSON storage with TypedArray support
+    const filePath = `maps/${game.meta.gameId}.game.json`;
+    const jsonData = encode(game);
+    await writeFile(filePath, jsonData, 'utf-8');
   }
 
   static async saveGameMap(gameId: string, gameMap: GameMap): Promise<void> {
     await this.ensureMapsDir();
     
-    // Always use MessagePack for GameMap due to large Uint8Array
-    const filePath = `maps/${gameId}.map.msgpack`;
-    const binaryData = encode(gameMap);
-    await writeFile(filePath, binaryData);
+    // JSON storage with TypedArray support
+    const filePath = `maps/${gameId}.map.json`;
+    const jsonData = encode(gameMap);
+    await writeFile(filePath, jsonData, 'utf-8');
   }
 
   static async loadGameMap(gameId: string): Promise<GameMap | null> {
-    const filePath = `maps/${gameId}.map.msgpack`;
+    const filePath = `maps/${gameId}.map.json`;
     
     if (!existsSync(filePath)) {
       return null;
     }
 
     try {
-      const data = await readFile(filePath);
-      return decode(data) as GameMap;
+      const jsonData = await readFile(filePath, 'utf-8');
+      return decode<GameMap>(jsonData);
     } catch (error) {
       console.error(`Failed to load game map for ${gameId}:`, error);
       return null;
@@ -62,43 +53,21 @@ export class GameService {
   }
 
   private static async loadGame(gameId: string): Promise<Game | null> {
-    if (USE_BINARY_STORAGE) {
-      // MessagePack binary loading
-      const filePath = `maps/${gameId}.game.msgpack`;
-      
-      if (!existsSync(filePath)) {
-        return null;
-      }
+    // JSON loading
+    const filePath = `maps/${gameId}.game.json`;
+    
+    if (!existsSync(filePath)) {
+      return null;
+    }
 
-      try {
-        const data = await readFile(filePath);
-        return decode(data) as Game;
-      } catch (error) {
-        console.error(`Failed to load game for ${gameId}:`, error);
-        return null;
-      }
-    } else {
-      // JSON loading
-      const filePath = `maps/${gameId}.game.json`;
+    try {
+      const jsonData = await readFile(filePath, 'utf-8');
+      const game = decode<Game>(jsonData);
       
-      if (!existsSync(filePath)) {
-        return null;
-      }
-
-      try {
-        const fileContent = await readFile(filePath, 'utf-8');
-        const game: Game = JSON.parse(fileContent);
-        
-        // Convert biomes back to Uint8Array if it was serialized as regular array
-        if (Array.isArray(game.map.biomes)) {
-          game.map.biomes = new Uint8Array(game.map.biomes);
-        }
-        
-        return game;
-      } catch (error) {
-        console.error(`Failed to load game for ${gameId}:`, error);
-        return null;
-      }
+      return game;
+    } catch (error) {
+      console.error(`Failed to load game for ${gameId}:`, error);
+      return null;
     }
   }
 
@@ -191,7 +160,7 @@ export class GameService {
     // Search filesystem if not found in memory
     try {
       if (existsSync('maps')) {
-        const fileExtension = USE_BINARY_STORAGE ? '.game.msgpack' : '.game.json';
+        const fileExtension = '.game.json';
         const files = readdirSync('maps').filter(f => f.endsWith(fileExtension));
         
         for (const file of files) {
