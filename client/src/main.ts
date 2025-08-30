@@ -1,167 +1,16 @@
 import { assignElevations, assignIslandElevations, ElevationConfig } from './terrain-gen/elevations';
 import { assignBiomes, BiomeConfig, getBiomeName } from './terrain-gen/biomes';
 import { drawCells } from './drawCells';
-
-/**
- * TypedArray deserialization helper for server data
- */
-function deserializeTypedArrays(obj: any): any {
-  console.log("LOGGING INCOMING obj")
-  console.log(obj)
-
-  if (obj === null || obj === undefined) {
-    return obj;
-  }
-
-  // Handle TypedArray descriptors from server
-  if (typeof obj === 'object' && obj.__typedArray === true) {
-    const { type, data } = obj;
-    switch (type) {
-      case 'Float64Array': return new Float64Array(data);
-      case 'Uint8Array': return new Uint8Array(data);
-      case 'Uint32Array': return new Uint32Array(data);
-      case 'Int32Array': return new Int32Array(data);
-      case 'Float32Array': return new Float32Array(data);
-      case 'Uint16Array': return new Uint16Array(data);
-      case 'Int16Array': return new Int16Array(data);
-      default: throw new Error(`Unknown TypedArray type: ${type}`);
-    }
-  }
-
-  // Handle regular arrays
-  if (Array.isArray(obj)) {
-    return obj.map(item => deserializeTypedArrays(item));
-  }
-
-  // Handle objects
-  if (typeof obj === 'object') {
-    const result: any = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key] = deserializeTypedArrays(value);
-    }
-    return result;
-  }
-
-  return obj;
-}
-
-/**
- * Deserializes mesh data from server response back to TypedArrays
- */
-function deserializeMeshData(serialized: any): MeshData {
-  const deserialized = deserializeTypedArrays(serialized);
-
-  console.log("LOGGING deserialized in deserializeMeshData")
-  console.log(deserialized)
-
-  return {
-    allVertices: deserialized.allVertices,
-    cellOffsets: deserialized.cellOffsets,
-    cellVertexIndices: deserialized.cellVertexIndices,
-    cellNeighbors: deserialized.cellNeighbors,
-    cellTriangleCenters: deserialized.cellTriangleCenters,
-    cellCount: deserialized.cellCount
-  };
-}
-
-/**
- * Fetches mesh data from the server for a specific size
- */
-async function fetchMeshFromServer(size: MapSize): Promise<MeshData | null> {
-  if (meshLoadingStates.get(size) === 'loading') {
-    // Already loading, wait for it to complete
-    while (meshLoadingStates.get(size) === 'loading') {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    return meshCache.get(size) || null;
-  }
-
-  meshLoadingStates.set(size, 'loading');
-
-  try {
-    console.log(`Fetching ${size} mesh from ${SERVER_BASE_URL}/api/mesh/${size}...`);
-    console.time(`fetch-${size}`);
-    
-    const response = await fetch(`${SERVER_BASE_URL}/api/mesh/${size}`);
-    
-    if (!response.ok) {
-      throw new Error(`❌ ${response.status} ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    
-    console.log("LOGGING THE DATA")
-    console.log(data)
-
-    console.timeEnd(`fetch-${size}`);
-
-    // Deserialize the mesh data
-    const meshData = deserializeMeshData(data);
-
-    console.log("LOGGING THE MESH AFTER DESERIALIZE")
-    console.log(meshData)
-    
-    // Cache the mesh
-    meshCache.set(size, meshData);
-    meshLoadingStates.set(size, 'loaded');
-    
-    console.log(`✅ Loaded ${size} mesh: ${meshData.cellCount} cells`);
-    
-    return meshData;
-  } catch (error) {
-    console.error(error);
-    meshLoadingStates.set(size, 'error');
-    return null;
-  }
-}
-
-/**
- * Preloads all mesh sizes from the server (non-blocking)
- */
-async function preloadAllMeshes(): Promise<void> {
-  const sizes: MapSize[] = ['small', 'medium', 'large', 'xl']; // TODO this is stinky
-  
-  console.log('Preloading all meshes from server...');
-  
-  // Start all fetches in parallel (non-blocking)
-  const fetchPromises = sizes.map(async (size) => {
-    try {
-      await fetchMeshFromServer(size);
-    } catch (error) {
-      console.error(`Failed to preload ${size} mesh:`, error);
-    }
-  });
-  
-  // Don't wait for all to complete - they load in background
-  Promise.all(fetchPromises).then(() => {
-    console.log('All meshes preloaded!'); // TODO only log if successful!
-  });
-}
+import { loadMesh, preloadAllMeshes, MapSize, MeshData, deserializeTypedArrays } from './mesh';
 
 /**
  * Loads or waits for mesh data for a specific size
  */
 export async function loadOrGetMesh(size: MapSize): Promise<void> {
   console.time('loadOrGetMesh');
-  
-  // Check if mesh exists in cache
-  if (meshCache.has(size)) {
-    console.log(`Using cached mesh for size: ${size}`);
-    meshData = meshCache.get(size)!;
 
-    currentCellCount = meshData.cellCount;
-    if (currentCellBiomes.length !== currentCellCount) {
-      currentCellBiomes = new Uint8Array(currentCellCount);
-    }
+  const fetchedMesh = await loadMesh(size, SERVER_BASE_URL);
 
-    generateTerrain();
-    console.timeEnd('loadOrGetMesh');
-    return;
-  }
-  
-  // Fetch from server
-  const fetchedMesh = await fetchMeshFromServer(size);
-  
   if (fetchedMesh) {
     meshData = fetchedMesh;
 
@@ -174,7 +23,7 @@ export async function loadOrGetMesh(size: MapSize): Promise<void> {
   } else {
     showError(`Failed to load ${size} mesh from server`);
   }
-  
+
   console.timeEnd('loadOrGetMesh');
 }
 
@@ -299,7 +148,7 @@ async function initializeApp() {
   setupGameplayEventListeners();
   
   // Start preloading all meshes in background (non-blocking)
-  preloadAllMeshes();
+  preloadAllMeshes(SERVER_BASE_URL);
   
   // Load the default mesh (xl)
   await loadOrGetMesh(currentMapSize);
@@ -1829,8 +1678,6 @@ let isGameCreator: boolean = false;
 let currentCellBiomes: Uint8Array = new Uint8Array(0);
 let currentCellCount: number = 0;
 
-export type MapSize = "small" | "medium" | "large" | "xl";
-
 // TODO we need to standardize/centralize this configuration between client and server
 const WIDTH  = 960;
 const HEIGHT = 600;
@@ -1865,20 +1712,6 @@ canvas.width  = WIDTH;
 canvas.height = HEIGHT;
 
 const ctx = canvas.getContext('2d')!;
-
-// TODO ship over cell count for easy calcs?
-export type MeshData = {
-  allVertices: Float64Array;
-  cellOffsets: Uint32Array;
-  cellVertexIndices: Uint32Array;
-  cellNeighbors: Int32Array;
-  cellTriangleCenters: Float64Array;
-  cellCount: number;
-};
-
-// Mesh cache - stores fetched meshes from server
-const meshCache = new Map<MapSize, MeshData>();
-const meshLoadingStates = new Map<MapSize, 'loading' | 'loaded' | 'error'>();
 
 // Current mesh data
 let meshData: MeshData | null = null;
