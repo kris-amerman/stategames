@@ -47,6 +47,10 @@ function deserializeTypedArrays(obj: any): any {
  */
 function deserializeMeshData(serialized: any): MeshData {
   const deserialized = deserializeTypedArrays(serialized);
+
+  console.log("LOGGING deserialized in deserializeMeshData")
+  console.log(deserialized)
+
   return {
     allVertices: deserialized.allVertices,
     cellOffsets: deserialized.cellOffsets,
