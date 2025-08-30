@@ -6,6 +6,9 @@ import { drawCells } from './drawCells';
  * TypedArray deserialization helper for server data
  */
 function deserializeTypedArrays(obj: any): any {
+  console.log("LOGGING INCOMING obj")
+  console.log(obj)
+
   if (obj === null || obj === undefined) {
     return obj;
   }
