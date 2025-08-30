@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import { gameRooms, socketToGame } from "./index";
+import { handleGameAction } from "./game-actions/handler";
 
 interface WebSocketMessage {
   event: string;
@@ -18,6 +19,10 @@ export function setupWebSocketHandler(ws: ServerWebSocket<any>, message: string 
         
       case 'remove_from_room':
         handleRemoveFromRoom(ws, parsed.data);
+        break;
+        
+      case 'game_action':
+        handleGameAction(ws, parsed.data);
         break;
         
       default:

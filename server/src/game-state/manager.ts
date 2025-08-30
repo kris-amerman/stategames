@@ -1,122 +1,74 @@
 // server/src/game-state/manager.ts
 import type { 
   GameState, 
-  SerializableGameState, 
+  GameMeta,
+  GameMap,
+  Game,
   PlayerId, 
   CellId, 
   EntityId, 
   Entity, 
   EntityType,
   MapSize 
-} from './types';
+} from '../types';
 
 export class GameStateManager {
   
   // === INITIALIZATION ===
   
-  static createInitialState(
+  static createInitialGameMeta(
     gameId: string,
     joinCode: string,
     players: PlayerId[],
-    mapSize: MapSize,
-    cellCount: number
-  ): GameState {
+    mapSize: MapSize
+  ): GameMeta {
     return {
       gameId,
       joinCode,
-      status: "waiting",
       createdAt: new Date().toISOString(),
-      
-      mapSize,
-      cellCount,
-      
       players,
+      mapSize
+    };
+  }
+
+  static createInitialGameState(players: PlayerId[]): GameState {
+    return {
+      status: "waiting",
       currentPlayer: players[0], // First player starts
       turnNumber: 1,
       
       // Initialize empty ownership maps
-      cellOwnership: new Map(),
-      playerCells: new Map(players.map(p => [p, new Set()])),
+      cellOwnership: {},
+      playerCells: Object.fromEntries(players.map(p => [p, []])),
       
       // Initialize empty entity tracking
-      entities: new Map(),
-      cellEntities: new Map(),
-      playerEntities: new Map(players.map(p => [p, new Set()])),
-      entitiesByType: new Map(),
-      nextEntityId: 1,
+      entities: {},
+      cellEntities: {},
+      playerEntities: Object.fromEntries(players.map(p => [p, []])),
+      entitiesByType: {
+        unit: []
+      },
+      nextEntityId: 1
     };
   }
 
-  // === SERIALIZATION ===
-
-  static serialize(gameState: GameState): SerializableGameState {
+  static createGameMap(biomes: Uint8Array): GameMap {
     return {
-      gameId: gameState.gameId,
-      joinCode: gameState.joinCode,
-      status: gameState.status,
-      createdAt: gameState.createdAt,
-      startedAt: gameState.startedAt,
-      
-      mapSize: gameState.mapSize,
-      cellCount: gameState.cellCount,
-      
-      players: gameState.players,
-      currentPlayer: gameState.currentPlayer,
-      turnNumber: gameState.turnNumber,
-      
-      // Convert Map keys to strings for JSON compatibility
-      cellOwnership: Object.fromEntries(
-        Array.from(gameState.cellOwnership.entries()).map(([k, v]) => [k.toString(), v])
-      ),
-      playerCells: Object.fromEntries(
-        Array.from(gameState.playerCells.entries()).map(([k, v]) => [k, Array.from(v)])
-      ),
-      entities: Object.fromEntries(
-        Array.from(gameState.entities.entries()).map(([k, v]) => [k.toString(), v])
-      ),
-      cellEntities: Object.fromEntries(
-        Array.from(gameState.cellEntities.entries()).map(([k, v]) => [k.toString(), Array.from(v)])
-      ),
-      playerEntities: Object.fromEntries(
-        Array.from(gameState.playerEntities.entries()).map(([k, v]) => [k, Array.from(v)])
-      ),
-      entitiesByType: Object.fromEntries(
-        Array.from(gameState.entitiesByType.entries()).map(([k, v]) => [k, Array.from(v)])
-      ),
-      nextEntityId: gameState.nextEntityId,
+      biomes
     };
   }
 
-  static deserialize(data: SerializableGameState): GameState {
+  static createCompleteGame(
+    gameId: string,
+    joinCode: string,
+    players: PlayerId[],
+    mapSize: MapSize,
+    biomes: Uint8Array
+  ): Game {
     return {
-      gameId: data.gameId,
-      joinCode: data.joinCode,
-      status: data.status,
-      createdAt: data.createdAt,
-      startedAt: data.startedAt,
-      
-      mapSize: data.mapSize,
-      cellCount: data.cellCount,
-      
-      players: data.players,
-      currentPlayer: data.currentPlayer,
-      turnNumber: data.turnNumber,
-      
-      cellOwnership: new Map(Object.entries(data.cellOwnership).map(([k, v]) => [Number(k), v])),
-      playerCells: new Map(
-        Object.entries(data.playerCells).map(([k, v]) => [k, new Set(v)])
-      ),
-      entities: new Map(Object.entries(data.entities).map(([k, v]) => [Number(k), v])),
-      cellEntities: new Map(
-        Object.entries(data.cellEntities).map(([k, v]) => [Number(k), new Set(v)])
-      ),
-      playerEntities: new Map(
-        Object.entries(data.playerEntities).map(([k, v]) => [k, new Set(v)])
-      ),
-      entitiesByType: new Map(
-        Object.entries(data.entitiesByType).map(([k, v]) => [k as EntityType, new Set(v)])
-      ),
-      nextEntityId: data.nextEntityId,
+      meta: this.createInitialGameMeta(gameId, joinCode, players, mapSize),
+      map: this.createGameMap(biomes),
+      state: this.createInitialGameState(players)
     };
   }
 
@@ -124,39 +76,49 @@ export class GameStateManager {
 
   static claimCell(gameState: GameState, cellId: CellId, playerId: PlayerId): void {
     // Remove from previous owner if any
-    const previousOwner = gameState.cellOwnership.get(cellId);
+    const previousOwner = gameState.cellOwnership[cellId];
     if (previousOwner) {
-      gameState.playerCells.get(previousOwner)?.delete(cellId);
+      const playerCells = gameState.playerCells[previousOwner];
+      const index = playerCells.indexOf(cellId);
+      if (index > -1) {
+        playerCells.splice(index, 1);
+      }
     }
 
     // Assign to new owner
-    gameState.cellOwnership.set(cellId, playerId);
+    gameState.cellOwnership[cellId] = playerId;
     
-    // Ensure player has a cell set
-    if (!gameState.playerCells.has(playerId)) {
-      gameState.playerCells.set(playerId, new Set());
+    // Ensure player has a cell array
+    if (!gameState.playerCells[playerId]) {
+      gameState.playerCells[playerId] = [];
     }
-    gameState.playerCells.get(playerId)!.add(cellId);
+    if (!gameState.playerCells[playerId].includes(cellId)) {
+      gameState.playerCells[playerId].push(cellId);
+    }
   }
 
   static unclaimCell(gameState: GameState, cellId: CellId): void {
-    const owner = gameState.cellOwnership.get(cellId);
+    const owner = gameState.cellOwnership[cellId];
     if (owner) {
-      gameState.cellOwnership.delete(cellId);
-      gameState.playerCells.get(owner)?.delete(cellId);
+      delete gameState.cellOwnership[cellId];
+      const playerCells = gameState.playerCells[owner];
+      const index = playerCells.indexOf(cellId);
+      if (index > -1) {
+        playerCells.splice(index, 1);
+      }
     }
   }
 
   static getCellOwner(gameState: GameState, cellId: CellId): PlayerId | null {
-    return gameState.cellOwnership.get(cellId) || null;
+    return gameState.cellOwnership[cellId] || null;
   }
 
-  static getPlayerCells(gameState: GameState, playerId: PlayerId): Set<CellId> {
-    return gameState.playerCells.get(playerId) || new Set();
+  static getPlayerCells(gameState: GameState, playerId: PlayerId): CellId[] {
+    return gameState.playerCells[playerId] || [];
   }
 
   static getPlayerCellCount(gameState: GameState, playerId: PlayerId): number {
-    return gameState.playerCells.get(playerId)?.size || 0;
+    return gameState.playerCells[playerId]?.length || 0;
   }
 
   // === ENTITY MANAGEMENT ===
@@ -165,56 +127,83 @@ export class GameStateManager {
     const entityId = entity.id;
     
     // Store the entity
-    gameState.entities.set(entityId, entity);
+    gameState.entities[entityId] = entity;
     
     // Track by cell location
-    if (!gameState.cellEntities.has(entity.cellId)) {
-      gameState.cellEntities.set(entity.cellId, new Set());
+    if (!gameState.cellEntities[entity.cellId]) {
+      gameState.cellEntities[entity.cellId] = [];
     }
-    gameState.cellEntities.get(entity.cellId)!.add(entityId);
+    if (!gameState.cellEntities[entity.cellId].includes(entityId)) {
+      gameState.cellEntities[entity.cellId].push(entityId);
+    }
     
     // Track by owner
     if (entity.owner) {
-      if (!gameState.playerEntities.has(entity.owner)) {
-        gameState.playerEntities.set(entity.owner, new Set());
+      if (!gameState.playerEntities[entity.owner]) {
+        gameState.playerEntities[entity.owner] = [];
       }
-      gameState.playerEntities.get(entity.owner)!.add(entityId);
+      if (!gameState.playerEntities[entity.owner].includes(entityId)) {
+        gameState.playerEntities[entity.owner].push(entityId);
+      }
     }
     
     // Track by type
-    if (!gameState.entitiesByType.has(entity.type)) {
-      gameState.entitiesByType.set(entity.type, new Set());
+    if (!gameState.entitiesByType[entity.type].includes(entityId)) {
+      gameState.entitiesByType[entity.type].push(entityId);
     }
-    gameState.entitiesByType.get(entity.type)!.add(entityId);
   }
 
   static removeEntity(gameState: GameState, entityId: EntityId): boolean {
-    const entity = gameState.entities.get(entityId);
+    const entity = gameState.entities[entityId];
     if (!entity) return false;
 
-    // Remove from all tracking maps
-    gameState.entities.delete(entityId);
-    gameState.cellEntities.get(entity.cellId)?.delete(entityId);
-    if (entity.owner) {
-      gameState.playerEntities.get(entity.owner)?.delete(entityId);
+    // Remove from all tracking arrays
+    delete gameState.entities[entityId];
+    
+    const cellEntities = gameState.cellEntities[entity.cellId];
+    if (cellEntities) {
+      const index = cellEntities.indexOf(entityId);
+      if (index > -1) {
+        cellEntities.splice(index, 1);
+      }
     }
-    gameState.entitiesByType.get(entity.type)?.delete(entityId);
+    
+    if (entity.owner && gameState.playerEntities[entity.owner]) {
+      const index = gameState.playerEntities[entity.owner].indexOf(entityId);
+      if (index > -1) {
+        gameState.playerEntities[entity.owner].splice(index, 1);
+      }
+    }
+    
+    const typeEntities = gameState.entitiesByType[entity.type];
+    const typeIndex = typeEntities.indexOf(entityId);
+    if (typeIndex > -1) {
+      typeEntities.splice(typeIndex, 1);
+    }
     
     return true;
   }
 
   static moveEntity(gameState: GameState, entityId: EntityId, newCellId: CellId): boolean {
-    const entity = gameState.entities.get(entityId);
+    const entity = gameState.entities[entityId];
     if (!entity) return false;
 
     // Remove from old cell
-    gameState.cellEntities.get(entity.cellId)?.delete(entityId);
+    const oldCellEntities = gameState.cellEntities[entity.cellId];
+    if (oldCellEntities) {
+      const index = oldCellEntities.indexOf(entityId);
+      if (index > -1) {
+        oldCellEntities.splice(index, 1);
+      }
+    }
     
     // Add to new cell
-    if (!gameState.cellEntities.has(newCellId)) {
-      gameState.cellEntities.set(newCellId, new Set());
+    if (!gameState.cellEntities[newCellId]) {
+      gameState.cellEntities[newCellId] = [];
     }
-    gameState.cellEntities.get(newCellId)!.add(entityId);
+    if (!gameState.cellEntities[newCellId].includes(entityId)) {
+      gameState.cellEntities[newCellId].push(entityId);
+    }
     
     // Update entity's cell reference
     entity.cellId = newCellId;
@@ -229,35 +218,34 @@ export class GameStateManager {
   // === ENTITY QUERIES ===
 
   static getEntitiesOnCell(gameState: GameState, cellId: CellId): Entity[] {
-    const entityIds = gameState.cellEntities.get(cellId) || new Set();
-    return Array.from(entityIds)
-      .map(id => gameState.entities.get(id))
+    const entityIds = gameState.cellEntities[cellId] || [];
+    return entityIds
+      .map(id => gameState.entities[id])
       .filter((entity): entity is Entity => entity !== undefined);
   }
 
   static getPlayerEntities(gameState: GameState, playerId: PlayerId): Entity[] {
-    const entityIds = gameState.playerEntities.get(playerId) || new Set();
-    return Array.from(entityIds)
-      .map(id => gameState.entities.get(id))
+    const entityIds = gameState.playerEntities[playerId] || [];
+    return entityIds
+      .map(id => gameState.entities[id])
       .filter((entity): entity is Entity => entity !== undefined);
   }
 
   static getEntitiesByType(gameState: GameState, type: EntityType): Entity[] {
-    const entityIds = gameState.entitiesByType.get(type) || new Set();
-    return Array.from(entityIds)
-      .map(id => gameState.entities.get(id))
+    const entityIds = gameState.entitiesByType[type] || [];
+    return entityIds
+      .map(id => gameState.entities[id])
       .filter((entity): entity is Entity => entity !== undefined);
   }
 
   static getEntity(gameState: GameState, entityId: EntityId): Entity | null {
-    return gameState.entities.get(entityId) || null;
+    return gameState.entities[entityId] || null;
   }
 
   // === GAME STATE UPDATES ===
 
   static startGame(gameState: GameState): void {
     gameState.status = "in_progress";
-    gameState.startedAt = new Date().toISOString();
   }
 
   // === STARTING TERRITORY ASSIGNMENT ===
@@ -266,10 +254,10 @@ export class GameStateManager {
     gameState: GameState, 
     cellNeighbors: Int32Array, 
     cellOffsets: Uint32Array,
-    cellsPerPlayer: number = 50
+    cellCount: number,
+    cellsPerPlayer: number
   ): void {
-    const players = gameState.players;
-    const totalCells = gameState.cellCount;
+    const players = Object.keys(gameState.playerCells);
     
     console.log(`Assigning ${cellsPerPlayer} starting cells to ${players.length} players`);
 
@@ -278,7 +266,7 @@ export class GameStateManager {
     
     for (const playerId of players) {
       const startingCells = this.findContiguousRegion(
-        totalCells,
+        cellCount,
         cellNeighbors,
         cellOffsets,
         claimedCells,
@@ -406,8 +394,8 @@ export class GameStateManager {
 
   static getCellStats(gameState: GameState): Map<PlayerId, number> {
     const stats = new Map<PlayerId, number>();
-    for (const [playerId, cells] of gameState.playerCells) {
-      stats.set(playerId, cells.size);
+    for (const [playerId, cells] of Object.entries(gameState.playerCells)) {
+      stats.set(playerId, cells.length);
     }
     return stats;
   }
@@ -415,11 +403,11 @@ export class GameStateManager {
   static getEntityStats(gameState: GameState): Map<PlayerId, Map<EntityType, number>> {
     const stats = new Map<PlayerId, Map<EntityType, number>>();
     
-    for (const [playerId, entityIds] of gameState.playerEntities) {
+    for (const [playerId, entityIds] of Object.entries(gameState.playerEntities)) {
       const playerStats = new Map<EntityType, number>();
       
       for (const entityId of entityIds) {
-        const entity = gameState.entities.get(entityId);
+        const entity = gameState.entities[entityId];
         if (entity) {
           const count = playerStats.get(entity.type) || 0;
           playerStats.set(entity.type, count + 1);
@@ -441,15 +429,13 @@ export class GameStateManager {
       return false;
     }
 
-    if (gameState.players.includes(playerId)) {
+    if (gameState.playerCells[playerId]) {
       return false; // Player already exists
     }
 
-    gameState.players.push(playerId);
-    
     // Initialize empty collections for the new player
-    gameState.playerCells.set(playerId, new Set());
-    gameState.playerEntities.set(playerId, new Set());
+    gameState.playerCells[playerId] = [];
+    gameState.playerEntities[playerId] = [];
 
     return true;
   }

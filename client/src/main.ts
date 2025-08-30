@@ -2,109 +2,58 @@ import { assignElevations, assignIslandElevations, ElevationConfig } from './ter
 import { assignBiomes, BiomeConfig, getBiomeName } from './terrain-gen/biomes';
 import { drawCells } from './drawCells';
 
-import pako from 'pako';
+/**
+ * TypedArray deserialization helper for server data
+ */
+function deserializeTypedArrays(obj: any): any {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
 
-let currentTerritoryData: { [cellId: string]: string } = {};
-let currentGameTerrain: Uint8Array | null = null;
+  // Handle TypedArray descriptors from server
+  if (typeof obj === 'object' && obj.__typedArray === true) {
+    const { type, data } = obj;
+    switch (type) {
+      case 'Float64Array': return new Float64Array(data);
+      case 'Uint8Array': return new Uint8Array(data);
+      case 'Uint32Array': return new Uint32Array(data);
+      case 'Int32Array': return new Int32Array(data);
+      case 'Float32Array': return new Float32Array(data);
+      case 'Uint16Array': return new Uint16Array(data);
+      case 'Int16Array': return new Int16Array(data);
+      default: throw new Error(`Unknown TypedArray type: ${type}`);
+    }
+  }
 
-// WebSocket connection and game state
-let socket: WebSocket | null = null;
-let currentGameId: string | null = null;
-let currentPlayerName: string | null = null;
-let isGameCreator: boolean = false;
+  // Handle regular arrays
+  if (Array.isArray(obj)) {
+    return obj.map(item => deserializeTypedArrays(item));
+  }
 
-let currentCellBiomes: Uint8Array = new Uint8Array(0);
-let currentCellCount: number = 0;
+  // Handle objects
+  if (typeof obj === 'object') {
+    const result: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = deserializeTypedArrays(value);
+    }
+    return result;
+  }
 
-export type MapSize = "small" | "medium" | "large" | "xl";
-
-// TODO we need to standardize/centralize this configuration between client and server
-const WIDTH  = 960;
-const HEIGHT = 600;
-
-// Server configuration
-const SERVER_BASE_URL: string = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
-
-// Biome color scheme
-export const BIOME_COLORS: { [key: number]: string } = {
-  0: "#88aa55",   // Plains - Grassland
-  1: "#679459",   // Woods - Temperate Deciduous Forest
-  2: "#337755",   // Rainforest - Tropical Rain Forest
-  3: "#2f6666",   // Wetlands - Marsh
-  4: "#889977",   // Hills - Shrubland
-  5: "#888888",   // Mountains - Bare
-  6: "#44447a",   // Shallow Ocean - Ocean
-  7: "#33335a",   // Deep Ocean - (darker)
-  8: "#bbbbaa",   // Tundra Plains - Tundra
-  9: "#99aa77",   // Tundra Woods - Taiga
-  10: "#bbbbaa",  // Tundra Hills - Tundra
-  11: "#ffffff",  // Tundra Mountains - Ice
-  12: "#d2b98b",  // Desert Plains - Subtropical Desert
-  13: "#c9d29b",  // Desert Hills - Temperate Desert
-  14: "#555555"   // Desert Mountains - Scorched
-};
-
-// set up canvas
-const canvas = document.createElement('canvas');
-const container = document.getElementById('canvas-container')!;
-container.appendChild(canvas);
-canvas.width  = WIDTH;
-canvas.height = HEIGHT;
-
-const ctx = canvas.getContext('2d')!;
-
-// TODO ship over cell count for easy calcs?
-export type MeshData = {
-  allVertices: Float64Array;
-  cellOffsets: Uint32Array;
-  cellVertexIndices: Uint32Array;
-  cellNeighbors: Int32Array;
-  cellTriangleCenters: Float64Array;
-};
-
-// Mesh cache - stores fetched meshes from server
-const meshCache = new Map<MapSize, MeshData>();
-const meshLoadingStates = new Map<MapSize, 'loading' | 'loaded' | 'error'>();
-
-// Current mesh data
-let meshData: MeshData | null = null;
-let currentMapSize: MapSize = 'xl';
-
-// Current elevation configuration
-let elevationConfig: ElevationConfig = {
-  amplitudes: [0.6, 0.3, 0.15, 0.075],
-  frequencies: [0.003, 0.006, 0.012, 0.024],
-  octaves: 4,
-  seed: Math.random(),
-  waterLevel: 0.5,
-  redistribution: 'exponential' as const,
-  exponentialPower: 1.5,
-  elevationShift: -0.1,
-  useIslands: false
-};
-
-// Biome configuration
-let biomeConfig: BiomeConfig = {
-  waterLevel: 0.5,
-  moistureFrequency: 0.02,
-  moistureAmplitude: 1.0,
-  moistureOctaves: 3,
-  temperatureFrequency: 0.015,
-  temperatureAmplitude: 1.0,
-  temperatureOctaves: 2,
-  smoothColors: true
-};
+  return obj;
+}
 
 /**
  * Deserializes mesh data from server response back to TypedArrays
  */
 function deserializeMeshData(serialized: any): MeshData {
+  const deserialized = deserializeTypedArrays(serialized);
   return {
-    allVertices: new Float64Array(serialized.allVertices),
-    cellOffsets: new Uint32Array(serialized.cellOffsets),
-    cellVertexIndices: new Uint32Array(serialized.cellVertexIndices),
-    cellNeighbors: new Int32Array(serialized.cellNeighbors),
-    cellTriangleCenters: new Float64Array(serialized.cellTriangleCenters),
+    allVertices: deserialized.allVertices,
+    cellOffsets: deserialized.cellOffsets,
+    cellVertexIndices: deserialized.cellVertexIndices,
+    cellNeighbors: deserialized.cellNeighbors,
+    cellTriangleCenters: deserialized.cellTriangleCenters,
+    cellCount: deserialized.cellCount
   };
 }
 
@@ -129,24 +78,24 @@ async function fetchMeshFromServer(size: MapSize): Promise<MeshData | null> {
     const response = await fetch(`${SERVER_BASE_URL}/api/mesh/${size}`);
     
     if (!response.ok) {
-      throw new Error(`❌ Failed to fetch ${size} mesh: ${response.status} ${response.statusText}`);
+      throw new Error(`❌ ${response.status} ${response.statusText}`);
     }
     
     const data = await response.json();
     console.timeEnd(`fetch-${size}`);
 
     // Deserialize the mesh data
-    const meshData = deserializeMeshData(data.meshData);
+    const meshData = deserializeMeshData(data);
     
     // Cache the mesh
     meshCache.set(size, meshData);
     meshLoadingStates.set(size, 'loaded');
     
-    console.log(`✅ Loaded ${size} mesh: ${data.meta?.cellCount || 'unknown'} cells`);
+    console.log(`✅ Loaded ${size} mesh: ${meshData.cellCount} cells`);
     
     return meshData;
   } catch (error) {
-    console.error(`❌ Failed to fetch ${size} mesh:`, error);
+    console.error(error);
     meshLoadingStates.set(size, 'error');
     return null;
   }
@@ -186,7 +135,7 @@ export async function loadOrGetMesh(size: MapSize): Promise<void> {
     console.log(`Using cached mesh for size: ${size}`);
     meshData = meshCache.get(size)!;
 
-    currentCellCount = meshData.cellOffsets.length - 1; // TODO make this calculation more graceful by sending over cellCount or something
+    currentCellCount = meshData.cellCount;
     if (currentCellBiomes.length !== currentCellCount) {
       currentCellBiomes = new Uint8Array(currentCellCount);
     }
@@ -202,7 +151,7 @@ export async function loadOrGetMesh(size: MapSize): Promise<void> {
   if (fetchedMesh) {
     meshData = fetchedMesh;
 
-    currentCellCount = meshData.cellOffsets.length - 1; // TODO make this calculation more graceful by sending over cellCount or something
+    currentCellCount = meshData.cellCount;
     if (currentCellBiomes.length !== currentCellCount) {
       currentCellBiomes = new Uint8Array(currentCellCount);
     }
@@ -297,7 +246,7 @@ export function generateTerrain() {
   document.getElementById('stats')!.innerHTML = `
     Land: ${landPercentage}% (${landCells} cells)<br>
     Water: ${100 - landPercentage}% (${waterCells} cells)<br>
-    Mesh: ${currentMapSize} (${meshData.cellTriangleCenters.length / 2} cells)
+    Mesh: ${currentMapSize} (${meshData.cellCount} cells)
   `;
   
   document.getElementById('biomeStats')!.innerHTML = `
@@ -326,6 +275,8 @@ async function initializeApp() {
   
   // Create UI first
   createUI();
+
+  setupGameplayEventListeners();
   
   // Start preloading all meshes in background (non-blocking)
   preloadAllMeshes();
@@ -335,12 +286,6 @@ async function initializeApp() {
   
   console.log('✅ Application initialized');
 }
-
-// Start the application
-initializeApp().catch(error => {
-  console.error('Failed to initialize application:', error);
-  showError('Failed to initialize application. Please check console.');
-});
 
 
 /**
@@ -659,62 +604,6 @@ function createUI() {
   }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-document.getElementById("createGame")!.addEventListener("click", async () => {
-  console.log(`SENDING ${currentCellCount} BIOMES TO ${SERVER_BASE_URL}/api/games`);
-  console.time('createGame');
-  
-  // Disable buttons during creation
-  setGameButtonsState(false, "Creating...", "Join Game");
-  
-  try {
-    // Compress the data
-    const compressed = pako.gzip(currentCellBiomes);
-
-    const response = await fetch(`${SERVER_BASE_URL}/api/games/create`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'X-Cell-Count': currentCellCount.toString(),
-        'X-Map-Size': currentMapSize,
-        'Content-Encoding': 'gzip'
-      },
-      body: compressed
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Failed to create game: ${response.status}`);
-    }
-    
-    const gameData = await response.json();
-    console.log('Game created:', gameData);
-    
-    // Show creator's game state UI
-    showCreatorGameUI(gameData);
-    
-  } catch (error) {
-    console.error('Game creation failed:', error);
-    // Reset buttons on error
-    setGameButtonsState(true, "Create Game", "Join Game");
-  }
-  console.timeEnd('createGame');
-});
-
-document.getElementById("joinGame")!.addEventListener("click", () => {
-  showJoinGameForm();
-});
-
 // Utility function to manage game button states
 function setGameButtonsState(enabled: boolean, createText: string = "Create Game", joinText: string = "Join Game") {
   const createButton = document.getElementById("createGame") as HTMLButtonElement;
@@ -1001,6 +890,9 @@ async function handleJoinGameSubmit() {
     const gameData = await response.json();
     console.log('Successfully joined game:', gameData);
     
+    // Add playerName to gameData for consistency
+    gameData.playerName = `player${gameData.players.length}`;
+    
     showJoinerGameUI(gameData);
     
   } catch (error: any) {
@@ -1087,7 +979,7 @@ function setupStartGameButton() {
       const gameData = await response.json();
       console.log('Game started successfully:', gameData);
       
-      // The WebSocket will handle the UI update via 'game_started' event
+      // The WebSocket will handle the UI update via 'full_game' event
       
     } catch (error: any) {
       console.error('Failed to start game:', error);
@@ -1129,19 +1021,6 @@ function updatePlayersList(players: string[], currentPlayerName?: string) {
   }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 // Initialize WebSocket connection
 function initializeWebSocket() {
   if (socket) {
@@ -1182,6 +1061,8 @@ function initializeWebSocket() {
 function handleWebSocketMessage(message: { event: string, data: any }) {
   const { event, data } = message;
   
+  console.log('Received WebSocket message:', event, data);
+  
   switch (event) {
     case 'player_joined':
       handlePlayerJoined(data);
@@ -1191,16 +1072,68 @@ function handleWebSocketMessage(message: { event: string, data: any }) {
       handleGameStateUpdate(data);
       break;
       
-    case 'game_started':
+    case 'full_game':
       handleGameStarted(data);
       break;
       
     case 'game_error':
       handleGameError(data);
       break;
+
+    case 'action_result':
+      handleActionResult(data);
+      break;
+      
+    case 'game_update':
+      handleGameUpdate(data);
+      break;
       
     default:
       console.log(`Unknown WebSocket event: ${event}`);
+  }
+}
+
+// Add function to handle action results
+function handleActionResult(data: any): void {
+  console.log('Action result received:', data);
+  
+  if (data.success) {
+    // showGameNotification(data.message || 'Action completed successfully', 'success');
+  } else {
+    showGameNotification(data.error || 'Action failed', 'error');
+  }
+}
+
+function handleGameUpdate(data: any): void {
+  console.log('Game update received:', data);
+  
+  // Update current game state
+  if (data.gameId === currentGameId) {
+    const gameState = data.state;
+    
+    // Check if turn changed
+    const turnChanged = gameState.currentPlayer !== undefined && 
+                       (gameState.currentPlayer !== (isMyTurn ? currentPlayerName : ''));
+    
+    // Update turn information
+    if (gameState.currentPlayer !== undefined) {
+      isMyTurn = gameState.currentPlayer === currentPlayerName;
+      updateTurnIndicator(gameState.currentPlayer, gameState.turnNumber);
+    }
+    
+    // Update territory data if provided
+    if (gameState.cellOwnership) {
+      currentTerritoryData = gameState.cellOwnership;
+    }
+    
+    // Update entity data if provided
+    if (gameState.entities) {
+      currentGameEntities = gameState.entities;
+      console.log('Updated entities:', currentGameEntities);
+    }
+    
+    // Re-render the game state to show new entities/changes
+    renderGameState();
   }
 }
 
@@ -1236,13 +1169,19 @@ function handleGameStateUpdate(data: { gameId: string, status: string, players: 
   }
 }
 
-// Handle game start
-function handleGameStarted(data: any) {
-  console.log('Game started with complete data:', data);
+// Handle game start - receives complete Game object
+function handleGameStarted(gameData: any) {
+  console.log('Game started. Received data:', gameData);
   
-  if (data.gameId === currentGameId) {
+  if (gameData.meta?.gameId === currentGameId) {
     updateGameStatus('in_progress');
     showGameNotification('Game has started!', 'success');
+
+    // Check if it's my turn
+    isMyTurn = gameData.state.currentPlayer === currentPlayerName;
+    
+    // Update turn indicator
+    updateTurnIndicator(gameData.state.currentPlayer, gameData.state.turnNumber);
 
     const startButton = document.getElementById("startGame") as HTMLButtonElement;
     if (startButton) startButton.remove();
@@ -1251,8 +1190,320 @@ function handleGameStarted(data: any) {
     if (waitingForStartDiv) waitingForStartDiv.style.display = "none";
     
     // Process all the game data received in the WebSocket event
-    processGameData(data);
+    processGameData(gameData);
   }
+}
+
+function updateTurnIndicator(currentPlayer: string, turnNumber: number): void {
+  let turnIndicator = document.getElementById('turnIndicator');
+  
+  if (!turnIndicator) {
+    // Create turn indicator element
+    turnIndicator = document.createElement('div');
+    turnIndicator.id = 'turnIndicator';
+    turnIndicator.style.cssText = `
+      position: fixed;
+      top: 70px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 15px 25px;
+      border-radius: 8px;
+      color: white;
+      font-family: Arial, sans-serif;
+      font-size: 16px;
+      font-weight: bold;
+      z-index: 1500;
+      text-align: center;
+      min-width: 250px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    `;
+    document.body.appendChild(turnIndicator);
+  }
+  
+  if (isMyTurn) {
+    turnIndicator.style.background = 'rgba(76, 175, 80, 0.9)';
+    turnIndicator.innerHTML = `
+      <div>Your Turn - Turn ${turnNumber}</div>
+      <button id="endTurnButton" style="
+        background: #4CAF50;
+        color: white;
+        border: solid 3px rgba(80, 182, 80, 0.9);;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: bold;
+        transition: background-color 0.2s;
+      ">End Turn</button>
+    `;
+    
+    // Add event listener to the end turn button
+    const endTurnButton = document.getElementById('endTurnButton');
+    if (endTurnButton) {
+      endTurnButton.addEventListener('click', endTurn);
+      endTurnButton.addEventListener('mouseenter', (e) => {
+        (e.target as HTMLElement).style.background = '#45a049';
+      });
+      endTurnButton.addEventListener('mouseleave', (e) => {
+        (e.target as HTMLElement).style.background = '#4CAF50';
+      });
+    }
+  } else {
+    turnIndicator.style.background = 'rgba(255, 193, 7, 0.9)';
+    turnIndicator.innerHTML = `
+      <div>Waiting for ${currentPlayer} - Turn ${turnNumber}</div>
+    `;
+  }
+}
+
+function endTurn(): void {
+  if (!isMyTurn) {
+    showGameNotification('It is not your turn', 'error');
+    return;
+  }
+  
+  // Disable the end turn button to prevent double-clicking
+  const endTurnButton = document.getElementById('endTurnButton') as HTMLButtonElement;
+  if (endTurnButton) {
+    endTurnButton.disabled = true;
+    endTurnButton.textContent = 'Ending Turn...';
+    endTurnButton.style.background = '#cccccc';
+  }
+  
+  // Deselect any selected units
+  deselectUnit();
+  
+  // Send end turn action to server
+  sendGameAction('end_turn', {
+    gameId: currentGameId,
+    playerId: currentPlayerName
+  });
+  
+  console.log(`${currentPlayerName} ending turn`);
+}
+
+function handleCellClick(event: MouseEvent): void {
+  if (!isMyTurn || !meshData || currentGameTerrain?.length === 0) {
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+
+  // Find which cell was clicked
+  const clickedCellId = findCellAtPosition(x, y);
+  
+  if (clickedCellId !== -1) {
+    // Check if there's a unit on this cell
+    const unitOnCell = findUnitOnCell(clickedCellId);
+    
+    if (unitOnCell && unitOnCell.owner === currentPlayerName) {
+      // Player clicked on their own unit - select it using numeric ID
+      selectUnit(unitOnCell.id, clickedCellId);
+    } else if (selectedUnitId !== null) {
+      // Player has a unit selected - try to move it
+      moveUnit(selectedUnitId, selectedCellId!, clickedCellId);
+    } else {
+      // No unit selected and no unit on cell - try to place new unit
+      const cellOwner = currentTerritoryData[clickedCellId];
+      
+      if (cellOwner === currentPlayerName) {
+        placeEntity(clickedCellId);
+      } else if (cellOwner) {
+        showGameNotification(`This cell belongs to ${cellOwner}`, 'warning');
+      } else {
+        showGameNotification('You can only place units on your territory', 'warning');
+      }
+    }
+  }
+}
+
+function findUnitOnCell(cellId: number): any | null {
+  for (const [entityId, entity] of Object.entries(currentGameEntities)) {
+    if (entity.cellId === cellId && entity.type === 'unit') {
+      return entity; // Entity already has correct numeric id
+    }
+  }
+  return null;
+}
+
+function selectUnit(unitId: number, cellId: number): void {
+  selectedUnitId = unitId; // Keep as number
+  selectedCellId = cellId;
+
+  console.log(`NEW SELECTED UNIT ID: ${selectedUnitId}`)
+  
+  // Re-render to show selection highlight
+  renderGameState();
+}
+
+function deselectUnit(): void {
+  selectedUnitId = null;
+  selectedCellId = null;
+  renderGameState();
+}
+
+function moveUnit(unitId: number, fromCellId: number, toCellId: number): void {
+  console.log('Sending move action:', { unitId, fromCellId, toCellId });
+  
+  // Send move action to server with all numeric IDs
+  sendGameAction('move_unit', {
+    unitId: unitId,
+    fromCellId: fromCellId,
+    toCellId: toCellId,
+    gameId: currentGameId,
+    playerId: currentPlayerName
+  });
+  
+  // Deselect the unit
+  deselectUnit();
+  
+  console.log(`Sending move_unit action: unit ${unitId} from cell ${fromCellId} to cell ${toCellId}`);
+}
+
+function findCellAtPosition(x: number, y: number): number {
+  if (!meshData) return -1;
+
+  const nCells = meshData.cellCount;
+
+  for (let cellId = 0; cellId < nCells; cellId++) {
+    const start = meshData.cellOffsets[cellId];
+    const end = meshData.cellOffsets[cellId + 1];
+    
+    if (start >= end) continue;
+
+    // Check if point is inside this cell using ray casting algorithm
+    if (isPointInCell(x, y, cellId)) {
+      return cellId;
+    }
+  }
+
+  return -1;
+}
+
+function isPointInCell(x: number, y: number, cellId: number): boolean {
+  if (!meshData) return false;
+
+  const start = meshData.cellOffsets[cellId];
+  const end = meshData.cellOffsets[cellId + 1];
+  
+  if (start >= end) return false;
+
+  // Ray casting algorithm to check if point is inside polygon
+  let inside = false;
+  let j = end - 1;
+
+  for (let i = start; i < end; i++) {
+    const vi = meshData.cellVertexIndices[i];
+    const vj = meshData.cellVertexIndices[j];
+    
+    const xi = meshData.allVertices[vi * 2];
+    const yi = meshData.allVertices[vi * 2 + 1];
+    const xj = meshData.allVertices[vj * 2];
+    const yj = meshData.allVertices[vj * 2 + 1];
+
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+    j = i;
+  }
+
+  return inside;
+}
+
+function placeEntity(cellId: number): void {
+  // Send action to server
+  sendGameAction('place_entity', {
+    cellId: cellId,
+    entityType: 'unit', // For now, always place units
+    gameId: currentGameId,
+    playerId: currentPlayerName
+  });
+  
+  console.log(`Sending place_entity action for cell ${cellId} by ${currentPlayerName}`);
+}
+
+function sendGameAction(actionType: string, actionData: any): void {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    console.error('WebSocket not connected - cannot send action');
+    showGameNotification('Connection lost - action failed', 'error');
+    return;
+  }
+  
+  if (!currentGameId || !currentPlayerName) {
+    console.error('Missing game context - cannot send action');
+    return;
+  }
+  
+  sendWebSocketMessage('game_action', {
+    actionType,
+    gameId: currentGameId,
+    playerId: currentPlayerName,
+    ...actionData
+  });
+}
+
+function drawEntityMarker(cellId: number, owner: string, isSelected: boolean = false): void {
+  if (!meshData) return;
+
+  // Get the center of the cell for placing the entity marker
+  const centerX = meshData.cellTriangleCenters[cellId * 2];
+  const centerY = meshData.cellTriangleCenters[cellId * 2 + 1];
+
+  // Use different colors for different players
+  const playerColors: { [playerId: string]: string } = {
+    'player1': '#FF0000', // Red
+    'player2': '#0000FF', // Blue
+    'player3': '#00FF00', // Green
+    'player4': '#FFFF00', // Yellow
+    'player5': '#FF00FF', // Magenta
+    'player6': '#00FFFF', // Cyan
+  };
+  
+  const fillColor = playerColors[owner] || '#888888';
+  
+  // Draw selection ring if selected
+  if (isSelected) {
+    console.log(`UNIT ON ${cellId} selected`)
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 12, 0, 2 * Math.PI);
+    ctx.stroke();
+  }
+  
+  ctx.fillStyle = fillColor;
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 2;
+  
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 8, 0, 2 * Math.PI);
+  ctx.fill();
+  ctx.stroke();
+  
+  // Add a small indicator for the unit type
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = '10px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('⚔️', centerX, centerY);
+}
+
+// Event listener setup function to be called during initialization
+function setupGameplayEventListeners(): void {
+  // Add click handler to canvas for entity placement and movement
+  canvas.addEventListener('click', handleCellClick);
+  
+  // Add keyboard handler to deselect units
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && selectedUnitId !== null) {
+      deselectUnit();
+      showGameNotification('Unit deselected', 'success');
+    }
+  });
 }
 
 // Handle errors
@@ -1299,26 +1550,6 @@ function removeFromRoom() {
   currentPlayerName = null;
   isGameCreator = false;
 }
-
-// Initialize WebSocket when the page loads
-document.addEventListener('DOMContentLoaded', () => {
-  initializeWebSocket();
-});
-
-// Clean up WebSocket connection when leaving
-window.addEventListener('beforeunload', () => {
-  removeFromRoom();
-  if (socket) {
-    socket.close();
-  }
-});
-
-
-
-
-
-
-
 
 // Utility function to show game notifications
 function showGameNotification(message: string, type: 'success' | 'warning' | 'error' = 'success') {
@@ -1397,78 +1628,53 @@ function updateGameStatus(status: string) {
   }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /**
- * Fetches complete game data (terrain + territories) from server
- * Used for reconnections and page refreshes
- */
-async function fetchGameData(gameId: string): Promise<void> {
-  try {
-    console.log(`Fetching game data for game ${gameId}...`);
-    
-    // Use the single endpoint with terrain parameter
-    const response = await fetch(`${SERVER_BASE_URL}/api/games/${gameId}`);
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch game data: ${response.status}`);
-    }
-    
-    const gameData = await response.json();
-    console.log('Received game data from HTTP:', gameData);
-    
-    // Process the received data
-    processGameData(gameData);
-    
-  } catch (error: any) {
-    console.error('Failed to fetch game data:', error);
-    showError(`Failed to load game data: ${error.message}`);
-  }
-}
-
-/**
- * Processes game data received from either WebSocket or HTTP
+ * Processes game data received from WebSocket (complete Game object)
  */
 function processGameData(gameData: any): void {
   try {
-    // Store game information
-    currentGameId = gameData.gameId;
-    currentTerritoryData = gameData.territoryData;
+    // Store game information from meta
+    currentGameId = gameData.meta.gameId;
     
-    // Decode terrain data from base64
-    const terrainBuffer = Uint8Array.from(atob(gameData.terrain), c => c.charCodeAt(0));
-    currentGameTerrain = terrainBuffer;
+    // Process territory data from game state
+    currentTerritoryData = gameData.state.cellOwnership || {};
     
-    // Verify terrain data matches expected size
-    if (terrainBuffer.length !== gameData.cellCount) {
-      throw new Error(`Terrain data size mismatch: expected ${gameData.cellCount}, got ${terrainBuffer.length}`);
+    // Update turn state
+    isMyTurn = gameData.state.currentPlayer === currentPlayerName;
+    updateTurnIndicator(gameData.state.currentPlayer, gameData.state.turnNumber);
+    
+    // Update entities if provided
+    if (gameData.state.entities) {
+      currentGameEntities = gameData.state.entities;
+      console.log('Initial entities:', currentGameEntities);
     }
     
-    console.log(`✅ Game data processed: ${gameData.cellCount} cells, ${Object.keys(gameData.territoryData).length} owned cells`);
+    // Deserialize terrain data from game map
+    let terrainData: Uint8Array;
+    if (gameData.map.biomes.__typedArray) {
+      // Handle TypedArray descriptor from server
+      terrainData = deserializeTypedArrays(gameData.map.biomes);
+    } else {
+      // Handle direct Uint8Array
+      terrainData = new Uint8Array(gameData.map.biomes);
+    }
+    
+    currentGameTerrain = terrainData;
+    
+    console.log(`✅ Game data processed: ${terrainData.length} cells, ${Object.keys(currentTerritoryData).length} owned cells`);
+    console.log(`Current player: ${gameData.state.currentPlayer}, My turn: ${isMyTurn}`);
     
     // Update the current biomes with the game terrain
-    currentCellBiomes = terrainBuffer;
-    currentCellCount = gameData.cellCount;
+    currentCellBiomes = terrainData;
+    currentCellCount = terrainData.length;
     
     // Update the map size to match the game
-    currentMapSize = gameData.mapSize as MapSize;
+    currentMapSize = gameData.meta.mapSize as MapSize;
     
     // Load the appropriate mesh if we don't have it
-    if (!meshData || meshData.cellOffsets.length - 1 !== gameData.cellCount) {
-      console.log(`Loading ${gameData.mapSize} mesh for game...`);
-      loadOrGetMesh(gameData.mapSize as MapSize).then(() => {
+    if (!meshData || meshData.cellCount !== terrainData.length) {
+      console.log(`Loading ${gameData.meta.mapSize} mesh for game...`);
+      loadOrGetMesh(gameData.meta.mapSize as MapSize).then(() => {
         renderGameState();
       });
     } else {
@@ -1512,7 +1718,25 @@ function renderGameState(): void {
   // Overlay territory ownership
   drawTerritoryOverlay();
   
+  // Draw entities if we have entity data
+  if (currentGameEntities) {
+    drawEntities();
+  }
+  
   console.timeEnd('renderGameState');
+}
+
+function drawEntities(): void {
+  if (!meshData) return;
+  
+  for (const [entityId, entity] of Object.entries(currentGameEntities)) {
+    if (entity.type === 'unit') {
+      // Compare numeric selectedUnitId with numeric entityId
+      const isSelected = selectedUnitId === parseInt(entityId);
+      console.log(`DRAWING UNIT ${entityId} (selected = ${isSelected})`)
+      drawEntityMarker(entity.cellId, entity.owner, isSelected);
+    }
+  }
 }
 
 /**
@@ -1560,9 +1784,168 @@ function drawTerritoryOverlay(): void {
   }
 }
 
-// Add a function to refresh game data (useful for reconnecting players)
-async function refreshGameData(): Promise<void> {
-  if (currentGameId) {
-    await fetchGameData(currentGameId);
+
+// ===============================================================================================
+// ======================================== Setup Page ===========================================
+// ===============================================================================================
+
+
+let isMyTurn: boolean = false;
+
+let selectedUnitId: number | null = null;
+let selectedCellId: number | null = null;
+
+let currentGameEntities: { [entityId: number]: any } = {};
+
+let currentTerritoryData: { [cellId: number]: string } = {};
+let currentGameTerrain: Uint8Array | null = null;
+
+// WebSocket connection and game state
+let socket: WebSocket | null = null;
+let currentGameId: string | null = null;
+let currentPlayerName: string | null = null;
+let isGameCreator: boolean = false;
+
+let currentCellBiomes: Uint8Array = new Uint8Array(0);
+let currentCellCount: number = 0;
+
+export type MapSize = "small" | "medium" | "large" | "xl";
+
+// TODO we need to standardize/centralize this configuration between client and server
+const WIDTH  = 960;
+const HEIGHT = 600;
+
+// Server configuration
+const SERVER_BASE_URL: string = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
+
+// Biome color scheme
+export const BIOME_COLORS: { [key: number]: string } = {
+  0: "#88aa55",   // Plains - Grassland
+  1: "#679459",   // Woods - Temperate Deciduous Forest
+  2: "#337755",   // Rainforest - Tropical Rain Forest
+  3: "#2f6666",   // Wetlands - Marsh
+  4: "#889977",   // Hills - Shrubland
+  5: "#888888",   // Mountains - Bare
+  6: "#44447a",   // Shallow Ocean - Ocean
+  7: "#33335a",   // Deep Ocean - (darker)
+  8: "#bbbbaa",   // Tundra Plains - Tundra
+  9: "#99aa77",   // Tundra Woods - Taiga
+  10: "#bbbbaa",  // Tundra Hills - Tundra
+  11: "#ffffff",  // Tundra Mountains - Ice
+  12: "#d2b98b",  // Desert Plains - Subtropical Desert
+  13: "#c9d29b",  // Desert Hills - Temperate Desert
+  14: "#555555"   // Desert Mountains - Scorched
+};
+
+// set up canvas
+const canvas = document.createElement('canvas');
+const container = document.getElementById('canvas-container')!;
+container.appendChild(canvas);
+canvas.width  = WIDTH;
+canvas.height = HEIGHT;
+
+const ctx = canvas.getContext('2d')!;
+
+// TODO ship over cell count for easy calcs?
+export type MeshData = {
+  allVertices: Float64Array;
+  cellOffsets: Uint32Array;
+  cellVertexIndices: Uint32Array;
+  cellNeighbors: Int32Array;
+  cellTriangleCenters: Float64Array;
+  cellCount: number;
+};
+
+// Mesh cache - stores fetched meshes from server
+const meshCache = new Map<MapSize, MeshData>();
+const meshLoadingStates = new Map<MapSize, 'loading' | 'loaded' | 'error'>();
+
+// Current mesh data
+let meshData: MeshData | null = null;
+let currentMapSize: MapSize = 'xl';
+
+// Current elevation configuration
+let elevationConfig: ElevationConfig = {
+  amplitudes: [0.6, 0.3, 0.15, 0.075],
+  frequencies: [0.003, 0.006, 0.012, 0.024],
+  octaves: 4,
+  seed: Math.random(),
+  waterLevel: 0.5,
+  redistribution: 'exponential' as const,
+  exponentialPower: 1.5,
+  elevationShift: -0.1,
+  useIslands: false
+};
+
+// Biome configuration
+let biomeConfig: BiomeConfig = {
+  waterLevel: 0.5,
+  moistureFrequency: 0.02,
+  moistureAmplitude: 1.0,
+  moistureOctaves: 3,
+  temperatureFrequency: 0.015,
+  temperatureAmplitude: 1.0,
+  temperatureOctaves: 2,
+  smoothColors: true
+};
+
+// Start the application
+initializeApp().catch(error => {
+  console.error('Failed to initialize application:', error);
+  showError('Failed to initialize application. Please check console.');
+});
+
+document.getElementById("createGame")!.addEventListener("click", async () => {
+  console.log(`SENDING ${currentCellCount} BIOMES TO ${SERVER_BASE_URL}/api/games/create`);
+  console.time('createGame');
+  
+  // Disable buttons during creation
+  setGameButtonsState(false, "Creating...", "Join Game");
+  
+  try {
+    const response = await fetch(`${SERVER_BASE_URL}/api/games/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Cell-Count': currentCellCount.toString(),
+        'X-Map-Size': currentMapSize,
+      },
+      body: currentCellBiomes
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Failed to create game: ${response.status}`);
+    }
+    
+    const gameData = await response.json();
+    console.log('Game created:', gameData);
+    
+    // Show creator's game state UI
+    showCreatorGameUI(gameData);
+    
+  } catch (error: any) {
+    console.error('Game creation failed:', error);
+    showGameNotification(error.message || 'Game creation failed', 'error');
+    // Reset buttons on error
+    setGameButtonsState(true, "Create Game", "Join Game");
   }
-}
+  console.timeEnd('createGame');
+});
+
+document.getElementById("joinGame")!.addEventListener("click", () => {
+  showJoinGameForm();
+});
+
+// Initialize WebSocket when the page loads
+document.addEventListener('DOMContentLoaded', () => {
+  initializeWebSocket();
+});
+
+// Clean up WebSocket connection when leaving
+window.addEventListener('beforeunload', () => {
+  removeFromRoom();
+  if (socket) {
+    socket.close();
+  }
+});

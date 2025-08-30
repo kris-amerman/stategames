@@ -1,18 +1,18 @@
-import { CORS_HEADERS } from "..";
-import type { MapSize } from "../mesh";
+// server/src/routes/getMesh.ts
+import { CORS_HEADERS, MAP_SIZES } from "../constants";
+import type { MapSize } from "../types";
 import { meshService } from "../mesh-service";
+import { encode } from "../serialization";
 
 /**
- * Dynamic routes for static map meshes
+ * Dynamic routes for static map meshes. Returns binary JSON mesh data.
  */
 export async function getMesh(sizeParam: string): Promise<Response> {
-  const validSizes: MapSize[] = ["small", "medium", "large", "xl"];
-
-  if (!sizeParam || !validSizes.includes(sizeParam as MapSize)) {
+  if (!sizeParam || !MAP_SIZES.includes(sizeParam as MapSize)) {
     return new Response(
       JSON.stringify({
         error: "Invalid map size",
-        validSizes,
+        validSizes: MAP_SIZES,
         received: sizeParam,
       }),
       {
@@ -26,32 +26,16 @@ export async function getMesh(sizeParam: string): Promise<Response> {
 
   try {
     console.log(`Serving ${size} mesh data...`);
-    const startTime = Date.now();
-
-    const meshData = await meshService.getSerializedMeshData(size);
-
-    const duration = Date.now() - startTime;
-    console.log(`✅ Served ${size} mesh in ${duration}ms`);
-
-    return new Response(
-      JSON.stringify({
-        size,
-        meshData,
-        meta: {
-          cellCount: meshData.cellOffsets.length - 1,
-          vertexCount: meshData.allVertices.length / 2,
-          generatedAt: new Date().toISOString(),
-          responseTimeMs: duration,
-        },
-      }),
-      {
-        headers: {
-          ...CORS_HEADERS,
-          "Content-Type": "application/json",
-          "Cache-Control": "public, max-age=3600",
-        },
-      }
-    );
+    const meshData = await meshService.getMeshData(size);
+    const serializedData = encode(meshData);
+    
+    return new Response(serializedData, {
+      headers: {
+        ...CORS_HEADERS,
+        "Content-Type": "application/json",
+        "Cache-Control": "public, max-age=3600",
+      },
+    });
   } catch (error: any) {
     console.error(`❌ Failed to serve ${size} mesh:`, error);
     return new Response(

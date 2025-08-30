@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 
-import { generateMesh, saveMeshData, meshDataExists, MESH_CONFIG } from '../mesh';
-import type { MapSize } from '../mesh/types';
-
-const MAP_SIZES: MapSize[] = ['small', 'medium', 'large', 'xl'];
+// server/src/scripts/generate-meshes.ts
+import { generateMesh, saveMeshData, meshDataExists } from '../mesh';
+import { MAP_SIZES, MESH_CONFIG } from '../constants';
+import type { MapSize } from '../types';
 
 async function generateAllMeshes(): Promise<void> {
-  console.log('🚀 Starting mesh generation...');
+  console.log('Starting mesh generation...');
   console.log(`Config: ${MESH_CONFIG.width}x${MESH_CONFIG.height}`);
   console.log(`Sizes: ${MAP_SIZES.join(', ')}`);
   console.log('---');

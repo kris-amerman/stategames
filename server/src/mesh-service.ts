@@ -1,10 +1,10 @@
+// server/src/mesh-service.ts
 import {
   loadMeshData,
   generateMesh,
   saveMeshData,
-  serializeMeshData,
 } from "./mesh";
-import type { MeshData, MapSize, SerializedMeshData } from "./mesh/types";
+import type { MeshData, MapSize } from "./types";
 
 /**
  * In-memory cache for loaded mesh data to avoid repeated file I/O
@@ -52,30 +52,13 @@ class MeshService {
     let meshData = await this.cache.get(size);
 
     if (!meshData) {
-      console.warn(`Mesh data for ${size} not found, generating on-the-fly...`);
-      // Generate and cache for future requests
-      meshData = generateMesh(size);
-      this.cache.set(size, meshData);
-
-      // Save to disk for next server restart
-      try {
-        await saveMeshData(size, meshData);
-      } catch (error) {
-        console.error(`Failed to save generated ${size} mesh:`, error);
-        // Continue anyway since we have the data in memory
-      }
+      throw new Error("! CRITICAL ERROR: Could not load meshData from cache/disk. Please check MESH_DATA_DIR.");
     }
 
     return meshData;
   }
 
-  /**
-   * Gets serialized mesh data ready for JSON response
-   */
-  async getSerializedMeshData(size: MapSize): Promise<SerializedMeshData> {
-    const meshData = await this.getMeshData(size);
-    return serializeMeshData(meshData);
-  }
+
 
   /**
    * Preloads all mesh sizes into cache (useful for server startup)

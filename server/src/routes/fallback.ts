@@ -1,4 +1,4 @@
-import { CORS_HEADERS } from "..";
+import { CORS_HEADERS } from "../constants";
 
 /**
  * Fallback for unmatched routes

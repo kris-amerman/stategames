@@ -1,6 +1,11 @@
-import { broadcastGameStarted, CORS_HEADERS } from "..";
+// server/src/routes/startGame.ts
+import { CORS_HEADERS } from "../constants";
 import { GameService } from "../game-state";
+import { broadcastGameStarted } from "..";
 
+/**
+ * Given gameId, perform game initialization and broadcast game via WS.
+ */
 export async function startGame(gameId: string) {
   try {
     if (!gameId) {
@@ -14,9 +19,9 @@ export async function startGame(gameId: string) {
     }
 
     // Try to start the game using the service
-    const gameState = await GameService.startGame(gameId);
+    const game = await GameService.startGame(gameId);
 
-    if (!gameState) {
+    if (!game) {
       return new Response(JSON.stringify({ error: "Game not found" }), {
         status: 404,
         headers: {
@@ -27,72 +32,15 @@ export async function startGame(gameId: string) {
     }
 
     console.log(
-      `Game ${gameId} started with ${gameState.players.length} players`
+      `Game ${gameId} started with ${game.meta.players.length} players`
     );
 
-    // Load terrain data for the WebSocket broadcast
-    const terrainData = await GameService.loadTerrainData(gameId);
-
-    if (!terrainData) {
-      throw new Error("Terrain data not found");
-    }
-
-    // Create territory summary for broadcast
-    const territoryStats = Array.from(gameState.playerCells.entries()).map(
-      ([playerId, cells]) => ({
-        playerId,
-        cellCount: cells.size,
-      })
-    );
-
-    // Create detailed territory data for rendering
-    const territoryDataMapping: { [cellId: string]: string } = {};
-    for (const [playerId, cells] of gameState.playerCells.entries()) {
-      for (const cellId of cells) {
-        territoryDataMapping[cellId.toString()] = playerId;
-      }
-    }
-
-    // Convert terrain data to base64 for JSON transmission
-    const terrainBase64 = Buffer.from(terrainData).toString("base64");
-
-    // Send complete game data via WebSocket
-    const gameData = {
-      gameId: gameState.gameId,
-      status: gameState.status,
-      players: gameState.players,
-      currentPlayer: gameState.currentPlayer,
-      turnNumber: gameState.turnNumber,
-
-      // Map information
-      mapSize: gameState.mapSize,
-      cellCount: gameState.cellCount,
-
-      // Complete terrain data
-      terrain: terrainBase64,
-
-      // Territory information
-      territoryData: territoryDataMapping,
-      territoryStats,
-
-      // Timestamps
-      startedAt: gameState.startedAt,
-    };
-
-    broadcastGameStarted(gameId, gameData);
+    // Broadcast complete game data via WebSocket
+    broadcastGameStarted(gameId, game);
 
     return new Response(
       JSON.stringify({
-        success: true,
-        gameId: gameState.gameId,
-        status: gameState.status,
-        players: gameState.players,
-        currentPlayer: gameState.currentPlayer,
-        turnNumber: gameState.turnNumber,
-        startedAt: gameState.startedAt,
-        mapSize: gameState.mapSize,
-        cellCount: gameState.cellCount,
-        territoryStats, // Include territory stats in response
+        message: "success"
       }),
       {
         status: 200,

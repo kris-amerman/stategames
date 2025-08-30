@@ -1,26 +1,10 @@
-import { createGame, fallback, getGame, getMesh, health, joinGame, root, startGame } from "./routes";
+// server/src/index.ts
+import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame } from "./routes";
 import { setupWebSocketHandler } from "./websocket";
+import { ENDPOINTS, PORT } from "./constants";
+import { encode } from "./serialization";
 import type { ServerWebSocket } from "bun";
-
-// TODO move constants to a config
-export const PORT = process.env.PORT || 3000;
-export const ENDPOINTS = [
-  "GET /api/mesh/small",
-  "GET /api/mesh/medium",
-  "GET /api/mesh/large",
-  "GET /api/mesh/xl",
-  "POST /api/games",
-  "POST /api/games/:joinCode/join",
-  "POST /api/games/:gameId/start",
-  "GET /api/games/:gameId",
-  `WebSocket :${PORT}/ws`,
-  "GET /health",
-];
-export const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Cell-Count, Content-Encoding, X-Map-Size",
-};
+import type { GameState, Game, GameStateUpdate } from "./types";
 
 // WebSocket state management
 export const gameRooms = new Map<string, Set<ServerWebSocket<any>>>();
@@ -35,7 +19,6 @@ const server = Bun.serve({
   
   routes: {
     "/": () => root(),
-    "/health": () => health(),
 
     "/api/mesh/:sizeParam": {
       GET: async req => getMesh(req.params.sizeParam)
@@ -53,8 +36,8 @@ const server = Bun.serve({
       POST: async req => startGame(req.params.gameId)
     },
 
-    "/api/games/:gameId": {
-      GET: async req => getGame(req.params.gameId)
+    "/api/games/:gameId/load": {
+      GET: async req => loadGame(req.params.gameId)
     }
   },
 
@@ -103,13 +86,14 @@ const server = Bun.serve({
 });
 
 // Helper functions for WebSocket broadcasting
-export function broadcastToRoom(gameId: string, event: string, data: any) {
+export function broadcastToRoom(gameId: string, messageType: string, data: any) {
   const room = gameRooms.get(gameId);
   if (room) {
-    const message = JSON.stringify({ event, data });
+    const message = { event: messageType, data };
+    const messageString = encode(message);
     room.forEach(ws => {
       try {
-        ws.send(message);
+        ws.send(messageString);
       } catch (error) {
         console.error('Failed to send message to WebSocket:', error);
       }
@@ -126,26 +110,21 @@ export function broadcastPlayerJoined(gameId: string, players: string[], newPlay
   });
 }
 
-export function broadcastGameStateUpdate(gameId: string, status: string, players: string[]) {
-  console.log(`Broadcasting game_state_update for game ${gameId}: ${status}`);
-  broadcastToRoom(gameId, 'game_state_update', {
-    gameId,
-    status,
-    players
-  });
-}
-
-export function broadcastGameError(gameId: string, error: string) {
-  console.log(`Broadcasting game_error for game ${gameId}: ${error}`);
-  broadcastToRoom(gameId, 'game_error', {
-    gameId,
-    error
-  });
-}
-
-export function broadcastGameStarted(gameId: string, gameData: any) {
+export function broadcastGameStarted(gameId: string, game: Game) {
   console.log(`Broadcasting game_started for game ${gameId}`);
-  broadcastToRoom(gameId, 'game_started', gameData);
+  broadcastToRoom(gameId, 'full_game', game);
+}
+
+export function broadcastGameStateUpdate(gameId: string, gameState: GameState, lastAction?: any) {
+  console.log(`Broadcasting game state update for game ${gameId}`);
+  
+  const update: GameStateUpdate = {
+    gameId,
+    state: gameState,
+    lastAction
+  };
+  
+  broadcastToRoom(gameId, 'game_update', update);
 }
 
 console.log(`Server running`);
