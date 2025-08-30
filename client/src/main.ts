@@ -76,20 +76,60 @@ async function fetchMeshFromServer(size: MapSize): Promise<MeshData | null> {
     console.time(`fetch-${size}`);
     
     const response = await fetch(`${SERVER_BASE_URL}/api/mesh/${size}`);
-    
+
     if (!response.ok) {
       throw new Error(`❌ ${response.status} ${response.statusText}`);
     }
-    
+
     const data = await response.json();
-    
-    console.log("LOGGING THE DATA")
-    console.log(data)
+
+    console.groupCollapsed(`[fetch-${size}] Raw response`);
+    console.log("keys:", Object.keys(data));
+    console.log("meta:", data?.meta);
+    console.log("size:", data?.size);
+    console.log("meshData keys:", data?.meshData ? Object.keys(data.meshData) : "(no meshData)");
+    console.groupEnd();
 
     console.timeEnd(`fetch-${size}`);
 
-    // Deserialize the mesh data
-    const meshData = deserializeMeshData(data);
+    // --- Guard & shape check before deserializing ---
+    if (!data?.meshData || typeof data.meshData !== "object") {
+      console.error("❌ Expected response.meshData to be an object.");
+      console.debug("Received:", data);
+      throw new Error("Malformed response: missing meshData");
+    }
+
+    // Optional: quick sanity sizes
+    const md = data.meshData;
+    console.groupCollapsed("[pre-deserialize] meshData sanity");
+    console.log("allVertices length:", md?.allVertices?.length);
+    console.log("cellOffsets length:", md?.cellOffsets?.length);
+    console.log("cellVertexIndices length:", md?.cellVertexIndices?.length);
+    console.log("cellNeighbors length:", md?.cellNeighbors?.length);
+    console.log("cellTriangleCenters length:", md?.cellTriangleCenters?.length);
+    console.log("cellCount:", md?.cellCount);
+    console.groupEnd();
+
+    // ✅ Pass ONLY the meshData object
+    const meshData = deserializeMeshData(md);
+
+    console.groupCollapsed("[post-deserialize] meshData");
+    console.log("types:", {
+      allVertices: meshData?.allVertices?.constructor?.name,
+      cellOffsets: meshData?.cellOffsets?.constructor?.name,
+      cellVertexIndices: meshData?.cellVertexIndices?.constructor?.name,
+      cellNeighbors: meshData?.cellNeighbors?.constructor?.name,
+      cellTriangleCenters: meshData?.cellTriangleCenters?.constructor?.name,
+      cellCount: typeof meshData?.cellCount
+    });
+    console.log("lengths:", {
+      allVertices: meshData?.allVertices?.length,
+      cellOffsets: meshData?.cellOffsets?.length,
+      cellVertexIndices: meshData?.cellVertexIndices?.length,
+      cellNeighbors: meshData?.cellNeighbors?.length,
+      cellTriangleCenters: meshData?.cellTriangleCenters?.length
+    });
+    console.groupEnd();
 
     console.log("LOGGING THE MESH AFTER DESERIALIZE")
     console.log(meshData)
