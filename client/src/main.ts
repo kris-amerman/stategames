@@ -2,105 +2,6 @@ import { assignElevations, assignIslandElevations, ElevationConfig } from './ter
 import { assignBiomes, BiomeConfig, getBiomeName } from './terrain-gen/biomes';
 import { drawCells } from './drawCells';
 
-let isMyTurn: boolean = false;
-
-let selectedUnitId: number | null = null;
-let selectedCellId: number | null = null;
-
-let currentGameEntities: { [entityId: number]: any } = {};
-
-let currentTerritoryData: { [cellId: number]: string } = {};
-let currentGameTerrain: Uint8Array | null = null;
-
-// WebSocket connection and game state
-let socket: WebSocket | null = null;
-let currentGameId: string | null = null;
-let currentPlayerName: string | null = null;
-let isGameCreator: boolean = false;
-
-let currentCellBiomes: Uint8Array = new Uint8Array(0);
-let currentCellCount: number = 0;
-
-export type MapSize = "small" | "medium" | "large" | "xl";
-
-// TODO we need to standardize/centralize this configuration between client and server
-const WIDTH  = 960;
-const HEIGHT = 600;
-
-// Server configuration
-const SERVER_BASE_URL: string = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
-
-// Biome color scheme
-export const BIOME_COLORS: { [key: number]: string } = {
-  0: "#88aa55",   // Plains - Grassland
-  1: "#679459",   // Woods - Temperate Deciduous Forest
-  2: "#337755",   // Rainforest - Tropical Rain Forest
-  3: "#2f6666",   // Wetlands - Marsh
-  4: "#889977",   // Hills - Shrubland
-  5: "#888888",   // Mountains - Bare
-  6: "#44447a",   // Shallow Ocean - Ocean
-  7: "#33335a",   // Deep Ocean - (darker)
-  8: "#bbbbaa",   // Tundra Plains - Tundra
-  9: "#99aa77",   // Tundra Woods - Taiga
-  10: "#bbbbaa",  // Tundra Hills - Tundra
-  11: "#ffffff",  // Tundra Mountains - Ice
-  12: "#d2b98b",  // Desert Plains - Subtropical Desert
-  13: "#c9d29b",  // Desert Hills - Temperate Desert
-  14: "#555555"   // Desert Mountains - Scorched
-};
-
-// set up canvas
-const canvas = document.createElement('canvas');
-const container = document.getElementById('canvas-container')!;
-container.appendChild(canvas);
-canvas.width  = WIDTH;
-canvas.height = HEIGHT;
-
-const ctx = canvas.getContext('2d')!;
-
-// TODO ship over cell count for easy calcs?
-export type MeshData = {
-  allVertices: Float64Array;
-  cellOffsets: Uint32Array;
-  cellVertexIndices: Uint32Array;
-  cellNeighbors: Int32Array;
-  cellTriangleCenters: Float64Array;
-  cellCount: number;
-};
-
-// Mesh cache - stores fetched meshes from server
-const meshCache = new Map<MapSize, MeshData>();
-const meshLoadingStates = new Map<MapSize, 'loading' | 'loaded' | 'error'>();
-
-// Current mesh data
-let meshData: MeshData | null = null;
-let currentMapSize: MapSize = 'xl';
-
-// Current elevation configuration
-let elevationConfig: ElevationConfig = {
-  amplitudes: [0.6, 0.3, 0.15, 0.075],
-  frequencies: [0.003, 0.006, 0.012, 0.024],
-  octaves: 4,
-  seed: Math.random(),
-  waterLevel: 0.5,
-  redistribution: 'exponential' as const,
-  exponentialPower: 1.5,
-  elevationShift: -0.1,
-  useIslands: false
-};
-
-// Biome configuration
-let biomeConfig: BiomeConfig = {
-  waterLevel: 0.5,
-  moistureFrequency: 0.02,
-  moistureAmplitude: 1.0,
-  moistureOctaves: 3,
-  temperatureFrequency: 0.015,
-  temperatureAmplitude: 1.0,
-  temperatureOctaves: 2,
-  smoothColors: true
-};
-
 /**
  * TypedArray deserialization helper for server data
  */
@@ -385,12 +286,6 @@ async function initializeApp() {
   
   console.log('✅ Application initialized');
 }
-
-// Start the application
-initializeApp().catch(error => {
-  console.error('Failed to initialize application:', error);
-  showError('Failed to initialize application. Please check console.');
-});
 
 
 /**
@@ -708,48 +603,6 @@ function createUI() {
     }
   }
 }
-
-document.getElementById("createGame")!.addEventListener("click", async () => {
-  console.log(`SENDING ${currentCellCount} BIOMES TO ${SERVER_BASE_URL}/api/games/create`);
-  console.time('createGame');
-  
-  // Disable buttons during creation
-  setGameButtonsState(false, "Creating...", "Join Game");
-  
-  try {
-    const response = await fetch(`${SERVER_BASE_URL}/api/games/create`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'X-Cell-Count': currentCellCount.toString(),
-        'X-Map-Size': currentMapSize,
-      },
-      body: currentCellBiomes
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || `Failed to create game: ${response.status}`);
-    }
-    
-    const gameData = await response.json();
-    console.log('Game created:', gameData);
-    
-    // Show creator's game state UI
-    showCreatorGameUI(gameData);
-    
-  } catch (error: any) {
-    console.error('Game creation failed:', error);
-    showGameNotification(error.message || 'Game creation failed', 'error');
-    // Reset buttons on error
-    setGameButtonsState(true, "Create Game", "Join Game");
-  }
-  console.timeEnd('createGame');
-});
-
-document.getElementById("joinGame")!.addEventListener("click", () => {
-  showJoinGameForm();
-});
 
 // Utility function to manage game button states
 function setGameButtonsState(enabled: boolean, createText: string = "Create Game", joinText: string = "Join Game") {
@@ -1698,19 +1551,6 @@ function removeFromRoom() {
   isGameCreator = false;
 }
 
-// Initialize WebSocket when the page loads
-document.addEventListener('DOMContentLoaded', () => {
-  initializeWebSocket();
-});
-
-// Clean up WebSocket connection when leaving
-window.addEventListener('beforeunload', () => {
-  removeFromRoom();
-  if (socket) {
-    socket.close();
-  }
-});
-
 // Utility function to show game notifications
 function showGameNotification(message: string, type: 'success' | 'warning' | 'error' = 'success') {
   // Create notification element
@@ -1943,3 +1783,169 @@ function drawTerritoryOverlay(): void {
     ctx.fill();
   }
 }
+
+
+// ===============================================================================================
+// ======================================== Setup Page ===========================================
+// ===============================================================================================
+
+
+let isMyTurn: boolean = false;
+
+let selectedUnitId: number | null = null;
+let selectedCellId: number | null = null;
+
+let currentGameEntities: { [entityId: number]: any } = {};
+
+let currentTerritoryData: { [cellId: number]: string } = {};
+let currentGameTerrain: Uint8Array | null = null;
+
+// WebSocket connection and game state
+let socket: WebSocket | null = null;
+let currentGameId: string | null = null;
+let currentPlayerName: string | null = null;
+let isGameCreator: boolean = false;
+
+let currentCellBiomes: Uint8Array = new Uint8Array(0);
+let currentCellCount: number = 0;
+
+export type MapSize = "small" | "medium" | "large" | "xl";
+
+// TODO we need to standardize/centralize this configuration between client and server
+const WIDTH  = 960;
+const HEIGHT = 600;
+
+// Server configuration
+const SERVER_BASE_URL: string = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
+
+// Biome color scheme
+export const BIOME_COLORS: { [key: number]: string } = {
+  0: "#88aa55",   // Plains - Grassland
+  1: "#679459",   // Woods - Temperate Deciduous Forest
+  2: "#337755",   // Rainforest - Tropical Rain Forest
+  3: "#2f6666",   // Wetlands - Marsh
+  4: "#889977",   // Hills - Shrubland
+  5: "#888888",   // Mountains - Bare
+  6: "#44447a",   // Shallow Ocean - Ocean
+  7: "#33335a",   // Deep Ocean - (darker)
+  8: "#bbbbaa",   // Tundra Plains - Tundra
+  9: "#99aa77",   // Tundra Woods - Taiga
+  10: "#bbbbaa",  // Tundra Hills - Tundra
+  11: "#ffffff",  // Tundra Mountains - Ice
+  12: "#d2b98b",  // Desert Plains - Subtropical Desert
+  13: "#c9d29b",  // Desert Hills - Temperate Desert
+  14: "#555555"   // Desert Mountains - Scorched
+};
+
+// set up canvas
+const canvas = document.createElement('canvas');
+const container = document.getElementById('canvas-container')!;
+container.appendChild(canvas);
+canvas.width  = WIDTH;
+canvas.height = HEIGHT;
+
+const ctx = canvas.getContext('2d')!;
+
+// TODO ship over cell count for easy calcs?
+export type MeshData = {
+  allVertices: Float64Array;
+  cellOffsets: Uint32Array;
+  cellVertexIndices: Uint32Array;
+  cellNeighbors: Int32Array;
+  cellTriangleCenters: Float64Array;
+  cellCount: number;
+};
+
+// Mesh cache - stores fetched meshes from server
+const meshCache = new Map<MapSize, MeshData>();
+const meshLoadingStates = new Map<MapSize, 'loading' | 'loaded' | 'error'>();
+
+// Current mesh data
+let meshData: MeshData | null = null;
+let currentMapSize: MapSize = 'xl';
+
+// Current elevation configuration
+let elevationConfig: ElevationConfig = {
+  amplitudes: [0.6, 0.3, 0.15, 0.075],
+  frequencies: [0.003, 0.006, 0.012, 0.024],
+  octaves: 4,
+  seed: Math.random(),
+  waterLevel: 0.5,
+  redistribution: 'exponential' as const,
+  exponentialPower: 1.5,
+  elevationShift: -0.1,
+  useIslands: false
+};
+
+// Biome configuration
+let biomeConfig: BiomeConfig = {
+  waterLevel: 0.5,
+  moistureFrequency: 0.02,
+  moistureAmplitude: 1.0,
+  moistureOctaves: 3,
+  temperatureFrequency: 0.015,
+  temperatureAmplitude: 1.0,
+  temperatureOctaves: 2,
+  smoothColors: true
+};
+
+// Start the application
+initializeApp().catch(error => {
+  console.error('Failed to initialize application:', error);
+  showError('Failed to initialize application. Please check console.');
+});
+
+document.getElementById("createGame")!.addEventListener("click", async () => {
+  console.log(`SENDING ${currentCellCount} BIOMES TO ${SERVER_BASE_URL}/api/games/create`);
+  console.time('createGame');
+  
+  // Disable buttons during creation
+  setGameButtonsState(false, "Creating...", "Join Game");
+  
+  try {
+    const response = await fetch(`${SERVER_BASE_URL}/api/games/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Cell-Count': currentCellCount.toString(),
+        'X-Map-Size': currentMapSize,
+      },
+      body: currentCellBiomes
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Failed to create game: ${response.status}`);
+    }
+    
+    const gameData = await response.json();
+    console.log('Game created:', gameData);
+    
+    // Show creator's game state UI
+    showCreatorGameUI(gameData);
+    
+  } catch (error: any) {
+    console.error('Game creation failed:', error);
+    showGameNotification(error.message || 'Game creation failed', 'error');
+    // Reset buttons on error
+    setGameButtonsState(true, "Create Game", "Join Game");
+  }
+  console.timeEnd('createGame');
+});
+
+document.getElementById("joinGame")!.addEventListener("click", () => {
+  showJoinGameForm();
+});
+
+// Initialize WebSocket when the page loads
+document.addEventListener('DOMContentLoaded', () => {
+  initializeWebSocket();
+});
+
+// Clean up WebSocket connection when leaving
+window.addEventListener('beforeunload', () => {
+  removeFromRoom();
+  if (socket) {
+    socket.close();
+  }
+});

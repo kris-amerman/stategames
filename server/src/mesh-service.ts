@@ -46,7 +46,6 @@ class MeshService {
 
   /**
    * Gets mesh data for a given size, with fallback to generation if not found
-   * TODO: DO NOT GENERATE NEW MESHES ON-THE-FLY; IF A MESH IS MISSING THIS IS A MISSION CRITICAL FAILURE
    */
   async getMeshData(size: MapSize): Promise<MeshData> {
     // Try cache/disk first
