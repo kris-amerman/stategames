@@ -15,6 +15,14 @@ import {
   setCurrentMapSize,
 } from './terrain';
 import { WIDTH, HEIGHT, SERVER_BASE_URL } from './config';
+import {
+  initializeWebSocket,
+  addToRoom,
+  removeFromRoom,
+  sendGameAction,
+  closeWebSocket,
+} from './network';
+import { showGameNotification } from './notifications';
 
 const canvas = document.createElement('canvas');
 const container = document.getElementById('canvas-container')!;
@@ -131,7 +139,7 @@ function showCreatorGameUI(gameData: any) {
   setupStartGameButton();
   
   // Add WebSocket to room as creator
-  addToRoom(gameData.gameId, 'player1', true);
+  joinGameRoom(gameData.gameId, 'player1', true);
   
   toggleGameButtons(false);
 }
@@ -188,7 +196,7 @@ function showJoinerGameUI(gameData: any) {
   `;
   
   // Connect WebSocket to room as joiner
-  addToRoom(gameData.gameId, gameData.playerName, false);
+  joinGameRoom(gameData.gameId, gameData.playerName, false);
   
   toggleGameButtons(false);
 }
@@ -460,76 +468,6 @@ function updatePlayersList(players: string[], currentPlayerName?: string) {
 }
 
 // Initialize WebSocket connection
-function initializeWebSocket() {
-  if (socket) {
-    socket.close();
-  }
-  
-  // Convert HTTP URL to WebSocket URL
-  const wsUrl = SERVER_BASE_URL.replace('http://', 'ws://').replace('https://', 'wss://') + '/ws';
-
-  console.log(`Connecting to WebSocket at: ${wsUrl}`);
-  
-  socket = new WebSocket(wsUrl);
-  
-  // Connection events
-  socket.onopen = () => {
-    console.log('Connected to game server');
-  };
-  
-  socket.onclose = (event) => {
-    console.log('Disconnected from game server:', event.code, event.reason);
-  };
-  
-  socket.onerror = (error) => {
-    console.error('WebSocket connection error:', error);
-  };
-  
-  socket.onmessage = (event) => {
-    try {
-      const message = JSON.parse(event.data);
-      handleWebSocketMessage(message);
-    } catch (error) {
-      console.error('Error parsing WebSocket message:', error);
-    }
-  };
-}
-
-// Handle incoming WebSocket messages
-function handleWebSocketMessage(message: { event: string, data: any }) {
-  const { event, data } = message;
-  
-  console.log('Received WebSocket message:', event, data);
-  
-  switch (event) {
-    case 'player_joined':
-      handlePlayerJoined(data);
-      break;
-      
-    case 'game_state_update':
-      handleGameStateUpdate(data);
-      break;
-      
-    case 'full_game':
-      handleGameStarted(data);
-      break;
-      
-    case 'game_error':
-      handleGameError(data);
-      break;
-
-    case 'action_result':
-      handleActionResult(data);
-      break;
-      
-    case 'game_update':
-      handleGameUpdate(data);
-      break;
-      
-    default:
-      console.log(`Unknown WebSocket event: ${event}`);
-  }
-}
 
 // Add function to handle action results
 function handleActionResult(data: any): void {
@@ -572,15 +510,6 @@ function handleGameUpdate(data: any): void {
     
     // Re-render the game state to show new entities/changes
     renderGameState();
-  }
-}
-
-// Send WebSocket message
-function sendWebSocketMessage(event: string, data: any) {
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ event, data }));
-  } else {
-    console.error('WebSocket not connected');
   }
 }
 
@@ -701,24 +630,18 @@ function endTurn(): void {
     showGameNotification('It is not your turn', 'error');
     return;
   }
-  
-  // Disable the end turn button to prevent double-clicking
+
   const endTurnButton = document.getElementById('endTurnButton') as HTMLButtonElement;
   if (endTurnButton) {
     endTurnButton.disabled = true;
     endTurnButton.textContent = 'Ending Turn...';
     endTurnButton.style.background = '#cccccc';
   }
-  
-  // Deselect any selected units
+
   deselectUnit();
-  
-  // Send end turn action to server
-  sendGameAction('end_turn', {
-    gameId: currentGameId,
-    playerId: currentPlayerName
-  });
-  
+
+  dispatchGameAction('end_turn', {});
+
   console.log(`${currentPlayerName} ending turn`);
 }
 
@@ -788,12 +711,10 @@ function moveUnit(unitId: number, fromCellId: number, toCellId: number): void {
   console.log('Sending move action:', { unitId, fromCellId, toCellId });
   
   // Send move action to server with all numeric IDs
-  sendGameAction('move_unit', {
-    unitId: unitId,
-    fromCellId: fromCellId,
-    toCellId: toCellId,
-    gameId: currentGameId,
-    playerId: currentPlayerName
+  dispatchGameAction('move_unit', {
+    unitId,
+    fromCellId,
+    toCellId,
   });
   
   // Deselect the unit
@@ -853,35 +774,12 @@ function isPointInCell(x: number, y: number, cellId: number): boolean {
 }
 
 function placeEntity(cellId: number): void {
-  // Send action to server
-  sendGameAction('place_entity', {
-    cellId: cellId,
-    entityType: 'unit', // For now, always place units
-    gameId: currentGameId,
-    playerId: currentPlayerName
+  dispatchGameAction('place_entity', {
+    cellId,
+    entityType: 'unit',
   });
-  
-  console.log(`Sending place_entity action for cell ${cellId} by ${currentPlayerName}`);
-}
 
-function sendGameAction(actionType: string, actionData: any): void {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    console.error('WebSocket not connected - cannot send action');
-    showGameNotification('Connection lost - action failed', 'error');
-    return;
-  }
-  
-  if (!currentGameId || !currentPlayerName) {
-    console.error('Missing game context - cannot send action');
-    return;
-  }
-  
-  sendWebSocketMessage('game_action', {
-    actionType,
-    gameId: currentGameId,
-    playerId: currentPlayerName,
-    ...actionData
-  });
+  console.log(`Sending place_entity action for cell ${cellId} by ${currentPlayerName}`);
 }
 
 function drawEntityMarker(cellId: number, owner: string, isSelected: boolean = false): void {
@@ -953,93 +851,35 @@ function handleGameError(data: { error: string, gameId?: string }) {
   }
 }
 
-// Add WebSocket to game room
-function addToRoom(gameId: string, playerName: string, creator: boolean = false) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    console.error('WebSocket not connected');
-    return;
-  }
-  
+// Manage game room membership
+function joinGameRoom(gameId: string, playerName: string, creator: boolean = false) {
   currentGameId = gameId;
   currentPlayerName = playerName;
   isGameCreator = creator;
-  
-  sendWebSocketMessage('add_to_room', {
-    gameId: gameId,
-    playerName: playerName,
-    isCreator: creator
-  });
-  
+  addToRoom(gameId, playerName, creator);
   console.log(`Added ws to game room: ${gameId} as ${playerName} (creator: ${creator})`);
 }
 
-// Remove ws from game room
-function removeFromRoom() {
-  if (!socket || !currentGameId) return;
-  
-  sendWebSocketMessage('remove_from_room', {
-    gameId: currentGameId,
-    playerName: currentPlayerName
-  });
-  
-  console.log(`Removed ws from game room: ${currentGameId}`);
-  
+function leaveGameRoom() {
+  removeFromRoom(currentGameId, currentPlayerName);
+  if (currentGameId) {
+    console.log(`Removed ws from game room: ${currentGameId}`);
+  }
   currentGameId = null;
   currentPlayerName = null;
   isGameCreator = false;
 }
 
-// Utility function to show game notifications
-function showGameNotification(message: string, type: 'success' | 'warning' | 'error' = 'success') {
-  // Create notification element
-  const notification = document.createElement('div');
-  notification.style.cssText = `
-    position: fixed;
-    top: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 12px 20px;
-    border-radius: 6px;
-    color: white;
-    font-family: Arial, sans-serif;
-    font-size: 14px;
-    z-index: 2000;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-    max-width: 400px;
-    text-align: center;
-  `;
-  
-  // Set color based on type
-  switch (type) {
-    case 'success':
-      notification.style.background = 'rgba(76, 175, 80, 0.9)';
-      break;
-    case 'warning':
-      notification.style.background = 'rgba(255, 193, 7, 0.9)';
-      break;
-    case 'error':
-      notification.style.background = 'rgba(244, 67, 54, 0.9)';
-      break;
+function dispatchGameAction(actionType: string, actionData: any) {
+  if (!currentGameId || !currentPlayerName) {
+    console.error('Missing game context - cannot send action');
+    return;
   }
-  
-  notification.textContent = message;
-  document.body.appendChild(notification);
-  
-  // Animate in
-  setTimeout(() => {
-    notification.style.opacity = '1';
-  }, 100);
-  
-  // Remove after 3 seconds
-  setTimeout(() => {
-    notification.style.opacity = '0';
-    setTimeout(() => {
-      if (notification.parentNode) {
-        notification.parentNode.removeChild(notification);
-      }
-    }, 300);
-  }, 3000);
+  sendGameAction(actionType, {
+    gameId: currentGameId,
+    playerId: currentPlayerName,
+    ...actionData,
+  });
 }
 
 // Update game status display
@@ -1238,8 +1078,7 @@ let currentGameEntities: { [entityId: number]: any } = {};
 let currentTerritoryData: { [cellId: number]: string } = {};
 let currentGameTerrain: Uint8Array | null = null;
 
-// WebSocket connection and game state
-let socket: WebSocket | null = null;
+// Game state
 let currentGameId: string | null = null;
 let currentPlayerName: string | null = null;
 let isGameCreator: boolean = false;
@@ -1296,13 +1135,18 @@ document.getElementById("joinGame")!.addEventListener("click", () => {
 
 // Initialize WebSocket when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-  initializeWebSocket();
+  initializeWebSocket({
+    playerJoined: handlePlayerJoined,
+    gameStateUpdate: handleGameStateUpdate,
+    fullGame: handleGameStarted,
+    gameError: handleGameError,
+    actionResult: handleActionResult,
+    gameUpdate: handleGameUpdate,
+  });
 });
 
 // Clean up WebSocket connection when leaving
 window.addEventListener('beforeunload', () => {
-  removeFromRoom();
-  if (socket) {
-    socket.close();
-  }
+  leaveGameRoom();
+  closeWebSocket();
 });
