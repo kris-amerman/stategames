@@ -82,10 +82,17 @@ async function fetchMeshFromServer(size: MapSize): Promise<MeshData | null> {
     }
     
     const data = await response.json();
+    
+    console.log("LOGGING THE DATA")
+    console.log(data)
+
     console.timeEnd(`fetch-${size}`);
 
     // Deserialize the mesh data
     const meshData = deserializeMeshData(data);
+
+    console.log("LOGGING THE MESH AFTER DESERIALIZE")
+    console.log(meshData)
     
     // Cache the mesh
     meshCache.set(size, meshData);
