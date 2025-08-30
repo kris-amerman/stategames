@@ -1892,8 +1892,15 @@ let biomeConfig: BiomeConfig = {
 // Start the application
 initializeApp().catch(error => {
   console.error('Failed to initialize application:', error);
+
+  // Print the stack trace explicitly (if available)
+  if (error && error.stack) {
+    console.error('Stack trace:', error.stack);
+  }
+
   showError('Failed to initialize application. Please check console.');
 });
+
 
 document.getElementById("createGame")!.addEventListener("click", async () => {
   console.log(`SENDING ${currentCellCount} BIOMES TO ${SERVER_BASE_URL}/api/games/create`);
