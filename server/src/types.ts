@@ -93,6 +93,20 @@ export interface LaborPool {
   specialist: number;
 }
 
+// Terrain tile categories that compose a canton geography mix.
+export type TileType =
+  | 'plains'
+  | 'woods'
+  | 'hills'
+  | 'rainforest'
+  | 'wetlands'
+  | 'mountains'
+  | 'shallows'
+  | 'coast'
+  | 'river'
+  | 'tundra'
+  | 'desert';
+
 export type SectorType =
   | "agriculture"
   | "extraction"
@@ -170,6 +184,19 @@ export interface ShortageRecord {
   luxury: boolean;
 }
 
+export interface SuitabilityResult {
+  percent: number;
+  multiplier: number;
+}
+
+export type GeographyModifiers = Partial<
+  Record<SectorType, Partial<Record<TileType, number>>>
+>;
+
+export type UrbanizationModifiers = Partial<
+  Record<SectorType, Partial<Record<number, number>>>
+>;
+
 export interface CantonEconomy {
   sectors: { [K in SectorType]?: SectorState };
   labor: LaborPool;
@@ -179,7 +206,12 @@ export interface CantonEconomy {
   consumption: LaborConsumption;
   shortages: ShortageRecord;
   urbanizationLevel: number;
+  /** Geography mix for the canton; shares should sum to 1.0. */
+  geography: Record<TileType, number>;
+  /** Cached suitability percent by sector for ordering labor priority. */
   suitability: Partial<Record<SectorType, number>>;
+  /** Cached suitability multiplier by sector applied after all other gates. */
+  suitabilityMultipliers: Partial<Record<SectorType, number>>;
 }
 
 export interface EconomyState {
