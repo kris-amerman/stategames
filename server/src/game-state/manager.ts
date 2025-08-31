@@ -1,16 +1,17 @@
 // server/src/game-state/manager.ts
-import type { 
-  GameState, 
+import type {
+  GameState,
   GameMeta,
   GameMap,
   Game,
-  PlayerId, 
-  CellId, 
-  EntityId, 
-  Entity, 
+  PlayerId,
+  CellId,
+  EntityId,
+  Entity,
   EntityType,
-  MapSize 
+  MapSize
 } from '../types';
+import { EconomyManager } from '../economy';
 
 export class GameStateManager {
   
@@ -36,7 +37,10 @@ export class GameStateManager {
       status: "waiting",
       currentPlayer: players[0], // First player starts
       turnNumber: 1,
-      
+      phase: "planning",
+      currentPlan: null,
+      nextPlan: null,
+
       // Initialize empty ownership maps
       cellOwnership: {},
       playerCells: Object.fromEntries(players.map(p => [p, []])),
@@ -48,6 +52,7 @@ export class GameStateManager {
       entitiesByType: {
         unit: []
       },
+      economy: EconomyManager.createInitialState(),
       nextEntityId: 1
     };
   }
