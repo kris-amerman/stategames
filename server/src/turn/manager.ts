@@ -1,5 +1,6 @@
 // server/src/turn/manager.ts
 import type { GameState, TurnPlan } from '../types';
+import { BudgetManager } from '../budget/manager';
 
 /**
  * Orchestrates the two-phase turn resolution with a one-turn lag.
@@ -78,10 +79,12 @@ export class TurnManager {
 
   private static carryover(_gameState: GameState): void {
     // TODO: Projects advance, stock and rate updates.
+    BudgetManager.advanceRetools(_gameState.economy);
   }
 
   private static budgetGate(_gameState: GameState): void {
-    // TODO: Fund slots by suitability using last turn's plan.
+    if (!_gameState.currentPlan?.budgets) return;
+    BudgetManager.applyBudgets(_gameState.economy, _gameState.currentPlan.budgets);
   }
 
   private static inputsGate(_gameState: GameState): void {

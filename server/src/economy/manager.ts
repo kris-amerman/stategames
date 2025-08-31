@@ -66,9 +66,10 @@ export class EconomyManager {
         rareEarths: 0,
         research: 0,
         logistics: 0,
-        labor: 0,
+      labor: 0,
       },
       cantons: {},
+      retoolQueue: [],
     };
   }
 
