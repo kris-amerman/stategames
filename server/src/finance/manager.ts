@@ -45,10 +45,10 @@ export class FinanceManager {
     if (economy.resources.gold >= 0) return;
     const needed = -economy.resources.gold;
     const available = finance.creditLimit - finance.debt;
-    const borrow = Math.min(needed, available);
+    const borrow = Math.max(0, Math.min(needed, available));
     finance.debt += borrow;
     economy.resources.gold += borrow;
-    if (economy.resources.gold < 0) {
+    if (borrow < needed) {
       finance.defaulted = true;
     }
   }
