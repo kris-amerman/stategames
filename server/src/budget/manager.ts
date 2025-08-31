@@ -29,6 +29,19 @@ export const RETOOL_TURNS = 2;
  */
 export class BudgetManager {
   /**
+   * Placeholder hook functions that downstream systems can override.
+   * They are invoked during recordFunding in the order: inputs -> labor -> modifiers.
+   */
+  static hooks: {
+    inputs: (state: EconomyState, cantonId: string, sector: SectorType) => void;
+    labor: (state: EconomyState, cantonId: string, sector: SectorType) => void;
+    modifiers: (state: EconomyState, cantonId: string, sector: SectorType) => void;
+  } = {
+    inputs: () => {},
+    labor: () => {},
+    modifiers: () => {},
+  };
+  /**
    * Apply this turn's budget plan to the economy state.
    * Funds sector O&M slots and charges idle costs.
    */
@@ -139,9 +152,12 @@ export class BudgetManager {
     state.resources.gold -= activeCost + idleCost;
 
     // Hook order for downstream systems.
-    // 1. Non-labor inputs gate (placeholder)
-    // 2. Labor gate (placeholder)
-    // 3. Modifiers & output (placeholder)
+    // 1. Non-labor inputs gate
+    BudgetManager.hooks.inputs(state, cantonId, sector);
+    // 2. Labor gate
+    BudgetManager.hooks.labor(state, cantonId, sector);
+    // 3. Modifiers & output
+    BudgetManager.hooks.modifiers(state, cantonId, sector);
   }
 
   /** Schedule a retool operation. */
