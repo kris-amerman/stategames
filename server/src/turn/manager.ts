@@ -125,6 +125,8 @@ export class TurnManager {
 
   private static cleanup(_gameState: GameState): void {
     // TODO: Finalize turn, carry shortages, and prepare summary.
+    // Logistics points are non-stockpiled and reset each turn.
+    _gameState.economy.resources.logistics = 0;
   }
 
   private static createEmptyPlan(): TurnPlan {
