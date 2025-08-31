@@ -9,7 +9,8 @@
     "generate-mesh:medium": "bun run src/scripts/generate-meshes.ts medium",
     "generate-mesh:large": "bun run src/scripts/generate-meshes.ts large",
     "generate-mesh:xl": "bun run src/scripts/generate-meshes.ts xl",
-    "test": "bun test"
+    "test": "bun test",
+    "test:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov"
   },
   "devDependencies": {
     "@types/bun": "latest",
