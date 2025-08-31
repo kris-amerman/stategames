@@ -113,3 +113,24 @@ The automated tests verify the following pass criteria:
 7. Suitability is applied only after the Labor gate and before output tallies.
 8. Changing UL or tile shares changes the computed suitability while unchanged inputs yield identical results across turns.
 9. Cached suitability invalidates when UL or tile shares change and remains stable otherwise.
+
+## Urbanization & Development System Scaffold
+
+This update introduces the Urbanization & Development scaffolding with:
+
+- Urbanization Level (UL) tracked per canton in the range 1–12
+- Per-canton Development Meter that advances toward UL increases
+- One-turn lag before UL changes affect other systems
+- Hooks that expose UL effects on sector slots, labor generation, and suitability modifiers
+- End-of-turn development rolls with modifier aggregation and per-turn caps
+- Flags that can trigger UL decay under persistent adverse conditions
+
+The automated tests verify the following pass criteria:
+
+1. UL and Development meter remain within their domains and meter rollover increases UL.
+2. Development roll modifiers aggregate with the base roll and respect per-turn caps.
+3. UL increases when the meter crosses 4, carrying remainder and applying next turn.
+4. Decay flags (siege, energy deficit, food deficit, catastrophe) each reduce UL by one, floor 1.
+5. Handoff tables expose sector slot, labor, and suitability effects by UL.
+6. End-of-turn processing is deterministic for identical inputs.
+7. Tests cover rollover, cap enforcement, UL boundaries, and all decay paths.
