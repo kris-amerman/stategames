@@ -5,6 +5,7 @@ import {
 } from './manager';
 import { BudgetManager } from '../budget/manager';
 import { TurnManager } from '../turn/manager';
+import { SuitabilityManager } from '../suitability/manager';
 import type { GameState } from '../types';
 
 function gameState(): GameState {
@@ -111,6 +112,9 @@ test('utilization never exceeds capacity and produces base output', () => {
   gs.currentPlan = {
     budgets: { military: 0, welfare: 0, sectorOM: { agriculture: 3, logistics: 1 } },
   };
+  // reset suitability modifiers to neutral to avoid cross-test contamination
+  SuitabilityManager.setGeographyModifiers({});
+  SuitabilityManager.setUrbanizationModifiers({});
   TurnManager.advanceTurn(gs);
   const ag = econ.cantons.A.sectors.agriculture;
   expect(ag.utilization).toBeLessThanOrEqual(ag.capacity);

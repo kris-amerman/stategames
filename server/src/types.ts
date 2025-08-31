@@ -226,6 +226,8 @@ export interface CantonEconomy {
   laborDemand: Partial<Record<SectorType, LaborPool>>;
   laborAssigned: Partial<Record<SectorType, LaborPool>>;
   lai: number;
+  /** Happiness modifier from healthcare tier applied this turn */
+  happiness: number;
   consumption: LaborConsumption;
   shortages: ShortageRecord;
   urbanizationLevel: number;

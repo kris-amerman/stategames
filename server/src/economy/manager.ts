@@ -126,6 +126,7 @@ export class EconomyManager {
       laborDemand: {},
       laborAssigned: {},
       lai: 1,
+      happiness: 0,
       consumption: {
         foodRequired: 0,
         foodProvided: 0,
