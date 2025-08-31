@@ -118,6 +118,46 @@ export interface SectorState {
   idle: number;
 }
 
+// === Energy System Types ===
+
+export type PlantType =
+  | 'coal'
+  | 'gas'
+  | 'oilPeaker'
+  | 'nuclear'
+  | 'hydro'
+  | 'wind'
+  | 'solar';
+
+export type PlantStatus = 'active' | 'idle' | 'building';
+
+export interface PlantRegistryEntry {
+  canton: string;
+  type: PlantType;
+  status: PlantStatus;
+  turns_remaining?: number;
+}
+
+export interface PlantAttributes {
+  fuelType: ResourceType | null;
+  baseOutput: number;
+  oAndMCost: number;
+  rcf: boolean;
+}
+
+export interface EnergyComputation {
+  supply: number;
+  demand: number;
+  ratio: number;
+}
+
+export interface BrownoutRecord {
+  canton: string;
+  sector: SectorType;
+  before: number;
+  after: number;
+}
+
 export interface LaborConsumption {
   foodRequired: number;
   foodProvided: number;
@@ -147,6 +187,14 @@ export interface EconomyState {
   cantons: { [cantonId: string]: CantonEconomy };
   /** Slots undergoing retooling and their timers */
   retoolQueue: RetoolOrder[];
+  /** Energy system tracking */
+  energy: {
+    plants: PlantRegistryEntry[];
+    state: EnergyComputation;
+    demandBySector: Partial<Record<SectorType, number>>;
+    brownouts: BrownoutRecord[];
+    essentialsFirst: boolean;
+  };
 }
 
 export interface RetoolOrder {

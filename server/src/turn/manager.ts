@@ -3,6 +3,7 @@ import type { GameState, TurnPlan } from '../types';
 import { BudgetManager } from '../budget/manager';
 import { LaborManager } from '../labor/manager';
 import { LogisticsManager } from '../logistics/manager';
+import { EnergyManager } from '../energy/manager';
 
 /**
  * Orchestrates the two-phase turn resolution with a one-turn lag.
@@ -59,6 +60,9 @@ export class TurnManager {
     // Gate 2A — Inputs
     this.inputsGate(gameState);
 
+    // Gate 2B — Energy
+    this.energyGate(gameState);
+
     // Gate 2B — Logistics
     this.logisticsGate(gameState);
 
@@ -91,6 +95,12 @@ export class TurnManager {
 
   private static inputsGate(_gameState: GameState): void {
     // TODO: Apply energy and recipe input caps.
+  }
+
+  private static energyGate(gameState: GameState): void {
+    EnergyManager.run(gameState.economy, {
+      essentialsFirst: gameState.economy.energy.essentialsFirst,
+    });
   }
 
   private static logisticsGate(_gameState: GameState): void {
