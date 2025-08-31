@@ -1,0 +1,11 @@
+{
+  "agriculture": { "food": 1 },
+  "extraction": { "materials": 1 },
+  "manufacturing": { "production": 1 },
+  "defense": { "ordnance": 1 },
+  "luxury": { "luxury": 1 },
+  "finance": { "gold": 1 },
+  "research": { "research": 1 },
+  "logistics": { "logistics": 1 },
+  "energy": {}
+}
