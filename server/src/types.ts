@@ -197,6 +197,14 @@ export type UrbanizationModifiers = Partial<
   Record<SectorType, Partial<Record<number, number>>>
 >;
 
+/** Flags that may trigger Urbanization Level decay at end of turn. */
+export interface DecayFlags {
+  siege?: boolean;
+  energy?: boolean;
+  food?: boolean;
+  catastrophe?: boolean;
+}
+
 export interface CantonEconomy {
   sectors: { [K in SectorType]?: SectorState };
   labor: LaborPool;
@@ -206,6 +214,15 @@ export interface CantonEconomy {
   consumption: LaborConsumption;
   shortages: ShortageRecord;
   urbanizationLevel: number;
+  /**
+   * Development meter advances toward the next Urbanization Level.
+   * Resets to 0 when reaching 4 and triggering a level increase.
+   */
+  development: number;
+  /**
+   * Urbanization Level that will become active next turn after lagged effects.
+   */
+  nextUrbanizationLevel: number;
   /** Geography mix for the canton; shares should sum to 1.0. */
   geography: Record<TileType, number>;
   /** Cached suitability percent by sector for ordering labor priority. */

@@ -5,6 +5,7 @@ import { LaborManager } from '../labor/manager';
 import { LogisticsManager } from '../logistics/manager';
 import { EnergyManager } from '../energy/manager';
 import { SuitabilityManager } from '../suitability/manager';
+import { DevelopmentManager } from '../development/manager';
 
 /**
  * Orchestrates the two-phase turn resolution with a one-turn lag.
@@ -84,9 +85,10 @@ export class TurnManager {
 
   // === Turn Flow Steps (placeholders) ===
 
-  private static carryover(_gameState: GameState): void {
+  private static carryover(gameState: GameState): void {
     // TODO: Projects advance, stock and rate updates.
-    BudgetManager.advanceRetools(_gameState.economy);
+    BudgetManager.advanceRetools(gameState.economy);
+    DevelopmentManager.applyPending(gameState.economy);
   }
 
   private static budgetGate(_gameState: GameState): void {
@@ -137,8 +139,9 @@ export class TurnManager {
     // TODO: Run the treasury waterfall and debt mechanics.
   }
 
-  private static resolveDevelopment(_gameState: GameState): void {
+  private static resolveDevelopment(gameState: GameState): void {
     // TODO: Roll for development and update urbanization levels.
+    DevelopmentManager.run(gameState.economy, {});
   }
 
   private static cleanup(_gameState: GameState): void {
