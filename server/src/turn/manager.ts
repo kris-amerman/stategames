@@ -1,6 +1,7 @@
 // server/src/turn/manager.ts
 import type { GameState, TurnPlan } from '../types';
 import { BudgetManager } from '../budget/manager';
+import { LaborManager } from '../labor/manager';
 
 /**
  * Orchestrates the two-phase turn resolution with a one-turn lag.
@@ -95,8 +96,8 @@ export class TurnManager {
     // TODO: Reserve and consume logistics points.
   }
 
-  private static laborGate(_gameState: GameState): void {
-    // TODO: Assign labor based on welfare and urbanization.
+  private static laborGate(gameState: GameState): void {
+    LaborManager.run(gameState.economy, gameState.currentPlan ?? undefined);
   }
 
   private static suitabilityGate(_gameState: GameState): void {

@@ -78,6 +78,17 @@ export class EconomyManager {
     state.cantons[cantonId] = {
       sectors: {} as Record<SectorType, SectorState>,
       labor: { general: 0, skilled: 0, specialist: 0 },
+      laborDemand: {},
+      laborAssigned: {},
+      lai: 1,
+      consumption: {
+        foodRequired: 0,
+        foodProvided: 0,
+        luxuryRequired: 0,
+        luxuryProvided: 0,
+      },
+      shortages: { food: false, luxury: false },
+      urbanizationLevel: 1,
       suitability: {},
     };
   }
