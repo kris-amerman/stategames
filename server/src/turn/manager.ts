@@ -4,6 +4,7 @@ import { BudgetManager } from '../budget/manager';
 import { LaborManager } from '../labor/manager';
 import { LogisticsManager } from '../logistics/manager';
 import { EnergyManager } from '../energy/manager';
+import { SuitabilityManager } from '../suitability/manager';
 
 /**
  * Orchestrates the two-phase turn resolution with a one-turn lag.
@@ -117,7 +118,7 @@ export class TurnManager {
   }
 
   private static suitabilityGate(_gameState: GameState): void {
-    // TODO: Apply suitability modifiers to running slots.
+    SuitabilityManager.run(_gameState.economy);
   }
 
   private static multiplySiteFactors(_gameState: GameState): void {

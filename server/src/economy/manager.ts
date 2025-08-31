@@ -96,7 +96,9 @@ export class EconomyManager {
       },
       shortages: { food: false, luxury: false },
       urbanizationLevel: 1,
+      geography: { plains: 1 },
       suitability: {},
+      suitabilityMultipliers: {},
     };
   }
 
