@@ -77,6 +77,13 @@ export class EconomyManager {
         brownouts: [],
         essentialsFirst: false,
       },
+      infrastructure: {
+        airports: {},
+        ports: {},
+        railHubs: {},
+        national: {},
+      },
+      projects: { nextId: 1, projects: [] },
     };
   }
 

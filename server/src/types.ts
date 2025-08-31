@@ -231,6 +231,45 @@ export interface CantonEconomy {
   suitabilityMultipliers: Partial<Record<SectorType, number>>;
 }
 
+export type InfrastructureType = 'airport' | 'port' | 'rail';
+
+export interface InfrastructureData {
+  owner: string;
+  status: 'active' | 'inactive' | 'building';
+  national?: boolean;
+  turns_remaining?: number;
+  hp: number;
+  toggle?: { target: 'active' | 'inactive'; turns: number };
+}
+
+export interface InfrastructureRegistry {
+  airports: Record<string, InfrastructureData>;
+  ports: Record<string, InfrastructureData>;
+  railHubs: Record<string, InfrastructureData>;
+  national: { airport?: string; port?: string; rail?: string };
+}
+
+export type ProjectTier = 'small' | 'medium' | 'large' | 'mega';
+
+export interface ProjectData {
+  id: number;
+  canton: string;
+  sector: SectorType;
+  tier: ProjectTier;
+  slots: number;
+  status: 'active' | 'inactive' | 'building' | 'suspended';
+  owner: string;
+  turns_remaining: number;
+  cost: { gold: number; production: number };
+  toggle?: { target: 'active' | 'inactive'; turns: number };
+  completed?: boolean;
+}
+
+export interface ProjectsState {
+  nextId: number;
+  projects: ProjectData[];
+}
+
 export interface EconomyState {
   resources: Resources;
   cantons: { [cantonId: string]: CantonEconomy };
@@ -244,6 +283,10 @@ export interface EconomyState {
     brownouts: BrownoutRecord[];
     essentialsFirst: boolean;
   };
+  /** Infrastructure registry */
+  infrastructure: InfrastructureRegistry;
+  /** Capital projects state */
+  projects: ProjectsState;
 }
 
 export interface RetoolOrder {
