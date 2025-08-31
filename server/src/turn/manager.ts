@@ -152,11 +152,12 @@ export class TurnManager {
     for (const canton of Object.values(econ.cantons)) {
       for (const [sector, state] of Object.entries(canton.sectors)) {
         if (!state || state.funded <= 0) continue;
+        state.utilization = state.funded;
         const def = SECTOR_DEFINITIONS[sector as keyof typeof SECTOR_DEFINITIONS];
         if (!def) continue;
         const mult = canton.suitabilityMultipliers[sector as any] ?? 1;
         for (const res of def.outputs) {
-          econ.resources[res] += state.funded * mult;
+          econ.resources[res] += state.utilization * mult;
         }
       }
     }

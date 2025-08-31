@@ -143,6 +143,8 @@ export interface SectorState {
   funded: number;
   /** Slots idle and charged idle tax */
   idle: number;
+  /** Slots that actually ran after all gates */
+  utilization?: number;
 }
 
 // === Energy System Types ===

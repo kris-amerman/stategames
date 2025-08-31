@@ -146,6 +146,7 @@ export class BudgetManager {
     const sectorState = canton.sectors[sector];
     sectorState.funded = funded;
     sectorState.idle = idle;
+    sectorState.utilization = 0;
 
     const activeCost = funded * costPer;
     const idleCost = idle * costPer * IDLE_TAX_RATE;
@@ -185,6 +186,7 @@ export class BudgetManager {
         capacity: 0,
         funded: 0,
         idle: 0,
+        utilization: 0,
       });
       toState.capacity += order.slots;
     }

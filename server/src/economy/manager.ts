@@ -5,6 +5,13 @@ import type {
   SectorType,
   CantonEconomy,
 } from '../types';
+import {
+  SECTOR_BASE_OUTPUT,
+  SLOT_REQUIREMENTS,
+  type SlotRequirement,
+  type SectorOutputTable,
+} from './data';
+export { SECTOR_BASE_OUTPUT, SLOT_REQUIREMENTS } from './data';
 
 // Definitions for each sector's input and output resources.
 export const SECTOR_DEFINITIONS: Record<SectorType, SectorDefinition> = {
@@ -97,6 +104,18 @@ export class EconomyManager {
       },
       trade: { pendingImports: {}, pendingExports: {} },
     };
+  }
+
+  /** Lookup base output per active slot for a sector. */
+  static getBaseOutput(sector: SectorType): SectorOutputTable {
+    return SECTOR_BASE_OUTPUT[sector] || {};
+  }
+
+  /** Lookup per-slot operating requirements for a sector. */
+  static getSlotRequirements(sector: SectorType): SlotRequirement {
+    return (
+      SLOT_REQUIREMENTS[sector] || { energy: 0, logistics: 0, inputs: {} }
+    );
   }
 
   /** Register a new canton with empty sector and labor data. */

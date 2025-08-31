@@ -79,7 +79,12 @@ export class ProjectsManager {
     // ensure sector exists
     const cantonEco = state.cantons[canton];
     if (cantonEco && !cantonEco.sectors[sector]) {
-      cantonEco.sectors[sector] = { capacity: 0, funded: 0, idle: 0 } as any;
+      cantonEco.sectors[sector] = {
+        capacity: 0,
+        funded: 0,
+        idle: 0,
+        utilization: 0,
+      } as any;
     }
     return project.id;
   }
