@@ -7,6 +7,7 @@ import { EnergyManager } from '../energy/manager';
 import { SuitabilityManager } from '../suitability/manager';
 import { DevelopmentManager } from '../development/manager';
 import { FinanceManager } from '../finance/manager';
+import { WelfareManager } from '../welfare/manager';
 
 /**
  * Orchestrates the two-phase turn resolution with a one-turn lag.
@@ -90,11 +91,21 @@ export class TurnManager {
     // TODO: Projects advance, stock and rate updates.
     BudgetManager.advanceRetools(gameState.economy);
     DevelopmentManager.applyPending(gameState.economy);
+    WelfareManager.applyPending(gameState.economy);
   }
 
   private static budgetGate(_gameState: GameState): void {
-    if (!_gameState.currentPlan?.budgets) return;
-    BudgetManager.applyBudgets(_gameState.economy, _gameState.currentPlan.budgets);
+    if (!_gameState.currentPlan) return;
+    const budgets = _gameState.currentPlan.budgets ?? {
+      military: 0,
+      welfare: 0,
+      sectorOM: {},
+    };
+    BudgetManager.applyBudgets(_gameState.economy, budgets);
+    WelfareManager.applyPolicies(
+      _gameState.economy,
+      _gameState.currentPlan.policies?.welfare,
+    );
   }
 
   private static inputsGate(_gameState: GameState): void {

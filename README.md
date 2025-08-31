@@ -154,3 +154,25 @@ The automated tests verify the following pass criteria:
 4. FX shortfalls auto-scale imports and prevent negative FX balances.
 5. Gold ⇄ FX swaps honour the 10% fee and per-turn cap.
 6. Trade resolution is deterministic for identical inputs.
+
+## Welfare System Scaffold
+
+This update introduces the Welfare system with adjustable Education and Healthcare policies.
+
+- Policy sliders for Education and Healthcare range from tier 0–4 and may shift only ±1 per turn.
+- Welfare costs are charged per unit of national labor and include Social Support tiers.
+- Selected tiers take effect starting the following production turn.
+- Education shifts the labor mix for new labor, boosts research output, and modifies development rolls.
+- Healthcare modifies happiness per labor and development rolls.
+- Effects from Education and Healthcare stack additively.
+
+The automated tests verify the following pass criteria:
+
+1. Education and Healthcare sliders exist at tiers 0–4 with ±1 change limits.
+2. Policy changes incur a one-turn effect lag.
+3. Welfare cost scales with current national labor and sums Education, Healthcare, and Social Support costs.
+4. Education tiers apply the specified labor mix shifts, research percentages, and development roll modifiers with 2:1 Skilled:Specialist splits capped [0,90].
+5. Healthcare tiers apply the specified happiness and development roll modifiers.
+6. Education and Healthcare modifiers stack additively without double counting.
+7. Identical inputs yield deterministic welfare costs and modifiers.
+8. Tests cover all tiers, step limits, lag behaviour, Social Support costing, and labor mix cap/floor edge cases.
