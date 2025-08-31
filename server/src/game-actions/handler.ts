@@ -5,6 +5,7 @@ import { GameStateManager } from "../game-state";
 import { meshService } from "../mesh-service";
 import type { Entity, Game, GameState } from "../types";
 import { broadcastGameStateUpdate } from "../index";
+import { TurnEngine } from "../turns/engine";
 
 export async function handleGameAction(ws: ServerWebSocket<any>, data: any) {
   const { actionType, gameId, playerId, ...actionData } = data;
@@ -316,9 +317,9 @@ export async function handleEndTurnAction(gameId: string, gameState: GameState, 
   // Update game state
   gameState.currentPlayer = nextPlayer;
   
-  // If we've cycled back to the first player, increment turn number
+  // If we've cycled back to the first player, process turn resolution
   if (nextPlayerIndex === 0) {
-    gameState.turnNumber += 1;
+    TurnEngine.processTurn(gameState);
   }
   
   console.log(`Turn advanced: ${playerId} -> ${nextPlayer} (Turn ${gameState.turnNumber})`);

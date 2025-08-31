@@ -18,6 +18,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@msgpack/msgpack": "^3.1.2",
     "delaunator": "^5.0.1"
   }
 }

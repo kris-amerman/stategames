@@ -1,16 +1,17 @@
 // server/src/game-state/manager.ts
-import type { 
-  GameState, 
+import type {
+  GameState,
   GameMeta,
   GameMap,
   Game,
-  PlayerId, 
-  CellId, 
-  EntityId, 
-  Entity, 
+  PlayerId,
+  CellId,
+  EntityId,
+  Entity,
   EntityType,
-  MapSize 
+  MapSize
 } from '../types';
+import { createEmptyPlan } from '../turns/plan';
 
 export class GameStateManager {
   
@@ -34,9 +35,12 @@ export class GameStateManager {
   static createInitialGameState(players: PlayerId[]): GameState {
     return {
       status: "waiting",
+      phase: 'planning',
       currentPlayer: players[0], // First player starts
       turnNumber: 1,
-      
+
+      plans: Object.fromEntries(players.map(p => [p, { current: createEmptyPlan(), next: createEmptyPlan() }])),
+
       // Initialize empty ownership maps
       cellOwnership: {},
       playerCells: Object.fromEntries(players.map(p => [p, []])),

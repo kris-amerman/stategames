@@ -14,6 +14,20 @@ export interface Entity {
   data: Record<string, any>;
 }
 
+export type TurnPhase = 'planning' | 'execution';
+
+export interface TurnPlan {
+  budgets: Record<string, unknown>;
+  policies: Record<string, unknown>;
+  priorities: Record<string, unknown>;
+}
+
+export interface GateContext {
+  playerId: PlayerId;
+  gameState: GameState;
+  plan: TurnPlan;
+}
+
 export type ActionType =
   | "move"
   | "attack"
@@ -80,11 +94,17 @@ export interface GameState {
   /** Current phase of the game */
   status: "waiting" | "in_progress" | "finished";
 
+  /** Current phase within the turn */
+  phase: TurnPhase;
+
   /** ID of the player whose turn it currently is */
   currentPlayer: PlayerId;
 
   /** Current turn number (increments when all players have taken their turn) */
   turnNumber: number;
+
+  /** Planning data for each player */
+  plans: { [playerId: PlayerId]: { current: TurnPlan; next: TurnPlan } };
 
   /**
    * Maps each cell to its current owner.
