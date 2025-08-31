@@ -1,13 +1,62 @@
 # stategames
 
+Experimental turn-based strategy game simulation with separate server and client packages.
+
+## Repository Layout
+
+- `client/` – browser client built with Vite.
+- `server/` – Bun-powered game server and test suite.
+- `tests/` – additional documentation for the test harness.
+
 ## Running Tests
 
-The repository uses [Bun](https://bun.sh) for the server runtime and test suite.
+All automated tests run inside the `server` package and use [Bun](https://bun.sh).
 
 ```
 cd server
 bun test
 ```
+
+Generate a coverage report with:
+
+```
+cd server
+bun run test:coverage
+```
+
+## Economy System Scaffold
+
+This update lays out the Economy system foundations, defining key resources and sectors and how they are tracked.
+
+- Distinct resource types form the basis of production and consumption.
+- Registered sectors: Agriculture, Extraction, Manufacturing, Defense Industry, Luxury, Finance, Research, Logistics, and Energy.
+- Slot capacity and utilisation are tracked per canton and sector.
+- Logistics Points are generated and treated as non‑stockpiled resources.
+
+The automated tests verify the following pass criteria:
+
+1. Resource types are unique and non-interchangeable.
+2. All sectors listed above register correctly.
+3. Slot capacity and utilisation are recorded by canton and sector.
+4. Logistics Points cannot be stockpiled across turns.
+
+## Budget System Scaffold
+
+This update introduces the Budget system that governs how resources are allocated.
+
+- Budget pools: Military, Welfare, and Sector Operations & Maintenance.
+- Under-funded allocation prioritises suitability followed by largest remainder with deterministic tie-breaking.
+- Idle slots incur 25% Operations & Maintenance cost.
+- Retools cost 8 Gold per slot and require two turns of downtime.
+- The Budget stage exposes hooks for Inputs, Labor, and Modifiers/Output processing.
+
+The automated tests verify the following pass criteria:
+
+1. Military, Welfare, and Operations & Maintenance pools exist and track spending.
+2. Allocation under shortage honours suitability then largest remainder.
+3. Idle slots accrue 25% Operations & Maintenance cost.
+4. Retooling costs 8 Gold/slot and enforces a two-turn downtime.
+5. Inputs, Labor, and Modifiers/Output hooks run during the Budget stage.
 
 ## Labor System Scaffold
 
