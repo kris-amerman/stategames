@@ -36,7 +36,10 @@ export class GameStateManager {
       status: "waiting",
       currentPlayer: players[0], // First player starts
       turnNumber: 1,
-      
+      phase: "planning",
+      currentPlan: null,
+      nextPlan: null,
+
       // Initialize empty ownership maps
       cellOwnership: {},
       playerCells: Object.fromEntries(players.map(p => [p, []])),

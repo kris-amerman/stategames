@@ -5,6 +5,7 @@ import { GameStateManager } from "../game-state";
 import { meshService } from "../mesh-service";
 import type { Entity, Game, GameState } from "../types";
 import { broadcastGameStateUpdate } from "../index";
+import { TurnManager } from "../turn";
 
 export async function handleGameAction(ws: ServerWebSocket<any>, data: any) {
   const { actionType, gameId, playerId, ...actionData } = data;
@@ -315,9 +316,10 @@ export async function handleEndTurnAction(gameId: string, gameState: GameState, 
   
   // Update game state
   gameState.currentPlayer = nextPlayer;
-  
-  // If we've cycled back to the first player, increment turn number
+
+  // If we've cycled back to the first player, resolve the turn and increment
   if (nextPlayerIndex === 0) {
+    TurnManager.advanceTurn(gameState);
     gameState.turnNumber += 1;
   }
   
