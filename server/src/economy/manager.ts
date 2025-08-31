@@ -91,6 +91,7 @@ export class EconomyManager {
         defaulted: false,
         debtStress: [],
       },
+      trade: { pendingImports: {}, pendingExports: {} },
     };
   }
 
