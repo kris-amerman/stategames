@@ -74,3 +74,14 @@ This prints coverage statistics and writes an `lcov.info` report to the `coverag
 - Plants that are idle or under construction produce no energy.
 - Idle economic slots consume no energy.
 
+### Finance System
+- Treasury carries over each turn and updates with revenues and expenditures.
+- Treasury deficits trigger automatic borrowing up to the Credit Limit.
+- Borrowing immediately increases Debt.
+- Interest ticks add to both expenditures and Debt.
+- Default flag raised if Debt exceeds the Credit Limit.
+- Debt Stress tier flags record when thresholds are crossed.
+- Finance resolves after trade but before development.
+- Resolution is deterministic for identical inputs.
+- Tests cover surplus, deficit, interest, credit limit breach, and each stress tier.
+

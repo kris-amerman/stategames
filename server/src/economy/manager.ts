@@ -84,6 +84,13 @@ export class EconomyManager {
         national: {},
       },
       projects: { nextId: 1, projects: [] },
+      finance: {
+        debt: 0,
+        creditLimit: 1000,
+        interestRate: 0.05,
+        defaulted: false,
+        debtStress: [],
+      },
     };
   }
 

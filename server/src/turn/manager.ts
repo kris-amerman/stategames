@@ -6,6 +6,7 @@ import { LogisticsManager } from '../logistics/manager';
 import { EnergyManager } from '../energy/manager';
 import { SuitabilityManager } from '../suitability/manager';
 import { DevelopmentManager } from '../development/manager';
+import { FinanceManager } from '../finance/manager';
 
 /**
  * Orchestrates the two-phase turn resolution with a one-turn lag.
@@ -136,7 +137,7 @@ export class TurnManager {
   }
 
   private static resolveFinance(_gameState: GameState): void {
-    // TODO: Run the treasury waterfall and debt mechanics.
+    FinanceManager.run(_gameState.economy, { revenues: 0, expenditures: 0 });
   }
 
   private static resolveDevelopment(gameState: GameState): void {

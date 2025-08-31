@@ -270,6 +270,19 @@ export interface ProjectsState {
   projects: ProjectData[];
 }
 
+export interface FinanceState {
+  /** Total outstanding borrowed Gold */
+  debt: number;
+  /** Maximum allowable debt before default */
+  creditLimit: number;
+  /** Interest rate applied to debt each turn */
+  interestRate: number;
+  /** Flag when credit limit exceeded */
+  defaulted: boolean;
+  /** Debt stress tier flags */
+  debtStress: boolean[];
+}
+
 export interface EconomyState {
   resources: Resources;
   cantons: { [cantonId: string]: CantonEconomy };
@@ -287,6 +300,8 @@ export interface EconomyState {
   infrastructure: InfrastructureRegistry;
   /** Capital projects state */
   projects: ProjectsState;
+  /** Treasury, debt, and related finance tracking */
+  finance: FinanceState;
 }
 
 export interface RetoolOrder {
