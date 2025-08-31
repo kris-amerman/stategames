@@ -118,9 +118,27 @@ export interface SectorState {
   idle: number;
 }
 
+export interface LaborConsumption {
+  foodRequired: number;
+  foodProvided: number;
+  luxuryRequired: number;
+  luxuryProvided: number;
+}
+
+export interface ShortageRecord {
+  food: boolean;
+  luxury: boolean;
+}
+
 export interface CantonEconomy {
   sectors: { [K in SectorType]?: SectorState };
   labor: LaborPool;
+  laborDemand: Partial<Record<SectorType, LaborPool>>;
+  laborAssigned: Partial<Record<SectorType, LaborPool>>;
+  lai: number;
+  consumption: LaborConsumption;
+  shortages: ShortageRecord;
+  urbanizationLevel: number;
   suitability: Partial<Record<SectorType, number>>;
 }
 
