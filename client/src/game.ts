@@ -71,6 +71,7 @@ export function handleGameUpdate(data: any): void {
     }
 
     renderGameState();
+    updateSummary(gameState);
   }
 }
 
@@ -80,6 +81,29 @@ export function handleGameError(data: { error: string, gameId?: string }) {
   if (!data.gameId || data.gameId === currentGameId) {
     showGameNotification(data.error, 'error');
   }
+}
+
+function updateSummary(gameState: any) {
+  const stats = document.getElementById('stats');
+  if (!stats) return;
+  const energy = gameState.economy?.energy?.state;
+  const logistics = gameState.economy?.logistics;
+  const logs = gameState.turnSummary?.log || [];
+  let html = '';
+  if (energy) {
+    html += `Energy: ${energy.supply}/${energy.demand} (r=${energy.ratio.toFixed(2)})<br/>`;
+  }
+  if (logistics) {
+    const demand =
+      logistics.demand_operating +
+      logistics.demand_domestic +
+      logistics.demand_international;
+    html += `LP: ${logistics.supply}/${demand} (r=${logistics.lp_ratio.toFixed(2)})<br/>`;
+  }
+  if (logs.length) {
+    html += logs.join('<br/>');
+  }
+  stats.innerHTML = html;
 }
 
 export function joinGameRoom(gameId: string, playerName: string, creator: boolean = false) {
@@ -123,6 +147,8 @@ export function processGameData(gameData: any): void {
       currentGameEntities = gameData.state.entities;
       console.log('Initial entities:', currentGameEntities);
     }
+
+    updateSummary(gameData.state);
 
     let terrainData: Uint8Array;
     if (gameData.map.biomes.__typedArray) {

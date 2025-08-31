@@ -77,6 +77,13 @@ export class EconomyManager {
         brownouts: [],
         essentialsFirst: false,
       },
+      logistics: {
+        supply: 0,
+        demand_operating: 0,
+        demand_domestic: 0,
+        demand_international: 0,
+        lp_ratio: 1,
+      },
     };
   }
 

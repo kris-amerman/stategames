@@ -431,6 +431,12 @@ export class LogisticsManager {
       }
     }
 
+    console.log(
+      `Logistics: supply=${lp.supply} demand=${
+        lp.demand_operating + lp.demand_domestic + lp.demand_international
+      } ratio=${lp.lp_ratio}`,
+    );
+
     return {
       lp,
       operatingAllocations,

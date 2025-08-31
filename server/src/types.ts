@@ -158,6 +158,16 @@ export interface BrownoutRecord {
   after: number;
 }
 
+// === Logistics System Types ===
+
+export interface LPComputation {
+  supply: number;
+  demand_operating: number;
+  demand_domestic: number;
+  demand_international: number;
+  lp_ratio: number;
+}
+
 export interface LaborConsumption {
   foodRequired: number;
   foodProvided: number;
@@ -195,6 +205,8 @@ export interface EconomyState {
     brownouts: BrownoutRecord[];
     essentialsFirst: boolean;
   };
+  /** Logistics system tracking */
+  logistics?: LPComputation;
 }
 
 export interface RetoolOrder {
@@ -319,6 +331,9 @@ export interface GameState {
    * Incremented each time a new entity is created.
    */
   economy: EconomyState;
+
+  /** Turn summary log generated at end of execution phase */
+  turnSummary?: TurnSummary;
 
   /**
    * Counter for generating unique entity IDs.

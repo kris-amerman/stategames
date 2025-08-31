@@ -150,6 +150,9 @@ export class BudgetManager {
     const activeCost = funded * costPer;
     const idleCost = idle * costPer * IDLE_TAX_RATE;
     state.resources.gold -= activeCost + idleCost;
+    console.log(
+      `Budget: canton ${cantonId} sector ${sector} funded=${funded} idle=${idle} cost=${activeCost + idleCost}`,
+    );
 
     // Hook order for downstream systems.
     // 1. Non-labor inputs gate

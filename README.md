@@ -24,6 +24,26 @@ cd server
 bun run test:coverage
 ```
 
+## Turn Flow Integration
+
+The core turn flow now wires together the Budget, Energy, Logistics and Labor scaffolds. Executing a turn applies budgets,
+generates power and logistics throughput, assigns labor and records shortages. Debug logs print major decisions such as
+funding levels, LP ratios, brownouts and shortages. The client UI's stats panel shows the latest turn summary.
+
+Start the simulation by running the server and client packages in separate terminals:
+
+```
+cd server
+bun run start
+
+# in another shell
+cd client
+npm run dev
+```
+
+After ending a turn in the client the stats panel displays energy and logistics ratios along with any shortages for
+debugging.
+
 ## Economy System Scaffold
 
 This update lays out the Economy system foundations, defining key resources and sectors and how they are tracked.

@@ -90,6 +90,7 @@ export class TurnManager {
 
   private static budgetGate(_gameState: GameState): void {
     if (!_gameState.currentPlan?.budgets) return;
+    console.log('Budget Gate: applying budgets');
     BudgetManager.applyBudgets(_gameState.economy, _gameState.currentPlan.budgets);
   }
 
@@ -101,19 +102,40 @@ export class TurnManager {
     EnergyManager.run(gameState.economy, {
       essentialsFirst: gameState.economy.energy.essentialsFirst,
     });
+    const es = gameState.economy.energy.state;
+    console.log(
+      `Energy Gate: supply=${es.supply} demand=${es.demand} ratio=${es.ratio}`,
+    );
   }
 
-  private static logisticsGate(_gameState: GameState): void {
-    LogisticsManager.run(_gameState.economy, {
+  private static logisticsGate(gameState: GameState): void {
+    const result = LogisticsManager.run(gameState.economy, {
       networks: {},
       domesticPlans: {},
       internationalPlans: {},
       gatewayCapacities: {},
     });
+    gameState.economy.logistics = result.lp;
+    console.log(
+      `Logistics Gate: supply=${result.lp.supply} totalDemand=${
+        result.lp.demand_operating +
+        result.lp.demand_domestic +
+        result.lp.demand_international
+      } ratio=${result.lp.lp_ratio}`,
+    );
   }
 
   private static laborGate(gameState: GameState): void {
     LaborManager.run(gameState.economy, gameState.currentPlan ?? undefined);
+    for (const [cId, canton] of Object.entries(gameState.economy.cantons)) {
+      const shortages = Object.entries(canton.shortages)
+        .filter(([, v]) => v)
+        .map(([k]) => k)
+        .join(',');
+      if (shortages) {
+        console.log(`Labor Gate: ${cId} shortages in ${shortages}`);
+      }
+    }
   }
 
   private static suitabilityGate(_gameState: GameState): void {
@@ -144,6 +166,35 @@ export class TurnManager {
     // TODO: Finalize turn, carry shortages, and prepare summary.
     // Logistics points are non-stockpiled and reset each turn.
     _gameState.economy.resources.logistics = 0;
+
+    const logs: string[] = [];
+    const es = _gameState.economy.energy.state;
+    logs.push(
+      `Energy supply ${es.supply} / demand ${es.demand} -> ratio ${es.ratio.toFixed(
+        2,
+      )}`,
+    );
+    const ls = _gameState.economy.logistics;
+    if (ls) {
+      const demand =
+        ls.demand_operating + ls.demand_domestic + ls.demand_international;
+      logs.push(
+        `Logistics supply ${ls.supply} / demand ${demand} -> ratio ${ls.lp_ratio.toFixed(
+          2,
+        )}`,
+      );
+    }
+    for (const [cId, canton] of Object.entries(_gameState.economy.cantons)) {
+      if (canton.shortages.food || canton.shortages.luxury) {
+        logs.push(
+          `${cId} shortages: ${
+            canton.shortages.food ? 'food ' : ''
+          }${canton.shortages.luxury ? 'luxury' : ''}`.trim(),
+        );
+      }
+    }
+    _gameState.turnSummary = { log: logs };
+    console.log('Cleanup: turn summary', logs);
   }
 
   private static createEmptyPlan(): TurnPlan {

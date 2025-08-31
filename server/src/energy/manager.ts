@@ -131,6 +131,9 @@ export class EnergyManager {
           before,
           after,
         });
+        console.log(
+          `Brownout: ${cantonId} ${sectorKey} ${before} -> ${after} (ratio ${ratio})`,
+        );
       }
     }
   }
