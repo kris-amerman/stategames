@@ -134,3 +134,23 @@ The automated tests verify the following pass criteria:
 5. Handoff tables expose sector slot, labor, and suitability effects by UL.
 6. End-of-turn processing is deterministic for identical inputs.
 7. Tests cover rollover, cap enforcement, UL boundaries, and all decay paths.
+
+## Trade & Tariffs Scaffold
+
+This update adds initial handling for international trade, tariffs, and foreign exchange swaps.
+
+- National gateways (Port, Rail Border, Airport) scale capacity with the capital's Urbanization Level.
+- Gateways consume Logistics Points and levy FX freight costs per unit shipped.
+- Imports pay FX, may incur tariffs that reduce delivered quantity, and arrive the next turn.
+- Exports generate FX immediately and are tariff-free.
+- Insufficient FX automatically scales import orders down.
+- Gold ⇄ FX swaps apply a 10% fee and are capped each turn.
+
+The automated tests verify the following pass criteria:
+
+1. International trade uses only the three gateway types and their capacities scale with UL.
+2. LP and FX freight costs are charged per gateway, sharing the national LP pool with domestic shipping.
+3. Imports pay FX, yield tariff Gold, and deliver reduced quantities next turn while exports earn FX without tariffs.
+4. FX shortfalls auto-scale imports and prevent negative FX balances.
+5. Gold ⇄ FX swaps honour the 10% fee and per-turn cap.
+6. Trade resolution is deterministic for identical inputs.

@@ -283,6 +283,13 @@ export interface FinanceState {
   debtStress: boolean[];
 }
 
+export interface TradeState {
+  /** Imports scheduled to arrive next turn */
+  pendingImports: Partial<Record<ResourceType, number>>;
+  /** Exports scheduled to arrive next turn (for symmetry) */
+  pendingExports: Partial<Record<ResourceType, number>>;
+}
+
 export interface EconomyState {
   resources: Resources;
   cantons: { [cantonId: string]: CantonEconomy };
@@ -302,6 +309,8 @@ export interface EconomyState {
   projects: ProjectsState;
   /** Treasury, debt, and related finance tracking */
   finance: FinanceState;
+  /** Trade state and pending international shipments */
+  trade: TradeState;
 }
 
 export interface RetoolOrder {
