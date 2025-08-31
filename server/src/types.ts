@@ -26,8 +26,17 @@ export type TurnPhase = "planning" | "execution";
 
 export type Gate = "budget" | "inputs" | "logistics" | "labor" | "suitability";
 
+export interface BudgetPools {
+  /** Gold allocated to military upkeep and discretionary spending */
+  military: number;
+  /** Gold allocated to welfare tiers */
+  welfare: number;
+  /** Operations & Maintenance gold by sector */
+  sectorOM: Partial<Record<SectorType, number>>;
+}
+
 export interface TurnPlan {
-  budgets?: Record<string, any>;
+  budgets?: BudgetPools;
   policies?: Record<string, any>;
   slotPriorities?: Record<string, any>;
   tradeOrders?: Record<string, any>;
@@ -100,16 +109,13 @@ export interface SectorDefinition {
   inputs: ResourceType[];
 }
 
-export interface SectorSlot {
-  id: number;
-  funded: boolean;
-  retooling: number; // turns remaining while retooling; 0 if active
-}
-
 export interface SectorState {
-  capacity: number; // total slots available
-  utilization: number; // slots currently funded and eligible
-  slots: SectorSlot[];
+  /** Total slots available for this sector in the canton */
+  capacity: number;
+  /** Slots funded to attempt running this turn */
+  funded: number;
+  /** Slots idle and charged idle tax */
+  idle: number;
 }
 
 export interface CantonEconomy {
@@ -121,6 +127,16 @@ export interface CantonEconomy {
 export interface EconomyState {
   resources: Resources;
   cantons: { [cantonId: string]: CantonEconomy };
+  /** Slots undergoing retooling and their timers */
+  retoolQueue: RetoolOrder[];
+}
+
+export interface RetoolOrder {
+  canton: string;
+  sector_from: SectorType;
+  sector_to: SectorType;
+  slots: number;
+  turns_remaining: number;
 }
 
 /**
