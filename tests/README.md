@@ -64,3 +64,13 @@ This prints coverage statistics and writes an `lcov.info` report to the `coverag
 - Shipments exceeding same-turn thresholds queue to the next turn.
 - LP accounting distinguishes operating, domestic, and international demand components.
 
+### Energy System
+- Plant registry supports Coal, Gas, Oil Peaker, Nuclear, Hydro, Wind, and Solar types.
+- Wind and Solar generation scaled by a Renewable Capacity Factor.
+- Per-sector energy demand is tracked and summed into total demand.
+- Energy supply vs demand produces a ratio used to scale sector utilisation.
+- Brownouts are logged when supply is insufficient.
+- "Essentials First" prioritises Agriculture, Defense, and Manufacturing before other sectors.
+- Plants that are idle or under construction produce no energy.
+- Idle economic slots consume no energy.
+

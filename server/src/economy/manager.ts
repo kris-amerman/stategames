@@ -66,10 +66,17 @@ export class EconomyManager {
         rareEarths: 0,
         research: 0,
         logistics: 0,
-      labor: 0,
+        labor: 0,
       },
       cantons: {},
       retoolQueue: [],
+      energy: {
+        plants: [],
+        state: { supply: 0, demand: 0, ratio: 1 },
+        demandBySector: {},
+        brownouts: [],
+        essentialsFirst: false,
+      },
     };
   }
 
