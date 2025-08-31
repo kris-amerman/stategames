@@ -2,6 +2,7 @@
 import type { GameState, TurnPlan } from '../types';
 import { BudgetManager } from '../budget/manager';
 import { LaborManager } from '../labor/manager';
+import { LogisticsManager } from '../logistics/manager';
 
 /**
  * Orchestrates the two-phase turn resolution with a one-turn lag.
@@ -93,7 +94,12 @@ export class TurnManager {
   }
 
   private static logisticsGate(_gameState: GameState): void {
-    // TODO: Reserve and consume logistics points.
+    LogisticsManager.run(_gameState.economy, {
+      networks: {},
+      domesticPlans: {},
+      internationalPlans: {},
+      gatewayCapacities: {},
+    });
   }
 
   private static laborGate(gameState: GameState): void {
