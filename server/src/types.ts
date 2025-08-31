@@ -22,6 +22,22 @@ export type ActionType =
   | "research"
   | "recruit";
 
+export type TurnPhase = "planning" | "execution";
+
+export type Gate = "budget" | "inputs" | "logistics" | "labor" | "suitability";
+
+export interface TurnPlan {
+  budgets?: Record<string, any>;
+  policies?: Record<string, any>;
+  slotPriorities?: Record<string, any>;
+  tradeOrders?: Record<string, any>;
+  projects?: Record<string, any>;
+}
+
+export interface TurnSummary {
+  log: string[];
+}
+
 /**
  * Static game metadata that never changes after game creation.
  * This includes basic information about the game session and its participants.
@@ -85,6 +101,15 @@ export interface GameState {
 
   /** Current turn number (increments when all players have taken their turn) */
   turnNumber: number;
+
+  /** Phase of the turn flow (planning or execution) */
+  phase: TurnPhase;
+
+  /** Plan currently being executed */
+  currentPlan: TurnPlan | null;
+
+  /** Plan being prepared for the next turn */
+  nextPlan: TurnPlan | null;
 
   /**
    * Maps each cell to its current owner.
