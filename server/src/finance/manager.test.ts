@@ -50,11 +50,22 @@ test('borrowing increases debt immediately', () => {
 });
 
 // 5. Credit limit enforcement
- test('exceeding credit limit triggers default', () => {
+test('exceeding credit limit triggers default', () => {
   const eco = createEconomy();
   eco.finance.creditLimit = 100;
   eco.finance.debt = 90;
   FinanceManager.run(eco, { revenues: 0, expenditures: 20 });
+  expect(eco.finance.defaulted).toBeTrue();
+});
+
+// Regression: interest shouldn't reduce debt when over the limit
+test('interest over credit limit accumulates and defaults', () => {
+  const eco = createEconomy();
+  eco.finance.creditLimit = 1000;
+  eco.finance.debt = 995; // interest will push this over the limit
+  eco.finance.interestRate = 0.05;
+  FinanceManager.run(eco, { revenues: 0, expenditures: 0 });
+  expect(Math.round(eco.finance.debt)).toBe(1045);
   expect(eco.finance.defaulted).toBeTrue();
 });
 
