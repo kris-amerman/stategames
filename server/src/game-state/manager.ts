@@ -1,16 +1,17 @@
 // server/src/game-state/manager.ts
-import type { 
-  GameState, 
+import type {
+  GameState,
   GameMeta,
   GameMap,
   Game,
-  PlayerId, 
-  CellId, 
-  EntityId, 
-  Entity, 
+  PlayerId,
+  CellId,
+  EntityId,
+  Entity,
   EntityType,
-  MapSize 
+  MapSize
 } from '../types';
+import { createInitialEconomyState } from '../economy';
 
 export class GameStateManager {
   
@@ -48,7 +49,9 @@ export class GameStateManager {
       entitiesByType: {
         unit: []
       },
-      nextEntityId: 1
+      nextEntityId: 1,
+
+      economy: createInitialEconomyState()
     };
   }
 

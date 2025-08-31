@@ -1,3 +1,5 @@
+import type { EconomyState } from './economy';
+
 export type MapSize = "small" | "medium" | "large" | "xl";
 export type PlayerId = string;
 export type CellId = number;
@@ -127,6 +129,11 @@ export interface GameState {
    * Incremented each time a new entity is created.
    */
   nextEntityId: number;
+
+  /**
+   * Economy resources, sector slots and stockpiles.
+   */
+  economy: EconomyState;
 }
 
 /**
