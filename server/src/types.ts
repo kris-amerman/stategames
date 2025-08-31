@@ -38,6 +38,91 @@ export interface TurnSummary {
   log: string[];
 }
 
+// === Economy Types ===
+
+// Resources tracked by the economy.
+export type ResourceType =
+  | "gold"
+  | "fx"
+  | "food"
+  | "materials"
+  | "production"
+  | "ordnance"
+  | "luxury"
+  | "energy"
+  | "uranium"
+  | "coal"
+  | "oil"
+  | "rareEarths"
+  | "research"
+  | "logistics"
+  | "labor";
+
+export interface Resources {
+  gold: number;
+  fx: number;
+  food: number;
+  materials: number;
+  production: number;
+  ordnance: number;
+  luxury: number;
+  energy: number;
+  uranium: number;
+  coal: number;
+  oil: number;
+  rareEarths: number;
+  research: number;
+  logistics: number;
+  labor: number;
+}
+
+export type LaborType = "general" | "skilled" | "specialist";
+
+export interface LaborPool {
+  general: number;
+  skilled: number;
+  specialist: number;
+}
+
+export type SectorType =
+  | "agriculture"
+  | "extraction"
+  | "manufacturing"
+  | "defense"
+  | "luxury"
+  | "finance"
+  | "research"
+  | "logistics"
+  | "energy";
+
+export interface SectorDefinition {
+  outputs: ResourceType[];
+  inputs: ResourceType[];
+}
+
+export interface SectorSlot {
+  id: number;
+  funded: boolean;
+  retooling: number; // turns remaining while retooling; 0 if active
+}
+
+export interface SectorState {
+  capacity: number; // total slots available
+  utilization: number; // slots currently funded and eligible
+  slots: SectorSlot[];
+}
+
+export interface CantonEconomy {
+  sectors: { [K in SectorType]?: SectorState };
+  labor: LaborPool;
+  suitability: Partial<Record<SectorType, number>>;
+}
+
+export interface EconomyState {
+  resources: Resources;
+  cantons: { [cantonId: string]: CantonEconomy };
+}
+
 /**
  * Static game metadata that never changes after game creation.
  * This includes basic information about the game session and its participants.
@@ -146,6 +231,12 @@ export interface GameState {
    * Key: EntityType as string, Value: Array of EntityIds of that type
    */
   entitiesByType: { [K in EntityType]: EntityId[] };
+
+  /**
+   * Counter for generating unique entity IDs.
+   * Incremented each time a new entity is created.
+   */
+  economy: EconomyState;
 
   /**
    * Counter for generating unique entity IDs.
