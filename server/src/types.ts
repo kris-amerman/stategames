@@ -93,6 +93,19 @@ export interface LaborPool {
   specialist: number;
 }
 
+// Welfare policy tiers for the nation.
+export interface WelfarePolicies {
+  education: number;
+  healthcare: number;
+  socialSupport: number;
+}
+
+// Welfare system state tracking current and next-turn tiers.
+export interface WelfareState {
+  current: WelfarePolicies;
+  next: WelfarePolicies;
+}
+
 // Terrain tile categories that compose a canton geography mix.
 export type TileType =
   | 'plains'
@@ -309,6 +322,8 @@ export interface EconomyState {
   projects: ProjectsState;
   /** Treasury, debt, and related finance tracking */
   finance: FinanceState;
+  /** Welfare policy state */
+  welfare: WelfareState;
   /** Trade state and pending international shipments */
   trade: TradeState;
 }

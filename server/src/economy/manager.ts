@@ -91,6 +91,10 @@ export class EconomyManager {
         defaulted: false,
         debtStress: [],
       },
+      welfare: {
+        current: { education: 0, healthcare: 0, socialSupport: 0 },
+        next: { education: 0, healthcare: 0, socialSupport: 0 },
+      },
       trade: { pendingImports: {}, pendingExports: {} },
     };
   }
