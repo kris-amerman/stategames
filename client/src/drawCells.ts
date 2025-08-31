@@ -1,4 +1,4 @@
-import { BIOME_COLORS } from "./main";
+import { BIOME_COLORS } from "./config";
 
 export function drawCells(
   width: number,
