@@ -8,6 +8,8 @@ import { SuitabilityManager } from '../suitability/manager';
 import { DevelopmentManager } from '../development/manager';
 import { FinanceManager } from '../finance/manager';
 import { WelfareManager } from '../welfare/manager';
+import { TradeManager, type TradeResult } from '../trade/manager';
+import { SECTOR_DEFINITIONS } from '../economy/manager';
 
 /**
  * Orchestrates the two-phase turn resolution with a one-turn lag.
@@ -61,26 +63,23 @@ export class TurnManager {
     // Gate 1 — Budget
     this.budgetGate(gameState);
 
-    // Gate 2A — Inputs
+    // Gate 2 — Inputs (energy & recipes)
     this.inputsGate(gameState);
 
-    // Gate 2B — Energy
-    this.energyGate(gameState);
-
-    // Gate 2B — Logistics
+    // Gate 3 — Logistics (LP)
     this.logisticsGate(gameState);
 
-    // Gate 3 — Labor
+    // Gate 4 — Labor
     this.laborGate(gameState);
 
-    // Gate 4 — Suitability
+    // Gate 5 — Suitability
     this.suitabilityGate(gameState);
 
     // Post-gate resolution steps
     this.multiplySiteFactors(gameState);
     this.resolveOutputAndConsumption(gameState);
-    this.resolveTradeAndFX(gameState);
-    this.resolveFinance(gameState);
+    const trade = this.resolveTradeAndFX(gameState);
+    this.resolveFinance(gameState, trade);
     this.resolveDevelopment(gameState);
     this.cleanup(gameState);
   }
@@ -88,8 +87,8 @@ export class TurnManager {
   // === Turn Flow Steps (placeholders) ===
 
   private static carryover(gameState: GameState): void {
-    // TODO: Projects advance, stock and rate updates.
-    BudgetManager.advanceRetools(gameState.economy);
+    // Apply arrivals and lagged policy effects from the previous turn.
+    TradeManager.applyPending(gameState.economy);
     DevelopmentManager.applyPending(gameState.economy);
     WelfareManager.applyPending(gameState.economy);
   }
@@ -108,58 +107,94 @@ export class TurnManager {
     );
   }
 
-  private static inputsGate(_gameState: GameState): void {
-    // TODO: Apply energy and recipe input caps.
-  }
-
-  private static energyGate(gameState: GameState): void {
+  private static inputsGate(gameState: GameState): void {
+    // Energy is the primary hard input at this stage. Recipe inputs are placeholders.
     EnergyManager.run(gameState.economy, {
       essentialsFirst: gameState.economy.energy.essentialsFirst,
     });
   }
 
-  private static logisticsGate(_gameState: GameState): void {
-    LogisticsManager.run(_gameState.economy, {
+  private static logisticsGate(gameState: GameState): void {
+    const result = LogisticsManager.run(gameState.economy, {
       networks: {},
       domesticPlans: {},
       internationalPlans: {},
       gatewayCapacities: {},
     });
+    // Apply LP ratio uniformly to funded slots (including logistics itself).
+    const ratio = result.lp.lp_ratio ?? 1;
+    if (ratio < 1) {
+      for (const canton of Object.values(gameState.economy.cantons)) {
+        for (const sector of Object.keys(canton.sectors) as any[]) {
+          const secState = canton.sectors[sector];
+          if (!secState || secState.funded <= 0) continue;
+          secState.funded = Math.floor(secState.funded * ratio);
+        }
+      }
+    }
+    (gameState as any).lastLogistics = result;
   }
 
   private static laborGate(gameState: GameState): void {
     LaborManager.run(gameState.economy, gameState.currentPlan ?? undefined);
   }
 
-  private static suitabilityGate(_gameState: GameState): void {
-    SuitabilityManager.run(_gameState.economy);
+  private static suitabilityGate(gameState: GameState): void {
+    SuitabilityManager.run(gameState.economy);
   }
 
   private static multiplySiteFactors(_gameState: GameState): void {
-    // TODO: Multiply suitability, tech, and welfare modifiers.
+    // Placeholder – suitability multipliers already cached in canton data.
   }
 
-  private static resolveOutputAndConsumption(_gameState: GameState): void {
-    // TODO: Produce outputs and apply consumption and upkeep costs.
+  private static resolveOutputAndConsumption(gameState: GameState): void {
+    const econ = gameState.economy;
+    for (const canton of Object.values(econ.cantons)) {
+      for (const [sector, state] of Object.entries(canton.sectors)) {
+        if (!state || state.funded <= 0) continue;
+        const def = SECTOR_DEFINITIONS[sector as keyof typeof SECTOR_DEFINITIONS];
+        if (!def) continue;
+        const mult = canton.suitabilityMultipliers[sector as any] ?? 1;
+        for (const res of def.outputs) {
+          econ.resources[res] += state.funded * mult;
+        }
+      }
+    }
   }
 
-  private static resolveTradeAndFX(_gameState: GameState): void {
-    // TODO: Handle trade settlements and foreign exchange adjustments.
+  private static resolveTradeAndFX(gameState: GameState): TradeResult {
+    const result = TradeManager.run(gameState.economy, {
+      orders: gameState.currentPlan?.tradeOrders || {},
+      capitalUL: 1,
+      lastFinanceOutput: 0,
+    });
+    return result;
   }
 
-  private static resolveFinance(_gameState: GameState): void {
-    FinanceManager.run(_gameState.economy, { revenues: 0, expenditures: 0 });
+  private static resolveFinance(
+    _gameState: GameState,
+    trade: TradeResult,
+  ): void {
+    FinanceManager.run(_gameState.economy, {
+      revenues: trade.fx_earned + trade.tariff_gold,
+      expenditures: trade.fx_spent + trade.freight_fx,
+    });
   }
 
   private static resolveDevelopment(gameState: GameState): void {
-    // TODO: Roll for development and update urbanization levels.
-    DevelopmentManager.run(gameState.economy, {});
+    const inputs: Record<string, any> = {};
+    for (const id of Object.keys(gameState.economy.cantons)) {
+      inputs[id] = { baseRoll: 0 };
+    }
+    DevelopmentManager.run(gameState.economy, inputs);
   }
 
-  private static cleanup(_gameState: GameState): void {
-    // TODO: Finalize turn, carry shortages, and prepare summary.
+  private static cleanup(gameState: GameState): void {
+    // Advance retools at end so completions become usable next turn.
+    BudgetManager.advanceRetools(gameState.economy);
     // Logistics points are non-stockpiled and reset each turn.
-    _gameState.economy.resources.logistics = 0;
+    gameState.economy.resources.logistics = 0;
+    gameState.turnSummary = { log: ['turn complete'] } as any;
   }
 
   private static createEmptyPlan(): TurnPlan {
