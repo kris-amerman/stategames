@@ -85,3 +85,15 @@ This prints coverage statistics and writes an `lcov.info` report to the `coverag
 - Resolution is deterministic for identical inputs.
 - Tests cover surplus, deficit, interest, credit limit breach, and each stress tier.
 
+### Map & Mesh Integration
+- Initialization validates canton geography, labor, and infrastructure setup.
+- Coastal versus inland cantons behave differently for port eligibility.
+- Rail, port, and airport connectivity respect terrain and hop counts.
+- Suitability modifiers derive from geography and Urbanization Level.
+- Development rolls update Urbanization Level and cascade changes next turn.
+- Canton contributions aggregate into national totals for labor and infrastructure bonuses.
+
+Run `bun test` from `server/` to execute all unit and integration tests. The
+map/mesh integration scenarios are defined in
+`server/src/mesh/integration.test.ts` and report their pass/fail status
+alongside the rest of the suite.
