@@ -3,7 +3,7 @@ import { GameService } from '../game-state';
 import { submitPlan } from '../routes/submitPlan';
 import { advanceTurn } from '../routes/advanceTurn';
 import type { TurnPlan } from '../types';
-import server from '../index';
+import { server } from '../index';
 
 const PORT = process.env.PORT || 3000;
 

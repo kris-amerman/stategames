@@ -15,7 +15,7 @@ export const gameSequences = new Map<string, number>();
 /**
  * Server definition with integrated WebSocket support
  */
-const server = Bun.serve({
+export const server = Bun.serve({
   port: PORT,
   hostname: "0.0.0.0",
 
@@ -239,4 +239,3 @@ console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('HTTP and WebSocket server listening on:', PORT);
 console.log("\nAvailable endpoints:");
 ENDPOINTS.forEach((e) => console.log(`    ${e}`));
-export default server;
