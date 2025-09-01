@@ -246,7 +246,15 @@ export class GameService {
         meshData.cellCount,
         game.map.biomes
       );
-      
+
+      GameStateManager.initializeNationInfrastructure(
+        game.state,
+        game.meta.players,
+        game.map.biomes,
+        meshData.cellNeighbors,
+        meshData.cellOffsets,
+      );
+
       // Persist updated state
       await this.saveGame(game);
 
