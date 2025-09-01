@@ -99,6 +99,7 @@ export interface GatewayAllocation {
   units_after_lp_ratio: number;
   queued_next_turn: number;
   fx_cost: number;
+  hops: number;
   imports: Record<string, GoodAllocation>;
   exports: Record<string, GoodAllocation>;
 }
@@ -112,6 +113,8 @@ export interface LogisticsContext {
   internationalPlans: Partial<Record<Gateway, ShippingPlan>>;
   /** Capacity per international gateway */
   gatewayCapacities?: Partial<Record<Gateway, number>>;
+  /** Hop count per international gateway */
+  gatewayHops?: Partial<Record<Gateway, number>>;
   /** Optional Essentials First toggle */
   essentialsFirst?: boolean;
   /** Optional custom priority list */
@@ -265,12 +268,14 @@ export class LogisticsManager {
       const params = GATEWAY_PARAMS[gateway as Gateway];
       const planCopy = clonePlan(plan);
       let capacity = ctx.gatewayCapacities?.[gateway as Gateway] ?? Infinity;
+      const hops = ctx.gatewayHops?.[gateway as Gateway] ?? 1;
 
       const alloc: GatewayAllocation = {
         units_planned: 0,
         units_after_lp_ratio: 0,
         queued_next_turn: 0,
         fx_cost: 0,
+        hops,
         imports: {},
         exports: {},
       };
@@ -287,7 +292,7 @@ export class LogisticsManager {
         }
         capacity -= importAlloc;
         alloc.units_planned += importAlloc;
-        lp.demand_international += importAlloc * params.costPerHop; // assume 1 hop
+        lp.demand_international += importAlloc * params.costPerHop * hops;
         alloc.fx_cost += importAlloc * params.fxPerUnit;
       }
 
@@ -302,7 +307,7 @@ export class LogisticsManager {
           planCopy.exports_by_good[good] -= shipped;
         }
         alloc.units_planned += exportAlloc;
-        lp.demand_international += exportAlloc * params.costPerHop;
+        lp.demand_international += exportAlloc * params.costPerHop * hops;
         alloc.fx_cost += exportAlloc * params.fxPerUnit;
       }
 

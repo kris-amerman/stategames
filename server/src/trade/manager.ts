@@ -34,6 +34,7 @@ export interface TradeInput {
   swap?: SwapOrder;
   networks?: Record<string, any>;
   domesticPlans?: Record<string, ShippingPlan>;
+  gatewayHops?: Partial<Record<Gateway, number>>;
 }
 
 export interface TradeResult {
@@ -113,6 +114,7 @@ export class TradeManager {
       domesticPlans: input.domesticPlans ?? {},
       internationalPlans: plans,
       gatewayCapacities: capacities,
+      gatewayHops: input.gatewayHops,
     });
 
     const imports: ImportSettlement[] = [];
