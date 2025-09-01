@@ -14,6 +14,7 @@ function setupState(): EconomyState {
   EconomyManager.addCanton(state, 'N'); // national locations
   state.resources.gold = 10000;
   state.resources.production = 10000;
+  state.resources.energy = 1000;
   return state;
 }
 
@@ -28,7 +29,12 @@ test('airport costs and provides 1-hop air link via national airport', () => {
   InfrastructureManager.build(state, 'airport', 'N', { national: true });
   InfrastructureManager.build(state, 'airport', 'A');
   for (let i = 0; i < 4; i++) InfrastructureManager.progressTurn(state);
+  const goldBefore = state.resources.gold;
+  const energyBefore = state.resources.energy;
+  InfrastructureManager.progressTurn(state);
   const result = InfrastructureManager.computeNetworks(state);
+  expect(state.resources.gold).toBe(goldBefore - 12); // 8 nat + 4 regular
+  expect(state.resources.energy).toBe(energyBefore - 6);
   expect(result.networks['A']!.air!.hops).toBe(1);
   expect(result.gatewayCapacities.air).toBeDefined();
 });
@@ -55,7 +61,12 @@ test('port auto-connects, adds LP and handles capture/repair', () => {
     },
   };
   for (let i = 0; i < 4; i++) InfrastructureManager.progressTurn(state, ctx);
+  const goldBefore = state.resources.gold;
+  const energyBefore = state.resources.energy;
+  InfrastructureManager.progressTurn(state, ctx);
   const result = InfrastructureManager.computeNetworks(state, ctx);
+  expect(state.resources.gold).toBe(goldBefore - 15);
+  expect(state.resources.energy).toBe(energyBefore - 10);
   expect(result.networks['C']!.sea!.hops).toBe(2); // via B -> N
   expect(result.lpBonus).toBe(40); // 4 ports * 10 LP
   expect(result.gatewayCapacities.port).toBeDefined();
@@ -95,7 +106,12 @@ test('rail hubs link only via valid adjacency and provide min speed 4', () => {
     },
   };
   for (let i = 0; i < 3; i++) InfrastructureManager.progressTurn(state, ctx);
+  const goldBefore = state.resources.gold;
+  const energyBefore = state.resources.energy;
+  InfrastructureManager.progressTurn(state, ctx);
   const result = InfrastructureManager.computeNetworks(state, ctx);
+  expect(state.resources.gold).toBe(goldBefore - 10);
+  expect(state.resources.energy).toBe(energyBefore - 5);
   expect(result.networks['B']!.rail!.connected).toBe(false);
   expect(result.networks['C']!.rail!.hops).toBe(2); // C->A->N
   const speed = InfrastructureManager.railMovementSpeed(2, ['C', 'A', 'N'], state, ctx);
@@ -123,6 +139,17 @@ test('national variants enforce uniqueness and multipliers', () => {
   expect(() =>
     InfrastructureManager.build(state, 'airport', 'B', { national: true }),
   ).toThrow();
+});
+
+test('national designation can be reassigned to another canton', () => {
+  const state = setupState();
+  InfrastructureManager.build(state, 'airport', 'N', { national: true });
+  InfrastructureManager.build(state, 'airport', 'A');
+  for (let i = 0; i < 4; i++) InfrastructureManager.progressTurn(state);
+  InfrastructureManager.redesignate(state, 'airport', 'A');
+  expect(state.infrastructure.national.airport).toBe('A');
+  expect(state.infrastructure.airports['N'].national).toBe(false);
+  expect(state.infrastructure.airports['A'].national).toBe(true);
 });
 
 // === On/Off timing ===

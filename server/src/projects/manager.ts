@@ -92,6 +92,11 @@ export class ProjectsManager {
   static advance(state: EconomyState, ctx: ProjectAdvanceContext = {}): void {
     let debtApplied = false;
     for (const project of state.projects.projects) {
+      if (project.status === 'active') {
+        const def = getProjectDefinition(project.tier);
+        state.resources.gold -= def.oAndM.gold;
+        state.resources.energy -= def.oAndM.energy;
+      }
       if (project.toggle) {
         project.toggle.turns -= 1;
         if (project.toggle.turns <= 0) {
@@ -144,6 +149,8 @@ export class ProjectsManager {
     if (idx === -1) return;
     const project = state.projects.projects[idx];
     state.resources.production += Math.floor(project.cost.production * 0.25);
+    const materials = (project.cost as any).materials;
+    if (materials) state.resources.materials += Math.floor(materials * 0.5);
     state.projects.projects.splice(idx, 1);
   }
 
