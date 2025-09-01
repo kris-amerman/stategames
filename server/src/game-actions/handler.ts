@@ -6,6 +6,8 @@ import { meshService } from "../mesh-service";
 import type { Entity, Game, GameState } from "../types";
 import { broadcastGameStateUpdate } from "../index";
 import { TurnManager } from "../turn";
+import { broadcastTurnCompleted, broadcastStateChanges } from "../index";
+import { collectStateChanges } from "../events";
 
 export async function handleGameAction(ws: ServerWebSocket<any>, data: any) {
   const { actionType, gameId, playerId, ...actionData } = data;
@@ -319,12 +321,16 @@ export async function handleEndTurnAction(gameId: string, gameState: GameState, 
 
   // If we've cycled back to the first player, resolve the turn and increment
   if (nextPlayerIndex === 0) {
+    const prevEconomy = JSON.parse(JSON.stringify(gameState.economy));
     TurnManager.advanceTurn(gameState);
+    const events = collectStateChanges(prevEconomy, gameState.economy);
     gameState.turnNumber += 1;
+    broadcastStateChanges(gameId, events);
+    broadcastTurnCompleted(gameId, gameState, nextPlayer, events);
   }
-  
+
   console.log(`Turn advanced: ${playerId} -> ${nextPlayer} (Turn ${gameState.turnNumber})`);
-  
+
   return {
     success: true,
     message: `Turn ended. It's now ${nextPlayer}'s turn.`
