@@ -83,6 +83,8 @@ export class EconomyManager {
         demandBySector: {},
         brownouts: [],
         essentialsFirst: false,
+        fuelUsed: {},
+        oAndMSpent: 0,
       },
       infrastructure: {
         airports: {},
