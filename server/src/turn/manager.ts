@@ -33,6 +33,7 @@ export class TurnManager {
     gameState.currentPlan = gameState.nextPlan ?? null;
     gameState.nextPlan = this.createEmptyPlan();
     gameState.phase = 'planning';
+    gameState.turnNumber += 1;
   }
 
   /** Ensure a plan exists for players to modify during the planning phase. */
