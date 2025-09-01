@@ -15,7 +15,7 @@ test('world generation assigns contiguous balanced territories with infrastructu
   const cellCount = meshData.cellCount;
   const biomes = new Uint8Array(cellCount).fill(1);
   // single deep ocean cell and a shallow water cell for coastal checks
-  biomes[0] = 0; // deep ocean
+  biomes[0] = 7; // deep ocean
   biomes[1] = 6; // shallow water
 
   const gameId = 'g' + Math.random().toString(36).slice(2,8);
@@ -30,7 +30,7 @@ test('world generation assigns contiguous balanced territories with infrastructu
 
   // All claimable cells assigned; deep ocean unclaimed
   for (let c = 0; c < cellCount; c++) {
-    if (biomes[c] === 0) {
+    if (biomes[c] === 7) {
       expect(GameStateManager.getCellOwner(state, c)).toBeNull();
     } else {
       expect(GameStateManager.getCellOwner(state, c)).not.toBeNull();

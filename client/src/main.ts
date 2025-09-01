@@ -20,6 +20,7 @@ import {
   handleGameError,
   currentGameId,
   currentPlayerName,
+  requiredPlayers,
 } from './game';
 
 const canvas = document.createElement('canvas');
@@ -107,7 +108,7 @@ function showCreatorGameUI(gameData: any) {
     
     <div style="margin-bottom: 15px;">
       <strong>Status:</strong>
-      <span id="gameStatus" style="color: #4CAF50;">Game ready</span>
+      <span id="gameStatus" style="color: #FFA500;">Waiting for players...</span>
     </div>
 
     <div style="margin-bottom: 15px;">
@@ -122,6 +123,17 @@ function showCreatorGameUI(gameData: any) {
           .join('')}
       </ul>
     </div>
+
+    <button id="startGame" style="
+      width: 100%;
+      background: #666;
+      color: white;
+      border: none;
+      padding: 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-top: 5px;
+    " disabled>Start Game (Need more players)</button>
   `;
 
   // Add event listeners
@@ -129,7 +141,10 @@ function showCreatorGameUI(gameData: any) {
 
   // Add WebSocket to room as creator
   joinGameRoom(gameData.gameId, 'player1', true);
-  
+
+  // Setup start game button handler
+  setupStartGameButton();
+
   toggleGameButtons(false);
 }
 
@@ -443,7 +458,7 @@ function updatePlayersList(players: string[], currentPlayerName?: string) {
     // Only update start game button if it exists (creator only)
     const startButton = document.getElementById("startGame") as HTMLButtonElement;
     if (startButton) {
-      if (players.length >= 2) {
+      if (players.length >= requiredPlayers) {
         startButton.disabled = false;
         startButton.textContent = "Start Game";
         startButton.style.background = "#4CAF50";
@@ -561,7 +576,9 @@ document.getElementById("createGame")!.addEventListener("click", async () => {
 
     // Show creator's game state UI and render map
     showCreatorGameUI(gameData);
-    handleGameStarted(gameData.game);
+    processGameData(gameData.game);
+    updateGameStatus('waiting');
+    updatePlayersList(gameData.players, 'player1');
     
   } catch (error: any) {
     console.error('Game creation failed:', error);

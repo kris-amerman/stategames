@@ -377,6 +377,9 @@ export interface GameMeta {
    * Determines which mesh to use.
    */
   mapSize: MapSize;
+
+  /** Total number of nations/players expected for this game */
+  nationCount: number;
 }
 
 /**

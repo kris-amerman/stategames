@@ -88,14 +88,14 @@ export class GameService {
       joinCode,
       players,
       mapSize,
-      biomes
+      biomes,
+      nationCount
     );
 
     // Import mesh service to generate starting territories
     const { meshService } = await import('../mesh-service');
     const meshData = await meshService.getMeshData(mapSize);
 
-    GameStateManager.startGame(game.state);
     GameStateManager.assignStartingTerritories(
       game.state,
       meshData.cellNeighbors,
@@ -111,6 +111,9 @@ export class GameService {
       meshData.cellNeighbors,
       meshData.cellOffsets
     );
+
+    // Only the creator is in the lobby initially
+    game.meta.players = ['player1'];
 
     // Store in memory
     games.set(gameId, game);
@@ -215,6 +218,10 @@ export class GameService {
       throw new Error(`Game is no longer accepting players (status: ${game.state.status})`);
     }
 
+    if (game.meta.players.length >= game.meta.nationCount) {
+      throw new Error('Game is full');
+    }
+
     // Generate new player name
     const playerNumber = game.meta.players.length + 1;
     const newPlayerName = `player${playerNumber}`;
@@ -222,10 +229,12 @@ export class GameService {
     // Update meta with new player
     game.meta.players.push(newPlayerName);
 
-    // Add player to game state
-    const success = GameStateManager.addPlayer(game.state, newPlayerName);
-    if (!success) {
-      throw new Error('Failed to add player to game');
+    // Add player to game state if not pre-generated
+    if (!game.state.playerCells[newPlayerName]) {
+      const success = GameStateManager.addPlayer(game.state, newPlayerName);
+      if (!success) {
+        throw new Error('Failed to add player to game');
+      }
     }
 
     // Persist updated state
@@ -247,48 +256,19 @@ export class GameService {
       throw new Error(`Game cannot be started (current status: ${game.state.status})`);
     }
 
-    if (game.meta.players.length < 2) {
-      throw new Error(`Not enough players to start game (${game.meta.players.length}/2 minimum)`);
+    if (game.meta.players.length < game.meta.nationCount) {
+      throw new Error(`Not enough players to start game (${game.meta.players.length}/${game.meta.nationCount} joined)`);
     }
 
-    // Import mesh service to get the mesh data for territory assignment
-    const { meshService } = await import('../mesh-service');
-    
-    try {
-      // Get mesh data for this game's map size
-      const meshData = await meshService.getMeshData(game.meta.mapSize);
-      
-      // Update game state to started
-      GameStateManager.startGame(game.state);
-      
-      // Assign starting territories using the mesh and biome data
-      GameStateManager.assignStartingTerritories(
-        game.state,
-        meshData.cellNeighbors,
-        meshData.cellOffsets,
-        meshData.cellCount,
-        game.map.biomes
-      );
+    // Update game state to started
+    GameStateManager.startGame(game.state);
 
-      GameStateManager.initializeNationInfrastructure(
-        game.state,
-        game.meta.players,
-        game.map.biomes,
-        meshData.cellNeighbors,
-        meshData.cellOffsets,
-      );
+    // Persist updated state
+    await this.saveGame(game);
 
-      // Persist updated state
-      await this.saveGame(game);
+    console.log(`Game ${gameId} started with ${game.meta.players.length} players`);
 
-      console.log(`Game ${gameId} started with ${game.meta.players.length} players, territories assigned`);
-
-      return game;
-      
-    } catch (error) {
-      console.error(`Failed to assign starting territories for game ${gameId}:`, error);
-      throw new Error('Failed to initialize game territories');
-    }
+    return game;
   }
 
   static async leaveGame(gameId: string, playerId: PlayerId): Promise<Game | null> {

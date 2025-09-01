@@ -22,14 +22,16 @@ export class GameStateManager {
     gameId: string,
     joinCode: string,
     players: PlayerId[],
-    mapSize: MapSize
+    mapSize: MapSize,
+    nationCount: number
   ): GameMeta {
     return {
       gameId,
       joinCode,
       createdAt: new Date().toISOString(),
       players,
-      mapSize
+       mapSize,
+      nationCount
     };
   }
 
@@ -71,10 +73,11 @@ export class GameStateManager {
     joinCode: string,
     players: PlayerId[],
     mapSize: MapSize,
-    biomes: Uint8Array
+    biomes: Uint8Array,
+    nationCount: number
   ): Game {
     return {
-      meta: this.createInitialGameMeta(gameId, joinCode, players, mapSize),
+      meta: this.createInitialGameMeta(gameId, joinCode, players, mapSize, nationCount),
       map: this.createGameMap(biomes),
       state: this.createInitialGameState(players)
     };
@@ -264,7 +267,7 @@ export class GameStateManager {
     cellOffsets: Uint32Array,
     cellCount: number,
     biomes: Uint8Array,
-    deepOceanBiome: number = 0
+    deepOceanBiome: number = 7
   ): void {
     const players = Object.keys(gameState.playerCells);
 

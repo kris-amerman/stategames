@@ -33,8 +33,8 @@ test('client and server integrate on game creation', async () => {
   expect(preflight.headers.get('Access-Control-Allow-Headers') || '').toContain('X-Nation-Count');
 
   // Create game request with biome data
-  const cellCount = 833;
-  const biomes = new Uint8Array(cellCount).fill(1);
+  const cellCount = 4;
+  const biomes = new Uint8Array([1,1,1,7]);
   const res = await fetch(`http://localhost:${PORT}/api/games/create`, {
     method: 'POST',
     headers: {
@@ -48,8 +48,11 @@ test('client and server integrate on game creation', async () => {
   expect(res.status).toBe(201);
   const body = await res.text();
   const data = JSON.parse(body);
-  expect(data.players.length).toBe(2);
+  expect(data.players.length).toBe(1);
+  expect(data.game.meta.nationCount).toBe(2);
+  expect(data.game.state.cellOwnership['3']).toBeUndefined();
   expect(Object.keys(data.game.state.cellOwnership).length).toBeGreaterThan(0);
+  expect(data.game.state.status).toBe('waiting');
 
   server.stop();
 });

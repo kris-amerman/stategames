@@ -27,6 +27,7 @@ export let currentGameTerrain: Uint8Array | null = null;
 export let currentGameId: string | null = null;
 export let currentPlayerName: string | null = null;
 export let isGameCreator = false;
+export let requiredPlayers = 2;
 
 export function initGame(gameCanvas: HTMLCanvasElement, context: CanvasRenderingContext2D): void {
   canvas = gameCanvas;
@@ -115,6 +116,7 @@ export function dispatchGameAction(actionType: string, actionData: any) {
 export function processGameData(gameData: any): void {
   try {
     currentGameId = gameData.meta.gameId;
+    requiredPlayers = gameData.meta.nationCount ?? gameData.meta.players.length;
     currentTerritoryData = gameData.state.cellOwnership || {};
     isMyTurn = gameData.state.currentPlayer === currentPlayerName;
     updateTurnIndicator(gameData.state.currentPlayer, gameData.state.turnNumber);
