@@ -203,3 +203,46 @@ test('LP demand components tracked separately', () => {
   expect(result.lp.demand_international).toBeCloseTo(2 * GATEWAY_PARAMS.port.costPerHop);
 });
 
+// 11. LP surplus leaves ratio at 1 without scaling
+test('LP surplus results in ratio 1 and no scaling', () => {
+  const state = createState();
+  // supply 20 from two logistics slots
+  state.cantons.C1.sectors.logistics = { capacity: 2, funded: 2, idle: 0 };
+  // operating demand 5
+  state.cantons.C1.sectors.agriculture = { capacity: 10, funded: 10, idle: 0 };
+  const result = LogisticsManager.run(state, {
+    networks: { C1: { rail: makeNetwork(true, 1, 5) } },
+    domesticPlans: { C1: { imports_by_good: { food: 5 }, exports_by_good: {} } },
+    internationalPlans: {},
+  });
+  // supply > demand so ratio clamps to 1
+  expect(result.lp.lp_ratio).toBe(1);
+  // planned values should match after ratio
+  expect(result.operatingAllocations.agriculture.after_lp).toBeCloseTo(
+    result.operatingAllocations.agriculture.planned,
+  );
+  const alloc = result.domesticAllocations.C1.rail!;
+  expect(alloc.units_after_lp_ratio).toBeCloseTo(alloc.units_planned);
+});
+
+// 12. LP exact balance retains full activity
+test('LP ratio is 1 when supply equals demand', () => {
+  const state = createState();
+  // supply 10 from one logistics slot
+  state.cantons.C1.sectors.logistics = { capacity: 1, funded: 1, idle: 0 };
+  // agriculture funded to consume exactly 10 LP
+  state.cantons.C1.sectors.agriculture = { capacity: 20, funded: 20, idle: 0 };
+  const result = LogisticsManager.run(state, {
+    networks: {},
+    domesticPlans: {},
+    internationalPlans: {},
+  });
+  expect(result.lp.lp_ratio).toBe(1);
+  expect(result.operatingAllocations.agriculture.after_lp).toBeCloseTo(10);
+  const totalDemand =
+    result.lp.demand_operating +
+    result.lp.demand_domestic +
+    result.lp.demand_international;
+  expect(totalDemand).toBeCloseTo(result.lp.supply);
+});
+
