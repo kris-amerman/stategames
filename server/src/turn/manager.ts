@@ -32,6 +32,7 @@ export class TurnManager {
     // Step 3: move the upcoming plan into the active slot and initialize a new planning container.
     gameState.currentPlan = gameState.nextPlan ?? null;
     gameState.nextPlan = this.createEmptyPlan();
+    gameState.planSubmittedBy = null;
     gameState.phase = 'planning';
     gameState.turnNumber += 1;
   }

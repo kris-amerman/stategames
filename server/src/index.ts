@@ -1,5 +1,5 @@
 // server/src/index.ts
-import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame } from "./routes";
+import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame, getGameState, submitPlan, advanceTurn, getTurnSummary, leaveGame, endGame } from "./routes";
 import { setupWebSocketHandler } from "./websocket";
 import { ENDPOINTS, PORT } from "./constants";
 import { encode } from "./serialization";
@@ -38,6 +38,30 @@ const server = Bun.serve({
 
     "/api/games/:gameId/load": {
       GET: async req => loadGame(req.params.gameId)
+    },
+
+    "/api/games/:gameId/state": {
+      GET: async req => getGameState(req.params.gameId)
+    },
+
+    "/api/games/:gameId/plan": {
+      POST: async req => submitPlan(req.params.gameId, req)
+    },
+
+    "/api/games/:gameId/advance": {
+      POST: async req => advanceTurn(req.params.gameId, req)
+    },
+
+    "/api/games/:gameId/summary": {
+      GET: async req => getTurnSummary(req.params.gameId)
+    },
+
+    "/api/games/:gameId/leave": {
+      POST: async req => leaveGame(req.params.gameId, req)
+    },
+
+    "/api/games/:gameId/end": {
+      POST: async req => endGame(req.params.gameId)
     }
   },
 

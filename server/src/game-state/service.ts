@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
 import { encode, decode } from '../serialization';
 import { GameStateManager } from './manager';
-import type { Game, GameState, GameMeta, GameMap, MapSize } from '../types';
+import type { Game, GameState, GameMeta, GameMap, MapSize, PlayerId } from '../types';
 
 // In-memory game store (replace with database later)
 const games = new Map<string, Game>();
@@ -258,6 +258,49 @@ export class GameService {
       console.error(`Failed to assign starting territories for game ${gameId}:`, error);
       throw new Error('Failed to initialize game territories');
     }
+  }
+
+  static async leaveGame(gameId: string, playerId: PlayerId): Promise<Game | null> {
+    const game = await this.getGame(gameId);
+    if (!game) return null;
+
+    const idx = game.meta.players.indexOf(playerId);
+    if (idx === -1) throw new Error('Player not in game');
+
+    // Remove from meta players
+    game.meta.players.splice(idx, 1);
+
+    // Clean up game state collections
+    delete game.state.playerCells[playerId];
+    delete game.state.playerEntities[playerId];
+
+    // Remove ownership and entities
+    for (const [cell, owner] of Object.entries(game.state.cellOwnership)) {
+      if (owner === playerId) {
+        delete game.state.cellOwnership[cell as any];
+        delete game.state.cellEntities[cell as any];
+      }
+    }
+    for (const [id, ent] of Object.entries(game.state.entities)) {
+      if (ent.owner === playerId) {
+        delete game.state.entities[id as any];
+      }
+    }
+
+    if (game.state.currentPlayer === playerId) {
+      game.state.currentPlayer = game.meta.players[0] ?? '';
+    }
+
+    await this.saveGame(game);
+    return game;
+  }
+
+  static async endGame(gameId: string): Promise<Game | null> {
+    const game = await this.getGame(gameId);
+    if (!game) return null;
+    GameStateManager.finishGame(game.state);
+    await this.saveGame(game);
+    return game;
   }
 
   // === TERRAIN DATA (LEGACY METHODS - DEPRECATED) ===
