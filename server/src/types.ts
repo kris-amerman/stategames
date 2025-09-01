@@ -298,6 +298,14 @@ export interface FinanceState {
   defaulted: boolean;
   /** Debt stress tier flags */
   debtStress: boolean[];
+  /** Summary of the last finance step */
+  summary: {
+    revenues: number;
+    expenditures: number;
+    netBorrowing: number;
+    interest: number;
+    defaulted: boolean;
+  };
 }
 
 export interface TradeState {
