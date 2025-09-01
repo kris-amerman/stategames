@@ -75,6 +75,14 @@ test('labor mix shift splits 2:1 and caps/floors classes', () => {
   expect(capped.skilled).toBe(90); // capped
 });
 
+test('labor mix shift caps general even without shift', () => {
+  const base: LaborPool = { general: 95, skilled: 3, specialist: 2 };
+  const shifted = WelfareManager.applyLaborMixShift(base, 0);
+  expect(shifted.general).toBe(90);
+  expect(shifted.skilled).toBe(3);
+  expect(shifted.specialist).toBe(2);
+});
+
 // --- Healthcare effects ---
 
 test('healthcare tier tables match specification', () => {
