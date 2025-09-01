@@ -9,6 +9,8 @@ import type { GameState, Game, GameStateUpdate } from "./types";
 // WebSocket state management
 export const gameRooms = new Map<string, Set<ServerWebSocket<any>>>();
 export const socketToGame = new Map<ServerWebSocket<any>, { gameId: string, playerName: string }>();
+// Track a monotonically increasing sequence number per game for ordering
+export const gameSequences = new Map<string, number>();
 
 /**
  * Server definition with integrated WebSocket support
@@ -154,6 +156,12 @@ const server = Bun.serve({
 });
 
 // Helper functions for WebSocket broadcasting
+function nextSeq(gameId: string): number {
+  const n = (gameSequences.get(gameId) || 0) + 1;
+  gameSequences.set(gameId, n);
+  return n;
+}
+
 export function broadcastToRoom(gameId: string, messageType: string, data: any) {
   const room = gameRooms.get(gameId);
   if (room) {
@@ -174,25 +182,55 @@ export function broadcastPlayerJoined(gameId: string, players: string[], newPlay
   broadcastToRoom(gameId, 'player_joined', {
     gameId,
     players,
-    newPlayer
+    newPlayer,
+    seq: nextSeq(gameId)
   });
 }
 
 export function broadcastGameStarted(gameId: string, game: Game) {
   console.log(`Broadcasting game_started for game ${gameId}`);
-  broadcastToRoom(gameId, 'full_game', game);
+  broadcastToRoom(gameId, 'full_game', { game, gameId, seq: nextSeq(gameId) });
 }
 
 export function broadcastGameStateUpdate(gameId: string, gameState: GameState, lastAction?: any) {
   console.log(`Broadcasting game state update for game ${gameId}`);
 
-  const update: GameStateUpdate = {
+  const update: GameStateUpdate & { seq: number } = {
     gameId,
     state: gameState,
-    lastAction
+    lastAction,
+    seq: nextSeq(gameId)
   };
 
   broadcastToRoom(gameId, 'game_update', update);
+}
+
+import type { StateChangeEvent } from './events';
+
+export function broadcastStateChanges(gameId: string, events: StateChangeEvent[]) {
+  for (const ev of events) {
+    broadcastToRoom(gameId, 'state_change', { ...ev, gameId, seq: nextSeq(gameId) });
+  }
+}
+
+export function broadcastPlanSubmitted(gameId: string, playerId: string) {
+  broadcastToRoom(gameId, 'plan_submitted', { gameId, playerId, seq: nextSeq(gameId) });
+}
+
+export function broadcastTurnCompleted(
+  gameId: string,
+  gameState: GameState,
+  nextPlayer: string,
+  events: StateChangeEvent[]
+) {
+  broadcastToRoom(gameId, 'turn_complete', {
+    gameId,
+    turnNumber: gameState.turnNumber,
+    nextPlayer,
+    summary: gameState.turnSummary,
+    events,
+    seq: nextSeq(gameId)
+  });
 }
 
 console.log(`Server running`);
@@ -201,3 +239,4 @@ console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('HTTP and WebSocket server listening on:', PORT);
 console.log("\nAvailable endpoints:");
 ENDPOINTS.forEach((e) => console.log(`    ${e}`));
+export default server;

@@ -3,6 +3,7 @@ import { CORS_HEADERS } from "../constants";
 import { GameService } from "../game-state";
 import { TurnManager } from "../turn";
 import type { TurnPlan } from "../types";
+import { broadcastPlanSubmitted } from "../index";
 
 function validatePlan(plan: TurnPlan, gameState: any): string | null {
   // Budgets validation
@@ -86,6 +87,7 @@ export async function submitPlan(gameId: string, req: Request) {
     TurnManager.submitPlan(gameState, plan);
     gameState.planSubmittedBy = playerId;
     await GameService.saveGameState(gameState, gameId);
+    broadcastPlanSubmitted(gameId, playerId);
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "Content-Type": "application/json", ...CORS_HEADERS },

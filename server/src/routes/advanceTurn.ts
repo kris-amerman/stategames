@@ -2,6 +2,8 @@
 import { CORS_HEADERS } from "../constants";
 import { GameService } from "../game-state";
 import { TurnManager } from "../turn";
+import { broadcastTurnCompleted, broadcastStateChanges } from "../index";
+import { collectStateChanges } from "../events";
 
 export async function advanceTurn(gameId: string, req: Request) {
   try {
@@ -31,10 +33,14 @@ export async function advanceTurn(gameId: string, req: Request) {
     const currentIdx = players.indexOf(gameState.currentPlayer);
     const nextPlayer = players[(currentIdx + 1) % players.length] || gameState.currentPlayer;
 
+    const prevEconomy = JSON.parse(JSON.stringify(gameState.economy));
     TurnManager.advanceTurn(gameState);
     gameState.currentPlayer = nextPlayer;
+    const events = collectStateChanges(prevEconomy, gameState.economy);
 
     await GameService.saveGameState(gameState, gameId);
+    broadcastStateChanges(gameId, events);
+    broadcastTurnCompleted(gameId, gameState, nextPlayer, events);
     return new Response(JSON.stringify({ ok: true, nextPlayer }), {
       status: 200,
       headers: { "Content-Type": "application/json", ...CORS_HEADERS },

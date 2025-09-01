@@ -10,6 +10,7 @@ import { FinanceManager } from '../finance/manager';
 import { WelfareManager } from '../welfare/manager';
 import { TradeManager, type TradeResult } from '../trade/manager';
 import { SECTOR_DEFINITIONS } from '../economy/manager';
+import { InfrastructureManager } from '../infrastructure/manager';
 
 /**
  * Orchestrates the two-phase turn resolution with a one-turn lag.
@@ -93,6 +94,7 @@ export class TurnManager {
     TradeManager.applyPending(gameState.economy);
     DevelopmentManager.applyPending(gameState.economy);
     WelfareManager.applyPending(gameState.economy);
+    InfrastructureManager.progressTurn(gameState.economy);
   }
 
   private static budgetGate(_gameState: GameState): void {
