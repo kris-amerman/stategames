@@ -14,6 +14,12 @@ export const ENDPOINTS = [
   "POST /api/games/:joinCode/join",
   "POST /api/games/:gameId/start",
   "GET /api/games/:gameId/load",
+  "GET /api/games/:gameId/state",
+  "POST /api/games/:gameId/plan",
+  "POST /api/games/:gameId/advance",
+  "GET /api/games/:gameId/summary",
+  "POST /api/games/:gameId/leave",
+  "POST /api/games/:gameId/end",
   `WebSocket :${PORT}/ws`,
 ];
 

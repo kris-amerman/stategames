@@ -40,6 +40,8 @@ export class GameStateManager {
       phase: "planning",
       currentPlan: null,
       nextPlan: null,
+      planSubmittedBy: null,
+      turnSummary: null,
 
       // Initialize empty ownership maps
       cellOwnership: {},

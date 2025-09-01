@@ -423,6 +423,12 @@ export interface GameState {
   /** Plan being prepared for the next turn */
   nextPlan: TurnPlan | null;
 
+  /** Player who submitted the next plan, if any */
+  planSubmittedBy?: PlayerId | null;
+
+  /** Summary generated when the last turn executed */
+  turnSummary?: TurnSummary | null;
+
   /**
    * Maps each cell to its current owner.
    * Key: CellId, Value: PlayerId who owns that cell
