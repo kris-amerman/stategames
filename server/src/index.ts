@@ -1,5 +1,5 @@
 // server/src/index.ts
-import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame, getGameState, submitPlan, advanceTurn, getTurnSummary, leaveGame, endGame } from "./routes";
+import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame, getGameState, submitPlan, advanceTurn, getTurnSummary, leaveGame, endGame, getEconomy, getBudget, getLabor, getLogistics, getEnergy, getSuitability, getDevelopment, getInfrastructure, getFinance, getTrade, getWelfare } from "./routes";
 import { setupWebSocketHandler } from "./websocket";
 import { ENDPOINTS, PORT } from "./constants";
 import { encode } from "./serialization";
@@ -16,14 +16,14 @@ export const socketToGame = new Map<ServerWebSocket<any>, { gameId: string, play
 const server = Bun.serve({
   port: PORT,
   hostname: "0.0.0.0",
-  
+
   routes: {
     "/": () => root(),
 
     "/api/mesh/:sizeParam": {
       GET: async req => getMesh(req.params.sizeParam)
     },
-    
+
     "/api/games/create": {
       POST: async req => createGame(req)
     },
@@ -42,6 +42,50 @@ const server = Bun.serve({
 
     "/api/games/:gameId/state": {
       GET: async req => getGameState(req.params.gameId)
+    },
+
+    "/api/games/:gameId/economy": {
+      GET: async req => getEconomy(req.params.gameId)
+    },
+
+    "/api/games/:gameId/budget": {
+      GET: async req => getBudget(req.params.gameId)
+    },
+
+    "/api/games/:gameId/labor": {
+      GET: async req => getLabor(req.params.gameId)
+    },
+
+    "/api/games/:gameId/logistics": {
+      GET: async req => getLogistics(req.params.gameId)
+    },
+
+    "/api/games/:gameId/energy": {
+      GET: async req => getEnergy(req.params.gameId)
+    },
+
+    "/api/games/:gameId/suitability": {
+      GET: async req => getSuitability(req.params.gameId)
+    },
+
+    "/api/games/:gameId/development": {
+      GET: async req => getDevelopment(req.params.gameId)
+    },
+
+    "/api/games/:gameId/infrastructure": {
+      GET: async req => getInfrastructure(req.params.gameId)
+    },
+
+    "/api/games/:gameId/finance": {
+      GET: async req => getFinance(req.params.gameId)
+    },
+
+    "/api/games/:gameId/trade": {
+      GET: async req => getTrade(req.params.gameId)
+    },
+
+    "/api/games/:gameId/welfare": {
+      GET: async req => getWelfare(req.params.gameId)
     },
 
     "/api/games/:gameId/plan": {
@@ -73,7 +117,7 @@ const server = Bun.serve({
     },
     close(ws, code, message) {
       console.log(`WebSocket client disconnected: ${ws.remoteAddress}`);
-      
+
       // Clean up tracking
       const socketInfo = socketToGame.get(ws);
       if (socketInfo) {
@@ -93,10 +137,10 @@ const server = Bun.serve({
       console.log('WebSocket ready to receive more data');
     }
   },
-  
+
   async fetch(req, server) {
     const url = new URL(req.url);
-    
+
     // Handle WebSocket upgrade for /ws path
     if (url.pathname === "/ws") {
       if (server.upgrade(req)) {
@@ -104,7 +148,7 @@ const server = Bun.serve({
       }
       return new Response("WebSocket upgrade failed", { status: 400 });
     }
-    
+
     return fallback(req);
   },
 });
@@ -141,13 +185,13 @@ export function broadcastGameStarted(gameId: string, game: Game) {
 
 export function broadcastGameStateUpdate(gameId: string, gameState: GameState, lastAction?: any) {
   console.log(`Broadcasting game state update for game ${gameId}`);
-  
+
   const update: GameStateUpdate = {
     gameId,
     state: gameState,
     lastAction
   };
-  
+
   broadcastToRoom(gameId, 'game_update', update);
 }
 
