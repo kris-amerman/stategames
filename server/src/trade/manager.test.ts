@@ -174,3 +174,42 @@ test('trade outcomes deterministic for identical inputs', () => {
   expect(state1.trade).toEqual(state2.trade);
 });
 
+// 7. Zero FX prevents imports and tariffs
+test('no FX means no imports, tariffs, or freight', () => {
+  const state = createState();
+  state.resources.fx = 0;
+  const result = TradeManager.run(state, {
+    capitalUL: 5,
+    lastFinanceOutput: 0,
+    orders: {
+      imports: [
+        { good: 'food', quantity: 10, price: 2, tariff: 0.3, gateway: 'port' },
+      ],
+      exports: [],
+    },
+  });
+  expect(result.fx_spent).toBe(0);
+  expect(result.tariff_gold).toBe(0);
+  expect(result.freight_fx).toBe(0);
+  expect(state.trade.pendingImports.food).toBe(0);
+});
+
+// 8. Gateway hops scale LP demand for international shipping
+test('international hops multiply LP demand', () => {
+  const state = createState();
+  state.resources.fx = 1000;
+  const result = TradeManager.run(state, {
+    capitalUL: 5,
+    lastFinanceOutput: 0,
+    gatewayHops: { rail: 3 },
+    orders: {
+      imports: [
+        { good: 'materials', quantity: 10, price: 1, tariff: 0, gateway: 'rail' },
+      ],
+      exports: [],
+    },
+  });
+  const expected = 10 * GATEWAY_PARAMS.rail.costPerHop * 3;
+  expect(result.logistics.lp.demand_international).toBeCloseTo(expected);
+});
+
