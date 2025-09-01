@@ -54,5 +54,12 @@ test('client and server integrate on game creation', async () => {
   expect(Object.keys(data.game.state.cellOwnership).length).toBeGreaterThan(0);
   expect(data.game.state.status).toBe('waiting');
 
+  // Capital cell for player1 should start with airport and rail hub
+  const playerId = data.players[0];
+  const capital = data.game.state.playerCells[playerId][0];
+  const cantonId = String(capital);
+  expect(data.game.state.economy.infrastructure.airports[cantonId]).toBeDefined();
+  expect(data.game.state.economy.infrastructure.railHubs[cantonId]).toBeDefined();
+
   server.stop();
 });
