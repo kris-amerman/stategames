@@ -1,7 +1,7 @@
 // server/src/routes/createGame.ts
 import { CORS_HEADERS, MAP_SIZES, MAX_BIOME_ID } from "../constants";
 import { GameService } from "../game-state";
-import { decode } from '@msgpack/msgpack';
+import { encode } from "../serialization";
 import type { MapSize } from "../types";
 
 /**
@@ -19,11 +19,22 @@ export async function createGame(req: Request) {
     // Get cell count and map size from headers
     const cellCount = parseInt(req.headers.get("x-cell-count") || "0");
     const mapSizeHeader = (req.headers.get("x-map-size") as MapSize) || "xl";
+    const nationCount = parseInt(req.headers.get("x-nation-count") || "0");
     const contentType = req.headers.get("content-type") || "application/octet-stream";
 
     // Validate inputs
     if (!cellCount || cellCount <= 0) {
       return new Response(JSON.stringify({ error: "Invalid cell count" }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
+    if (!nationCount || nationCount <= 0) {
+      return new Response(JSON.stringify({ error: "Invalid nation count" }), {
         status: 400,
         headers: {
           "Content-Type": "application/json",
@@ -148,13 +159,13 @@ export async function createGame(req: Request) {
     const gameId = GameService.generateGameId();
     const joinCode = GameService.generateJoinCode();
 
-    // Create game
+    // Create game and generate world
     const game = await GameService.createGame(
       gameId,
       joinCode,
       mapSizeHeader,
       cellCount,
-      "player1", // TODO: change this to player account id/username
+      nationCount,
       biomes
     );
 
@@ -162,19 +173,20 @@ export async function createGame(req: Request) {
       `Created game ${gameId} with join code ${joinCode} (${mapSizeHeader}, ${cellCount} cells, ${contentType})`
     );
 
-    return new Response(
-      JSON.stringify({
-        gameId: game.meta.gameId,
-        joinCode: game.meta.joinCode,
-      }),
-      {
-        status: 201,
-        headers: {
-          "Content-Type": "application/json",
-          ...CORS_HEADERS,
-        },
-      }
-    );
+    const body = encode({
+      gameId: game.meta.gameId,
+      joinCode: game.meta.joinCode,
+      players: game.meta.players,
+      game,
+    });
+
+    return new Response(body, {
+      status: 201,
+      headers: {
+        "Content-Type": "application/json",
+        ...CORS_HEADERS,
+      },
+    });
   } catch (error) {
     console.error("Game creation error:", error);
     return new Response(JSON.stringify({ error: "Internal server error" }), {

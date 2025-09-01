@@ -21,9 +21,7 @@ async function setupGame() {
   const biomes = new Uint8Array(cellCount).fill(1);
   const gameId = 'g' + Math.random().toString(36).slice(2,8);
   const joinCode = 'J' + Math.random().toString(36).slice(2,7).toUpperCase();
-  await GameService.createGame(gameId, joinCode, 'small', cellCount, 'player1', biomes);
-  await GameService.joinGame(joinCode); // adds player2
-  await GameService.startGame(gameId);
+  await GameService.createGame(gameId, joinCode, 'small', cellCount, 2, biomes);
   return { gameId };
 }
 

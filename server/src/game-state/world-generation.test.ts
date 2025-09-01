@@ -20,12 +20,9 @@ test('world generation assigns contiguous balanced territories with infrastructu
 
   const gameId = 'g' + Math.random().toString(36).slice(2,8);
   const joinCode = 'J' + Math.random().toString(36).slice(2,7).toUpperCase();
-  await GameService.createGame(gameId, joinCode, 'small', cellCount, 'player1', biomes);
-  await GameService.joinGame(joinCode); // player2
-
   const originalRandom = Math.random;
   Math.random = seededRandom(8);
-  await GameService.startGame(gameId);
+  await GameService.createGame(gameId, joinCode, 'small', cellCount, 2, biomes);
   Math.random = originalRandom;
 
   const state = await GameService.getGameState(gameId);

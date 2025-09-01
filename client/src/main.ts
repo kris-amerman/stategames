@@ -69,7 +69,7 @@ function toggleGameButtons(visible: boolean) {
   joinButton.style.display = visible ? "block" : "none";
 }
 
-// Creator's game state UI (has Start Game button)
+// Creator's game state UI (world generated immediately)
 function showCreatorGameUI(gameData: any) {
   hideAllGameUI();
   
@@ -106,37 +106,27 @@ function showCreatorGameUI(gameData: any) {
     </div>
     
     <div style="margin-bottom: 15px;">
-      <strong>Status:</strong> 
-      <span id="gameStatus" style="color: #FFA500;">Waiting for players...</span>
+      <strong>Status:</strong>
+      <span id="gameStatus" style="color: #4CAF50;">Game ready</span>
     </div>
-    
+
     <div style="margin-bottom: 15px;">
       <strong>Players:</strong>
       <ul id="playersList" style="
-        margin: 5px 0 0 0; 
-        padding-left: 20px; 
+        margin: 5px 0 0 0;
+        padding-left: 20px;
         color: #ccc;
       ">
-        <li>player1 (you)</li>
+        ${gameData.players
+          .map((p: string, i: number) => `<li>${p}${i === 0 ? ' (you)' : ''}</li>`)
+          .join('')}
       </ul>
     </div>
-    
-    <button id="startGame" style="
-      width: 100%;
-      background: #666; 
-      color: white; 
-      border: none; 
-      padding: 10px; 
-      border-radius: 4px; 
-      cursor: pointer;
-      font-size: 14px;
-    " disabled>Start Game (Need more players)</button>
   `;
-  
+
   // Add event listeners
   setupCopyJoinCodeButton(gameData.joinCode);
-  setupStartGameButton();
-  
+
   // Add WebSocket to room as creator
   joinGameRoom(gameData.gameId, 'player1', true);
   
@@ -547,12 +537,16 @@ document.getElementById("createGame")!.addEventListener("click", async () => {
   setGameButtonsState(false, "Creating...", "Join Game");
   
   try {
+    const nationCountInput = document.getElementById('nationCount') as HTMLInputElement;
+    const nationCount = parseInt(nationCountInput.value) || 1;
+
     const response = await fetch(`${SERVER_BASE_URL}/api/games/create`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/octet-stream',
         'X-Cell-Count': currentCellCount.toString(),
         'X-Map-Size': currentMapSize,
+        'X-Nation-Count': nationCount.toString(),
       },
       body: currentCellBiomes
     });
@@ -564,9 +558,10 @@ document.getElementById("createGame")!.addEventListener("click", async () => {
     
     const gameData = await response.json();
     console.log('Game created:', gameData);
-    
-    // Show creator's game state UI
+
+    // Show creator's game state UI and render map
     showCreatorGameUI(gameData);
+    handleGameStarted(gameData.game);
     
   } catch (error: any) {
     console.error('Game creation failed:', error);

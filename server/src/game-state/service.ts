@@ -78,26 +78,49 @@ export class GameService {
     joinCode: string,
     mapSize: MapSize,
     cellCount: number,
-    creatorName: string,
+    nationCount: number,
     biomes: Uint8Array
   ): Promise<Game> {
+    const players = Array.from({ length: nationCount }, (_, i) => `player${i + 1}`);
+
     const game = GameStateManager.createCompleteGame(
       gameId,
       joinCode,
-      [creatorName], // Start with just the creator
+      players,
       mapSize,
       biomes
     );
 
+    // Import mesh service to generate starting territories
+    const { meshService } = await import('../mesh-service');
+    const meshData = await meshService.getMeshData(mapSize);
+
+    GameStateManager.startGame(game.state);
+    GameStateManager.assignStartingTerritories(
+      game.state,
+      meshData.cellNeighbors,
+      meshData.cellOffsets,
+      meshData.cellCount,
+      biomes
+    );
+
+    GameStateManager.initializeNationInfrastructure(
+      game.state,
+      players,
+      biomes,
+      meshData.cellNeighbors,
+      meshData.cellOffsets
+    );
+
     // Store in memory
     games.set(gameId, game);
-    
+
     // Persist to disk
     await this.saveGame(game);
     await this.saveGameMap(gameId, game.map);
-    
+
     console.log(`Created game ${gameId} with join code ${joinCode} (${mapSize}, ${cellCount} cells)`);
-    
+
     return game;
   }
 
