@@ -11,6 +11,9 @@ cd server
 bun test
 ```
 
+This executes unit tests alongside the multi-turn integration scenarios
+defined in `src/integration/scenarios.test.ts` covering 11 gameplay scenarios.
+
 ### Coverage
 
 Generate a coverage report:
