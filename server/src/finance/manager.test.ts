@@ -22,16 +22,17 @@ function createEconomy(): EconomyState {
 });
 
 // 2. Auto-borrowing
-test('auto-borrowing covers treasury shortfalls', () => {
+ test('auto-borrowing covers treasury shortfalls exactly', () => {
   const eco = createEconomy();
   eco.finance.interestRate = 0;
   FinanceManager.run(eco, { revenues: 0, expenditures: 50 });
   expect(eco.resources.gold).toBe(0);
   expect(eco.finance.debt).toBe(50);
+  expect(eco.finance.summary.netBorrowing).toBe(50);
 });
 
-// 3. Debt accumulation
-test('borrowing increases debt immediately', () => {
+// 3. Borrowing increases debt immediately
+ test('borrowing increases existing debt', () => {
   const eco = createEconomy();
   eco.finance.interestRate = 0;
   eco.finance.debt = 20;
@@ -39,50 +40,67 @@ test('borrowing increases debt immediately', () => {
   expect(eco.finance.debt).toBe(50);
 });
 
-// 4. Interest application
- test('interest tick adds to debt and expenditures', () => {
+// 4. Interest application with secondary borrow
+ test('interest tick applies after borrowing and may trigger second borrow', () => {
   const eco = createEconomy();
-  eco.resources.gold = 20;
-  eco.finance.debt = 100;
-  FinanceManager.run(eco, { revenues: 0, expenditures: 0 });
-  expect(Math.round(eco.resources.gold)).toBe(10);
-  expect(Math.round(eco.finance.debt)).toBe(110);
+  eco.finance.interestRate = 0.1;
+  FinanceManager.run(eco, { revenues: 0, expenditures: 50 });
+  expect(eco.resources.gold).toBe(0);
+  // borrow 50, interest 5, borrow 5 more -> 60 total debt
+  expect(eco.finance.debt).toBe(60);
+  expect(eco.finance.summary.netBorrowing).toBe(55);
+  expect(eco.finance.summary.interest).toBeCloseTo(5);
 });
 
-// 5. Credit limit enforcement
-test('exceeding credit limit triggers default', () => {
+// 5. Exact credit limit hit
+ test('borrowing up to the credit limit does not default', () => {
   const eco = createEconomy();
   eco.finance.creditLimit = 100;
   eco.finance.debt = 90;
+  eco.finance.interestRate = 0;
+  FinanceManager.run(eco, { revenues: 0, expenditures: 10 });
+  expect(eco.finance.debt).toBe(100);
+  expect(eco.finance.defaulted).toBeFalse();
+});
+
+// 6. Credit limit exceeded
+ test('attempting to borrow beyond the credit limit defaults and leaves negative treasury', () => {
+  const eco = createEconomy();
+  eco.finance.creditLimit = 100;
+  eco.finance.debt = 90;
+  eco.finance.interestRate = 0;
   FinanceManager.run(eco, { revenues: 0, expenditures: 20 });
+  expect(eco.finance.debt).toBe(100);
+  expect(eco.resources.gold).toBe(-10);
   expect(eco.finance.defaulted).toBeTrue();
 });
 
-// Regression: interest shouldn't reduce debt when over the limit
-test('interest over credit limit accumulates and defaults', () => {
+// 7. Interest pushing over credit limit
+ test('interest that would exceed the credit limit caps debt and defaults', () => {
   const eco = createEconomy();
   eco.finance.creditLimit = 1000;
-  eco.finance.debt = 995; // interest will push this over the limit
+  eco.finance.debt = 995;
   eco.finance.interestRate = 0.05;
   FinanceManager.run(eco, { revenues: 0, expenditures: 0 });
-  expect(Math.round(eco.finance.debt)).toBe(1045);
+  expect(eco.finance.debt).toBe(1000);
+  expect(eco.resources.gold).toBeCloseTo(-49.75);
   expect(eco.finance.defaulted).toBeTrue();
 });
 
-// 6. Debt stress flags
+// 8. Debt stress flags
  test('debt stress tiers flag when thresholds crossed', () => {
   const eco = createEconomy();
   FinanceManager.run(eco, { revenues: 0, expenditures: 60 });
-  expect(eco.finance.debtStress[0]).toBeTrue();
+  expect(eco.finance.debtStress).toEqual([true, false, false]);
   eco.finance.debt = 90;
   FinanceManager.run(eco, { revenues: 0, expenditures: 20 });
-  expect(eco.finance.debtStress[1]).toBeTrue();
+  expect(eco.finance.debtStress).toEqual([true, true, false]);
   eco.finance.debt = 190;
   FinanceManager.run(eco, { revenues: 0, expenditures: 20 });
-  expect(eco.finance.debtStress[2]).toBeTrue();
+  expect(eco.finance.debtStress).toEqual([true, true, true]);
 });
 
-// 7. Sequencing with development
+// 9. Sequencing with development
  test('finance resolves before development', () => {
   const plan: TurnPlan = { budgets: { military: 0, welfare: 0, sectorOM: {} } };
   const gs: GameState = {
@@ -117,7 +135,7 @@ test('interest over credit limit accumulates and defaults', () => {
   devSpy.mockRestore();
 });
 
-// 8. Determinism
+// 10. Determinism
  test('finance resolution is deterministic', () => {
   const a = createEconomy();
   const b = createEconomy();
@@ -127,12 +145,15 @@ test('interest over credit limit accumulates and defaults', () => {
   expect(a.finance.debt).toBe(b.finance.debt);
   expect(a.finance.defaulted).toBe(b.finance.defaulted);
   expect(a.finance.debtStress).toEqual(b.finance.debtStress);
+  expect(a.finance.summary).toEqual(b.finance.summary);
 });
 
-// 9. Coverage scenarios
+// 11. Coverage surplus case
  test('handles surplus treasury without borrowing', () => {
   const eco = createEconomy();
   eco.resources.gold = 100;
   FinanceManager.run(eco, { revenues: 50, expenditures: 20 });
   expect(eco.finance.debt).toBe(0);
+  expect(eco.finance.summary.netBorrowing).toBe(0);
 });
+

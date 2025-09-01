@@ -99,6 +99,13 @@ export class EconomyManager {
         interestRate: 0.05,
         defaulted: false,
         debtStress: [],
+        summary: {
+          revenues: 0,
+          expenditures: 0,
+          netBorrowing: 0,
+          interest: 0,
+          defaulted: false,
+        },
       },
       welfare: {
         current: { education: 0, healthcare: 0, socialSupport: 0 },
