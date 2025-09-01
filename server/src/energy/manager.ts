@@ -5,6 +5,7 @@ import type {
   PlantRegistryEntry,
   PlantType,
   PlantAttributes,
+  ResourceType,
 } from '../types';
 
 // === Plant Definitions ===
@@ -50,10 +51,30 @@ export class EnergyManager {
   static run(state: EconomyState, ctx: EnergyContext = {}): void {
     const plants = state.energy.plants as PlantRegistryEntry[];
     let supply = 0;
+    const fuelUsed: Partial<Record<ResourceType, number>> = {};
+    let oAndMSpent = 0;
+
     for (const plant of plants) {
       if (plant.status !== 'active') continue;
       const attrs = PLANT_ATTRIBUTES[plant.type];
       if (!attrs) continue;
+
+      // Check O&M funding
+      if (state.resources.gold < attrs.oAndMCost) continue;
+
+      // Check and consume fuel if required
+      if (attrs.fuelType) {
+        const fuelNeeded = attrs.baseOutput;
+        if (state.resources[attrs.fuelType] < fuelNeeded) continue;
+        state.resources[attrs.fuelType] -= fuelNeeded;
+        fuelUsed[attrs.fuelType] = (fuelUsed[attrs.fuelType] ?? 0) + fuelNeeded;
+      }
+
+      // Deduct O&M cost
+      state.resources.gold -= attrs.oAndMCost;
+      oAndMSpent += attrs.oAndMCost;
+
+      // Generate supply (apply RCF if renewable)
       const output = attrs.baseOutput * (attrs.rcf ? RENEWABLE_CAPACITY_FACTOR : 1);
       supply += output;
     }
@@ -78,6 +99,8 @@ export class EnergyManager {
     state.energy.state = { supply, demand: totalDemand, ratio: ratioOverall };
     state.energy.demandBySector = demandBySector;
     state.energy.brownouts = [];
+    state.energy.fuelUsed = fuelUsed;
+    state.energy.oAndMSpent = oAndMSpent;
 
     if (totalDemand <= supply) return; // no brownouts
 

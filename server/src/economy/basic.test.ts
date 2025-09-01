@@ -106,6 +106,7 @@ test('utilization never exceeds capacity and produces base output', () => {
   const econ = gs.economy;
   EconomyManager.addCanton(econ, 'A');
   econ.resources.gold = 100;
+  econ.resources.coal = 100;
   econ.cantons.A.sectors.agriculture = { capacity: 3, funded: 0, idle: 0 } as any;
   econ.cantons.A.sectors.logistics = { capacity: 1, funded: 0, idle: 0 } as any;
   econ.energy.plants.push({ canton: 'A', type: 'coal', status: 'active' });

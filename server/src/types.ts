@@ -319,6 +319,8 @@ export interface EconomyState {
     demandBySector: Partial<Record<SectorType, number>>;
     brownouts: BrownoutRecord[];
     essentialsFirst: boolean;
+    fuelUsed: Partial<Record<ResourceType, number>>;
+    oAndMSpent: number;
   };
   /** Infrastructure registry */
   infrastructure: InfrastructureRegistry;
