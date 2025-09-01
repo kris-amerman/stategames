@@ -35,23 +35,43 @@ export class DevelopmentManager {
   static run(economy: EconomyState, inputs: Record<string, DevelopmentInput>): void {
     for (const [id, canton] of Object.entries(economy.cantons)) {
       const input = inputs[id] ?? { baseRoll: 0 };
+
+      // 1. Aggregate modifiers and apply cap
       const mods = input.modifiers?.reduce((a, b) => a + b, 0) ?? 0;
-      let gain = input.baseRoll + mods;
-      if (typeof input.cap === 'number') gain = Math.min(gain, input.cap);
+      let roll = input.baseRoll + mods;
+      if (typeof input.cap === 'number') roll = Math.min(roll, input.cap);
+
+      // Development gain cannot be negative
+      const gain = Math.max(0, roll);
+
+      // 2. Advance development meter
       let meter = canton.development + gain;
-      if (meter < 0) meter = 0;
       let nextUL = canton.urbanizationLevel;
+
+      // Clamp meter lower bound before evaluating changes
+      if (meter < 0) meter = 0;
+
+      // 3. Check decay flags first
       const flags = input.decayFlags;
-      const decays = flags && (flags.siege || flags.energy || flags.food || flags.catastrophe);
+      const decays = !!(
+        flags && (flags.siege || flags.energy || flags.food || flags.catastrophe)
+      );
       if (decays) {
         nextUL = Math.max(1, nextUL - 1);
-        meter = 0;
+        meter = 0; // losing a level resets progress
       } else if (meter >= 4 && nextUL < 12) {
-        meter -= 4;
+        // 4. UL increase with single-step rule and remainder carry
         nextUL += 1;
+        meter -= 4;
+        if (meter > 3) meter = 3; // prevent double-step
       }
+
+      // 5. Enforce meter bounds when UL cannot increase further
+      if (nextUL === 12 && meter > 4) meter = 4;
       if (meter > 4) meter = 4;
+
       canton.development = meter;
+      // Record UL for next turn (one-turn lag)
       canton.nextUrbanizationLevel = nextUL;
     }
   }
@@ -60,7 +80,12 @@ export class DevelopmentManager {
   static applyPending(economy: EconomyState): void {
     for (const canton of Object.values(economy.cantons)) {
       if (canton.nextUrbanizationLevel !== undefined) {
-        canton.urbanizationLevel = Math.max(1, Math.min(12, canton.nextUrbanizationLevel));
+        canton.urbanizationLevel = Math.max(
+          1,
+          Math.min(12, canton.nextUrbanizationLevel),
+        );
+        // Reset next level marker so changes only apply once
+        canton.nextUrbanizationLevel = canton.urbanizationLevel;
       }
     }
   }
