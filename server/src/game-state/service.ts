@@ -238,13 +238,13 @@ export class GameService {
       // Update game state to started
       GameStateManager.startGame(game.state);
       
-      // Assign starting territories using the mesh data
+      // Assign starting territories using the mesh and biome data
       GameStateManager.assignStartingTerritories(
         game.state,
         meshData.cellNeighbors,
         meshData.cellOffsets,
         meshData.cellCount,
-        15 // TODO: set cells per player in config or pass from client and figure out better divvy
+        game.map.biomes
       );
       
       // Persist updated state
