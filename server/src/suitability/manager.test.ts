@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { EconomyManager } from '../economy';
 import { SuitabilityManager } from './manager';
+import { DevelopmentManager } from '../development/manager';
 import type { EconomyState, GeographyModifiers, UrbanizationModifiers, SectorType } from '../types';
 
 function setupEconomy(): EconomyState {
@@ -123,4 +124,70 @@ test('cache stable until UL or geography changes', () => {
   state.cantons.c1.geography = { plains: 0.5, mountains: 0.5 };
   const r4 = SuitabilityManager.run(state).c1.agriculture;
   expect(r4).not.toBe(r3);
+});
+
+// 7. Geography shares normalization
+
+test('normalizes geography shares', () => {
+  const state = setupEconomy();
+  SuitabilityManager.setGeographyModifiers({ agriculture: { plains: 20, mountains: -10 } });
+  SuitabilityManager.setUrbanizationModifiers({ agriculture: { 1: 0 } });
+  state.cantons.c1.geography = { plains: 2, mountains: 1 }; // sums to 3
+  const res = SuitabilityManager.run(state).c1.agriculture;
+  // normalized shares -> 2/3*20 + 1/3*-10 = 10
+  expect(res.percent).toBe(10);
+  expect(res.multiplier).toBeCloseTo(1.1);
+});
+
+// 8. Sensitivity to higher modifier cell
+
+test('increasing high-modifier cell share does not decrease result', () => {
+  const state = setupEconomy();
+  SuitabilityManager.setGeographyModifiers({ agriculture: { plains: 20, mountains: -10 } });
+  SuitabilityManager.setUrbanizationModifiers({ agriculture: { 1: 0 } });
+  state.cantons.c1.geography = { plains: 0.5, mountains: 0.5 };
+  const base = SuitabilityManager.run(state).c1.agriculture.percent;
+  state.cantons.c1.geography = { plains: 0.6, mountains: 0.4 };
+  const higher = SuitabilityManager.run(state).c1.agriculture.percent;
+  expect(higher).toBeGreaterThanOrEqual(base);
+});
+
+// 9. Exact zero percent
+
+test('handles exact zero percent', () => {
+  const state = setupEconomy();
+  SuitabilityManager.setGeographyModifiers({ agriculture: { plains: 10, mountains: -10 } });
+  SuitabilityManager.setUrbanizationModifiers({});
+  state.cantons.c1.geography = { plains: 0.5, mountains: 0.5 };
+  const res = SuitabilityManager.run(state).c1.agriculture;
+  expect(res.percent).toBe(0);
+  expect(res.multiplier).toBe(1);
+});
+
+// 10. Determinism for identical inputs
+
+test('deterministic results with identical inputs', () => {
+  const state = setupEconomy();
+  SuitabilityManager.setGeographyModifiers({ agriculture: { plains: 5 } });
+  SuitabilityManager.setUrbanizationModifiers({ agriculture: { 1: 0 } });
+  const r1 = SuitabilityManager.run(state).c1.agriculture;
+  const r2 = SuitabilityManager.run(state).c1.agriculture;
+  expect(r2.percent).toBe(r1.percent);
+  expect(r2.multiplier).toBe(r1.multiplier);
+});
+
+// 11. UL changes apply next turn
+
+test('urbanization level changes from development apply next turn', () => {
+  const state = setupEconomy();
+  SuitabilityManager.setGeographyModifiers({ agriculture: { plains: 0 } });
+  SuitabilityManager.setUrbanizationModifiers({ agriculture: { 1: 0, 2: 5 } });
+  const first = SuitabilityManager.run(state).c1.agriculture.percent;
+  // Raise UL via development; nextUL is set but applyPending not yet called
+  DevelopmentManager.run(state, { c1: { baseRoll: 4 } });
+  const sameTurn = SuitabilityManager.run(state).c1.agriculture.percent;
+  expect(sameTurn).toBe(first);
+  DevelopmentManager.applyPending(state);
+  const nextTurn = SuitabilityManager.run(state).c1.agriculture.percent;
+  expect(nextTurn).toBe(first + 5);
 });
