@@ -1,5 +1,6 @@
 // server/src/constants.ts
 import type { MapSize } from './types';
+import { fileURLToPath } from 'url';
 
 export const MAP_SIZES: MapSize[] = ["small", "medium", "large", "xl"];
 
@@ -51,4 +52,4 @@ export const MESH_CONFIG = {
   },
 };
 
-export const MESH_DATA_DIR = "meshes";
+export const MESH_DATA_DIR = fileURLToPath(new URL('../meshes', import.meta.url));
