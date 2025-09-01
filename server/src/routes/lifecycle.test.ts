@@ -10,7 +10,8 @@ import { getGameState } from './getGameState';
 
 async function setupGame() {
   const cellCount = 833;
-  const biomes = new Uint8Array(cellCount);
+  // Provide land biomes so world generation assigns territory
+  const biomes = new Uint8Array(cellCount).fill(1);
   const gameId = 'g' + Math.random().toString(36).slice(2,8);
   const joinCode = 'J' + Math.random().toString(36).slice(2,7).toUpperCase();
   await GameService.createGame(gameId, joinCode, 'small', cellCount, 'player1', biomes);

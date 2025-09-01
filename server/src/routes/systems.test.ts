@@ -17,7 +17,8 @@ import { getWelfare } from './getWelfare';
 
 async function setupGame() {
   const cellCount = 833;
-  const biomes = new Uint8Array(cellCount);
+  // Populate biomes with land so all cells are claimable
+  const biomes = new Uint8Array(cellCount).fill(1);
   const gameId = 'g' + Math.random().toString(36).slice(2,8);
   const joinCode = 'J' + Math.random().toString(36).slice(2,7).toUpperCase();
   await GameService.createGame(gameId, joinCode, 'small', cellCount, 'player1', biomes);
