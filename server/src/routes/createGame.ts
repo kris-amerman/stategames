@@ -1,5 +1,5 @@
 // server/src/routes/createGame.ts
-import { CORS_HEADERS, MAP_SIZES, MAX_BIOME_ID } from "../constants";
+import { CORS_HEADERS, MAP_SIZES, MAX_BIOME_ID, MAX_NATIONS } from "../constants";
 import { GameService } from "../game-state";
 import { encode } from "../serialization";
 import type { MapSize } from "../types";
@@ -33,14 +33,17 @@ export async function createGame(req: Request) {
       });
     }
 
-    if (!nationCount || nationCount <= 0) {
-      return new Response(JSON.stringify({ error: "Invalid nation count" }), {
-        status: 400,
-        headers: {
-          "Content-Type": "application/json",
-          ...CORS_HEADERS,
-        },
-      });
+    if (!nationCount || nationCount <= 0 || nationCount > MAX_NATIONS) {
+      return new Response(
+        JSON.stringify({ error: "Invalid nation count", max: MAX_NATIONS }),
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json",
+            ...CORS_HEADERS,
+          },
+        }
+      );
     }
 
     if (!MAP_SIZES.includes(mapSizeHeader)) {

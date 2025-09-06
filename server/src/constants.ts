@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 export const MAP_SIZES: MapSize[] = ["small", "medium", "large", "xl"];
 
 export const MAX_BIOME_ID = 14;
+// Upper bound on nation slots allowed at game creation to avoid excessive allocation
+export const MAX_NATIONS = 25;
 
 export const PORT = process.env.PORT || 3000;
 
