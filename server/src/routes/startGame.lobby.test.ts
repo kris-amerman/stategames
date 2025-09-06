@@ -24,6 +24,9 @@ test('startGame requires all nation slots filled', async () => {
   const gameId = data.gameId;
   const joinCode = data.joinCode;
 
+  const preState = await GameService.getGameState(gameId);
+  expect(preState?.currentPlayer).toBeNull();
+  expect(preState?.turnNumber).toBe(0);
   const startRes1 = await startGame(gameId);
   expect(startRes1.status).toBe(400);
 
@@ -33,4 +36,6 @@ test('startGame requires all nation slots filled', async () => {
 
   const state = await GameService.getGameState(gameId);
   expect(state?.status).toBe('in_progress');
+  expect(state?.currentPlayer).toBe('player1');
+  expect(state?.turnNumber).toBe(1);
 });

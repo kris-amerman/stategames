@@ -13,7 +13,7 @@ export const GameStateSchema = {
   type: 'object',
   properties: {
     status: { type: 'string' },
-    currentPlayer: { type: 'string' },
+    currentPlayer: { type: ['string', 'null'] },
     turnNumber: { type: 'number' },
     phase: { type: 'string', enum: ['planning', 'execution'] },
   },

@@ -57,7 +57,7 @@ export function handleGameUpdate(data: any): void {
   if (data.gameId === currentGameId) {
     const gameState = data.state;
 
-    if (gameState.status === 'in_progress' && gameState.currentPlayer !== undefined) {
+    if (gameState.status === 'in_progress' && gameState.currentPlayer) {
       isMyTurn = gameState.currentPlayer === currentPlayerName;
       updateTurnIndicator(gameState.currentPlayer, gameState.turnNumber);
     } else {
@@ -121,7 +121,7 @@ export function processGameData(gameData: any): void {
     currentGameId = gameData.meta.gameId;
     requiredPlayers = gameData.meta.nationCount ?? gameData.meta.players.length;
     currentTerritoryData = gameData.state.cellOwnership || {};
-    if (gameData.state.status === 'in_progress') {
+    if (gameData.state.status === 'in_progress' && gameData.state.currentPlayer) {
       isMyTurn = gameData.state.currentPlayer === currentPlayerName;
       updateTurnIndicator(gameData.state.currentPlayer, gameData.state.turnNumber);
     } else {

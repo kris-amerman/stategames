@@ -23,6 +23,8 @@ test('createGame route generates world and waits for players', async () => {
   expect(data.players.length).toBe(1);
   expect(data.game.meta.nationCount).toBe(2);
   expect(data.game.state.status).toBe('waiting');
+  expect(data.game.state.currentPlayer).toBeNull();
+  expect(data.game.state.turnNumber).toBe(0);
   // Deep ocean cell (index 3) should remain unclaimed
   expect(data.game.state.cellOwnership['3']).toBeUndefined();
   // Ensure some territory assigned

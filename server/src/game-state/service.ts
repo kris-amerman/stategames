@@ -261,7 +261,7 @@ export class GameService {
     }
 
     // Update game state to started
-    GameStateManager.startGame(game.state);
+    GameStateManager.startGame(game.state, game.meta.players);
 
     // Persist updated state
     await this.saveGame(game);
@@ -299,7 +299,7 @@ export class GameService {
     }
 
     if (game.state.currentPlayer === playerId) {
-      game.state.currentPlayer = game.meta.players[0] ?? '';
+      game.state.currentPlayer = game.meta.players[0] ?? null;
     }
 
     await this.saveGame(game);

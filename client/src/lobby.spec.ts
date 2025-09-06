@@ -29,7 +29,7 @@ import { processGameData } from './game';
   it('does not show turn controls before game start', async () => {
     const gameData = {
       meta: { gameId: 'g1', mapSize: 'small', players: ['player1'], nationCount: 1 },
-      state: { status: 'waiting', currentPlayer: 'player1', turnNumber: 1 },
+      state: { status: 'waiting', currentPlayer: null, turnNumber: 0 },
       map: { biomes: new Uint8Array([0]) },
     };
     await processGameData(gameData);

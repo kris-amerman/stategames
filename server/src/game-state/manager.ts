@@ -38,8 +38,8 @@ export class GameStateManager {
   static createInitialGameState(players: PlayerId[]): GameState {
     return {
       status: "waiting",
-      currentPlayer: players[0], // First player starts
-      turnNumber: 1,
+      currentPlayer: null,
+      turnNumber: 0,
       phase: "planning",
       currentPlan: null,
       nextPlan: null,
@@ -255,8 +255,10 @@ export class GameStateManager {
 
   // === GAME STATE UPDATES ===
 
-  static startGame(gameState: GameState): void {
+  static startGame(gameState: GameState, players: PlayerId[]): void {
     gameState.status = "in_progress";
+    gameState.currentPlayer = players[0] ?? null;
+    gameState.turnNumber = 1;
   }
 
   // === STARTING TERRITORY ASSIGNMENT ===

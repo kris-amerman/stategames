@@ -30,8 +30,8 @@ export async function advanceTurn(gameId: string, req: Request) {
     // determine next player from meta
     const meta = await GameService.getGameMeta(gameId);
     const players = meta?.players || [];
-    const currentIdx = players.indexOf(gameState.currentPlayer);
-    const nextPlayer = players[(currentIdx + 1) % players.length] || gameState.currentPlayer;
+    const currentIdx = players.indexOf(gameState.currentPlayer!);
+    const nextPlayer = players[(currentIdx + 1) % players.length] || gameState.currentPlayer!;
 
     const prevEconomy = JSON.parse(JSON.stringify(gameState.economy));
     TurnManager.advanceTurn(gameState);
