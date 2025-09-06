@@ -1,4 +1,4 @@
-import { createUI } from './ui';
+import { createUI, hideTerrainControls } from './ui';
 import {
   loadOrGetMesh,
   preloadMeshes,
@@ -73,7 +73,8 @@ function toggleGameButtons(visible: boolean) {
 // Creator's game state UI (world generated immediately)
 function showCreatorGameUI(gameData: any) {
   hideAllGameUI();
-  
+  hideTerrainControls();
+
   const gameStateDiv = createGameStateContainer();
   
   gameStateDiv.innerHTML = `
@@ -151,7 +152,8 @@ function showCreatorGameUI(gameData: any) {
 // Joiner's game state UI (no Start Game button)
 function showJoinerGameUI(gameData: any) {
   hideAllGameUI();
-  
+  hideTerrainControls();
+
   const gameStateDiv = createGameStateContainer();
   
   gameStateDiv.innerHTML = `
@@ -365,23 +367,14 @@ function hideAllGameUI() {
 }
 
 function createGameStateContainer() {
-  let gameStateDiv = document.getElementById("gameState");
-  
-  if (!gameStateDiv) {
-    gameStateDiv = document.createElement("div");
-    gameStateDiv.id = "gameState";
-    gameStateDiv.style.cssText = `
+  const gameStateDiv = document.getElementById("gameState")!;
+  gameStateDiv.style.cssText = `
       margin-top: 15px;
       padding: 15px;
       background: rgba(0, 100, 0, 0.2);
       border: 1px solid #4CAF50;
       border-radius: 8px;
     `;
-    
-    const buttonsDiv = document.querySelector('#createGame')!.parentElement;
-    buttonsDiv!.parentNode!.insertBefore(gameStateDiv, buttonsDiv!.nextSibling);
-  }
-  
   gameStateDiv.style.display = "block";
   return gameStateDiv;
 }
