@@ -57,9 +57,12 @@ export function handleGameUpdate(data: any): void {
   if (data.gameId === currentGameId) {
     const gameState = data.state;
 
-    if (gameState.currentPlayer !== undefined) {
+    if (gameState.status === 'in_progress' && gameState.currentPlayer !== undefined) {
       isMyTurn = gameState.currentPlayer === currentPlayerName;
       updateTurnIndicator(gameState.currentPlayer, gameState.turnNumber);
+    } else {
+      isMyTurn = false;
+      clearTurnIndicator();
     }
 
     if (gameState.cellOwnership) {
@@ -118,8 +121,13 @@ export function processGameData(gameData: any): void {
     currentGameId = gameData.meta.gameId;
     requiredPlayers = gameData.meta.nationCount ?? gameData.meta.players.length;
     currentTerritoryData = gameData.state.cellOwnership || {};
-    isMyTurn = gameData.state.currentPlayer === currentPlayerName;
-    updateTurnIndicator(gameData.state.currentPlayer, gameData.state.turnNumber);
+    if (gameData.state.status === 'in_progress') {
+      isMyTurn = gameData.state.currentPlayer === currentPlayerName;
+      updateTurnIndicator(gameData.state.currentPlayer, gameData.state.turnNumber);
+    } else {
+      isMyTurn = false;
+      clearTurnIndicator();
+    }
 
     if (gameData.state.entities) {
       currentGameEntities = gameData.state.entities;
@@ -273,6 +281,13 @@ function drawTerritoryOverlay(): void {
 
     ctx.closePath();
     ctx.fill();
+  }
+}
+
+function clearTurnIndicator(): void {
+  const indicator = document.getElementById('turnIndicator');
+  if (indicator) {
+    indicator.remove();
   }
 }
 

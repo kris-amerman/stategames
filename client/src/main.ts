@@ -496,10 +496,12 @@ function handleGameStateUpdate(data: { gameId: string, status: string, players: 
 }
 
 // Handle game start - receives complete Game object
-function handleGameStarted(gameData: any) {
+export function handleGameStarted(gameData: any) {
   console.log('Game started. Received data:', gameData);
-  
-  if (gameData.meta?.gameId === currentGameId) {
+
+  const fullGame = gameData.game ?? gameData;
+
+  if (fullGame.meta?.gameId === currentGameId) {
     updateGameStatus('in_progress');
     showGameNotification('Game has started!', 'success');
 
@@ -508,9 +510,9 @@ function handleGameStarted(gameData: any) {
 
     const waitingForStartDiv = document.getElementById("waitingForStart");
     if (waitingForStartDiv) waitingForStartDiv.style.display = "none";
-    
+
     // Process all the game data received in the WebSocket event
-    processGameData(gameData);
+    processGameData(fullGame);
   }
 }
 
@@ -539,10 +541,12 @@ function updateGameStatus(status: string) {
 }
 
 // Start the application
-initializeApp().catch(error => {
-  console.error('Failed to initialize application:', error);
-  showError('Failed to initialize application. Please check console.');
-});
+if (!(import.meta as any).vitest) {
+  initializeApp().catch(error => {
+    console.error('Failed to initialize application:', error);
+    showError('Failed to initialize application. Please check console.');
+  });
+}
 
 document.getElementById("createGame")!.addEventListener("click", async () => {
   console.log(`SENDING ${currentCellCount} BIOMES TO ${SERVER_BASE_URL}/api/games/create`);
