@@ -1,4 +1,3 @@
-import { } from './network';
 import { SERVER_BASE_URL } from './config';
 
 interface SectorState {
