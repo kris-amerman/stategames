@@ -1,5 +1,6 @@
 import { MapSize } from './mesh';
 import { loadOrGetMesh, generateTerrain, elevationConfig, biomeConfig, setCurrentMapSize } from './terrain';
+import { initNationPlanner } from './nationPlanner';
 
 export function createUI(ctx: CanvasRenderingContext2D) {
   // Create UI panel
@@ -197,9 +198,13 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     </div>
     </div>
     <div id="gameState" style="display: none;"></div>
+    <div id="gameControls" style="margin-top:10px;">
+      <details id="nationPlanner"><summary>Nation Planner</summary></details>
+    </div>
   `;
 
   document.body.appendChild(uiPanel);
+  initNationPlanner();
 
   // Map size selectors
   document.getElementById("mapSize")!.addEventListener("change", async (e) => {
