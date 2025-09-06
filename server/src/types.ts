@@ -377,6 +377,9 @@ export interface GameMeta {
    * Determines which mesh to use.
    */
   mapSize: MapSize;
+
+  /** Total number of nations/players expected for this game */
+  nationCount: number;
 }
 
 /**
@@ -409,7 +412,7 @@ export interface GameState {
   status: "waiting" | "in_progress" | "finished";
 
   /** ID of the player whose turn it currently is */
-  currentPlayer: PlayerId;
+  currentPlayer: PlayerId | null;
 
   /** Current turn number (increments when all players have taken their turn) */
   turnNumber: number;

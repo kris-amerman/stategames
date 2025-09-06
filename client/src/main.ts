@@ -20,6 +20,7 @@ import {
   handleGameError,
   currentGameId,
   currentPlayerName,
+  requiredPlayers,
 } from './game';
 
 const canvas = document.createElement('canvas');
@@ -69,7 +70,7 @@ function toggleGameButtons(visible: boolean) {
   joinButton.style.display = visible ? "block" : "none";
 }
 
-// Creator's game state UI (has Start Game button)
+// Creator's game state UI (world generated immediately)
 function showCreatorGameUI(gameData: any) {
   hideAllGameUI();
   
@@ -106,40 +107,44 @@ function showCreatorGameUI(gameData: any) {
     </div>
     
     <div style="margin-bottom: 15px;">
-      <strong>Status:</strong> 
+      <strong>Status:</strong>
       <span id="gameStatus" style="color: #FFA500;">Waiting for players...</span>
     </div>
-    
+
     <div style="margin-bottom: 15px;">
       <strong>Players:</strong>
       <ul id="playersList" style="
-        margin: 5px 0 0 0; 
-        padding-left: 20px; 
+        margin: 5px 0 0 0;
+        padding-left: 20px;
         color: #ccc;
       ">
-        <li>player1 (you)</li>
+        ${gameData.players
+          .map((p: string, i: number) => `<li>${p}${i === 0 ? ' (you)' : ''}</li>`)
+          .join('')}
       </ul>
     </div>
-    
+
     <button id="startGame" style="
       width: 100%;
-      background: #666; 
-      color: white; 
-      border: none; 
-      padding: 10px; 
-      border-radius: 4px; 
+      background: #666;
+      color: white;
+      border: none;
+      padding: 10px;
+      border-radius: 4px;
       cursor: pointer;
-      font-size: 14px;
+      margin-top: 5px;
     " disabled>Start Game (Need more players)</button>
   `;
-  
+
   // Add event listeners
   setupCopyJoinCodeButton(gameData.joinCode);
-  setupStartGameButton();
-  
+
   // Add WebSocket to room as creator
   joinGameRoom(gameData.gameId, 'player1', true);
-  
+
+  // Setup start game button handler
+  setupStartGameButton();
+
   toggleGameButtons(false);
 }
 
@@ -453,7 +458,7 @@ function updatePlayersList(players: string[], currentPlayerName?: string) {
     // Only update start game button if it exists (creator only)
     const startButton = document.getElementById("startGame") as HTMLButtonElement;
     if (startButton) {
-      if (players.length >= 2) {
+      if (players.length >= requiredPlayers) {
         startButton.disabled = false;
         startButton.textContent = "Start Game";
         startButton.style.background = "#4CAF50";
@@ -490,22 +495,30 @@ function handleGameStateUpdate(data: { gameId: string, status: string, players: 
   }
 }
 
-// Handle game start - receives complete Game object
-function handleGameStarted(gameData: any) {
-  console.log('Game started. Received data:', gameData);
-  
-  if (gameData.meta?.gameId === currentGameId) {
-    updateGameStatus('in_progress');
-    showGameNotification('Game has started!', 'success');
+// Handle receipt of full game data from the server
+export function handleFullGame(gameData: any) {
+  console.log('Full game data received:', gameData);
 
-    const startButton = document.getElementById("startGame") as HTMLButtonElement;
-    if (startButton) startButton.remove();
+  const fullGame = gameData.game ?? gameData;
 
-    const waitingForStartDiv = document.getElementById("waitingForStart");
-    if (waitingForStartDiv) waitingForStartDiv.style.display = "none";
-    
+  if (fullGame.meta?.gameId === currentGameId) {
+    updateGameStatus(fullGame.state.status);
+
+    if (fullGame.state.status === 'in_progress') {
+      showGameNotification('Game has started!', 'success');
+
+      const startButton = document.getElementById("startGame") as HTMLButtonElement;
+      if (startButton) startButton.remove();
+
+      const waitingForStartDiv = document.getElementById("waitingForStart");
+      if (waitingForStartDiv) waitingForStartDiv.style.display = "none";
+    }
+
+    // Ensure player list reflects current players
+    updatePlayersList(fullGame.meta.players, currentPlayerName || undefined);
+
     // Process all the game data received in the WebSocket event
-    processGameData(gameData);
+    processGameData(fullGame);
   }
 }
 
@@ -534,10 +547,12 @@ function updateGameStatus(status: string) {
 }
 
 // Start the application
-initializeApp().catch(error => {
-  console.error('Failed to initialize application:', error);
-  showError('Failed to initialize application. Please check console.');
-});
+if (!(import.meta as any).vitest) {
+  initializeApp().catch(error => {
+    console.error('Failed to initialize application:', error);
+    showError('Failed to initialize application. Please check console.');
+  });
+}
 
 document.getElementById("createGame")!.addEventListener("click", async () => {
   console.log(`SENDING ${currentCellCount} BIOMES TO ${SERVER_BASE_URL}/api/games/create`);
@@ -547,12 +562,16 @@ document.getElementById("createGame")!.addEventListener("click", async () => {
   setGameButtonsState(false, "Creating...", "Join Game");
   
   try {
+    const nationCountInput = document.getElementById('nationCount') as HTMLInputElement;
+    const nationCount = parseInt(nationCountInput.value) || 1;
+
     const response = await fetch(`${SERVER_BASE_URL}/api/games/create`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/octet-stream',
         'X-Cell-Count': currentCellCount.toString(),
         'X-Map-Size': currentMapSize,
+        'X-Nation-Count': nationCount.toString(),
       },
       body: currentCellBiomes
     });
@@ -564,9 +583,12 @@ document.getElementById("createGame")!.addEventListener("click", async () => {
     
     const gameData = await response.json();
     console.log('Game created:', gameData);
-    
-    // Show creator's game state UI
+
+    // Show creator's game state UI and render map
     showCreatorGameUI(gameData);
+    processGameData(gameData.game);
+    updateGameStatus('waiting');
+    updatePlayersList(gameData.players, 'player1');
     
   } catch (error: any) {
     console.error('Game creation failed:', error);
@@ -586,7 +608,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeWebSocket({
     playerJoined: handlePlayerJoined,
     gameStateUpdate: handleGameStateUpdate,
-    fullGame: handleGameStarted,
+    fullGame: handleFullGame,
     gameError: handleGameError,
     actionResult: handleActionResult,
     gameUpdate: handleGameUpdate,

@@ -22,22 +22,24 @@ export class GameStateManager {
     gameId: string,
     joinCode: string,
     players: PlayerId[],
-    mapSize: MapSize
+    mapSize: MapSize,
+    nationCount: number
   ): GameMeta {
     return {
       gameId,
       joinCode,
       createdAt: new Date().toISOString(),
       players,
-      mapSize
+       mapSize,
+      nationCount
     };
   }
 
   static createInitialGameState(players: PlayerId[]): GameState {
     return {
       status: "waiting",
-      currentPlayer: players[0], // First player starts
-      turnNumber: 1,
+      currentPlayer: null,
+      turnNumber: 0,
       phase: "planning",
       currentPlan: null,
       nextPlan: null,
@@ -71,10 +73,11 @@ export class GameStateManager {
     joinCode: string,
     players: PlayerId[],
     mapSize: MapSize,
-    biomes: Uint8Array
+    biomes: Uint8Array,
+    nationCount: number
   ): Game {
     return {
-      meta: this.createInitialGameMeta(gameId, joinCode, players, mapSize),
+      meta: this.createInitialGameMeta(gameId, joinCode, players, mapSize, nationCount),
       map: this.createGameMap(biomes),
       state: this.createInitialGameState(players)
     };
@@ -252,8 +255,10 @@ export class GameStateManager {
 
   // === GAME STATE UPDATES ===
 
-  static startGame(gameState: GameState): void {
+  static startGame(gameState: GameState, players: PlayerId[]): void {
     gameState.status = "in_progress";
+    gameState.currentPlayer = players[0] ?? null;
+    gameState.turnNumber = 1;
   }
 
   // === STARTING TERRITORY ASSIGNMENT ===
@@ -264,7 +269,7 @@ export class GameStateManager {
     cellOffsets: Uint32Array,
     cellCount: number,
     biomes: Uint8Array,
-    deepOceanBiome: number = 0
+    deepOceanBiome: number = 7
   ): void {
     const players = Object.keys(gameState.playerCells);
 

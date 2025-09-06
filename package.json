@@ -1,0 +1,10 @@
+{
+  "name": "stategames-root",
+  "private": true,
+  "scripts": {
+    "test": "bun test server tests && npm test --prefix client",
+    "test:server": "bun test server tests",
+    "test:client": "npm test --prefix client",
+    "build": "npm run build --prefix client"
+  }
+}
