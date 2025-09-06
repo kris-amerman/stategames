@@ -4,6 +4,7 @@ import { loadOrGetMesh, generateTerrain, elevationConfig, biomeConfig, setCurren
 export function createUI(ctx: CanvasRenderingContext2D) {
   // Create UI panel
   const uiPanel = document.createElement("div");
+  uiPanel.id = "biomeControls";
   uiPanel.style.cssText = `
     position: fixed;
     top: 10px;
@@ -301,5 +302,12 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         generateTerrain(ctx);
       });
     }
+  }
+}
+
+export function hideTerrainControls() {
+  const panel = document.getElementById('biomeControls');
+  if (panel) {
+    (panel as HTMLElement).style.display = 'none';
   }
 }

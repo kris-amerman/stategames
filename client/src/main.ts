@@ -1,4 +1,4 @@
-import { createUI } from './ui';
+import { createUI, hideTerrainControls } from './ui';
 import {
   loadOrGetMesh,
   preloadMeshes,
@@ -73,6 +73,7 @@ function toggleGameButtons(visible: boolean) {
 // Creator's game state UI (world generated immediately)
 function showCreatorGameUI(gameData: any) {
   hideAllGameUI();
+  hideTerrainControls();
   
   const gameStateDiv = createGameStateContainer();
   
@@ -151,6 +152,7 @@ function showCreatorGameUI(gameData: any) {
 // Joiner's game state UI (no Start Game button)
 function showJoinerGameUI(gameData: any) {
   hideAllGameUI();
+  hideTerrainControls();
   
   const gameStateDiv = createGameStateContainer();
   
