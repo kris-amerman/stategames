@@ -1,4 +1,5 @@
 import { } from './network';
+import { SERVER_BASE_URL } from './config';
 
 interface SectorState {
   name: string;
@@ -53,11 +54,21 @@ export function initNationPlanner() {
 }
 
 async function loadAndRender() {
-  const resp: LoadResponse = await fetch('/api/nation/plan').then((r) => r.json());
-  currentState = resp.state;
-  currentPlan = resp.plan;
-  activePlayer = resp.activePlayer;
-  renderPlanner();
+  try {
+    const res = await fetch(`${SERVER_BASE_URL}/api/nation/plan`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      throw new Error(`load failed: ${res.status}`);
+    }
+    const resp: LoadResponse = await res.json();
+    currentState = resp.state;
+    currentPlan = resp.plan;
+    activePlayer = resp.activePlayer;
+    renderPlanner();
+  } catch (err) {
+    console.error('failed to load nation plan', err);
+  }
 }
 
 function renderPlanner() {
@@ -225,7 +236,7 @@ function wireEvents() {
   const submit = document.getElementById('submitPlan')!;
   submit.addEventListener('click', async () => {
     const payload = getPlanPayload();
-    await fetch('/api/nation/plan', {
+    await fetch(`${SERVER_BASE_URL}/api/nation/plan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createUI } from './ui';
 import { __testing as plannerTesting } from './nationPlanner';
+import { SERVER_BASE_URL } from './config';
 
 interface FetchCall { url: string; options?: any }
 
@@ -34,10 +35,10 @@ function mockFetch(data = baseData) {
   fetchCalls = [];
   (globalThis as any).fetch = vi.fn(async (url: string, options?: any) => {
     fetchCalls.push({ url, options });
-    if (!options) {
-      return { json: async () => JSON.parse(JSON.stringify(data)) } as any;
+    if (!options || !options.method || options.method === 'GET') {
+      return { ok: true, json: async () => JSON.parse(JSON.stringify(data)) } as any;
     }
-    return { json: async () => ({ ok: true }) } as any;
+    return { ok: true, json: async () => ({ ok: true }) } as any;
   });
 }
 
@@ -109,7 +110,7 @@ describe('Nation Planner', () => {
     mil.dispatchEvent(new Event('input'));
     const submit = document.getElementById('submitPlan')!;
     submit.dispatchEvent(new Event('click'));
-    expect(fetchCalls[1].url).toBe('/api/nation/plan');
+    expect(fetchCalls[1].url).toBe(`${SERVER_BASE_URL}/api/nation/plan`);
     const payload = JSON.parse(fetchCalls[1].options.body);
     expect(payload.budgets.military).toBe(120);
   });
