@@ -495,21 +495,27 @@ function handleGameStateUpdate(data: { gameId: string, status: string, players: 
   }
 }
 
-// Handle game start - receives complete Game object
-export function handleGameStarted(gameData: any) {
-  console.log('Game started. Received data:', gameData);
+// Handle receipt of full game data from the server
+export function handleFullGame(gameData: any) {
+  console.log('Full game data received:', gameData);
 
   const fullGame = gameData.game ?? gameData;
 
   if (fullGame.meta?.gameId === currentGameId) {
-    updateGameStatus('in_progress');
-    showGameNotification('Game has started!', 'success');
+    updateGameStatus(fullGame.state.status);
 
-    const startButton = document.getElementById("startGame") as HTMLButtonElement;
-    if (startButton) startButton.remove();
+    if (fullGame.state.status === 'in_progress') {
+      showGameNotification('Game has started!', 'success');
 
-    const waitingForStartDiv = document.getElementById("waitingForStart");
-    if (waitingForStartDiv) waitingForStartDiv.style.display = "none";
+      const startButton = document.getElementById("startGame") as HTMLButtonElement;
+      if (startButton) startButton.remove();
+
+      const waitingForStartDiv = document.getElementById("waitingForStart");
+      if (waitingForStartDiv) waitingForStartDiv.style.display = "none";
+    }
+
+    // Ensure player list reflects current players
+    updatePlayersList(fullGame.meta.players, currentPlayerName || undefined);
 
     // Process all the game data received in the WebSocket event
     processGameData(fullGame);
@@ -602,7 +608,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeWebSocket({
     playerJoined: handlePlayerJoined,
     gameStateUpdate: handleGameStateUpdate,
-    fullGame: handleGameStarted,
+    fullGame: handleFullGame,
     gameError: handleGameError,
     actionResult: handleActionResult,
     gameUpdate: handleGameUpdate,

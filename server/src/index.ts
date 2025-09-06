@@ -156,7 +156,7 @@ export const server = Bun.serve({
 });
 
 // Helper functions for WebSocket broadcasting
-function nextSeq(gameId: string): number {
+export function nextSeq(gameId: string): number {
   const n = (gameSequences.get(gameId) || 0) + 1;
   gameSequences.set(gameId, n);
   return n;
