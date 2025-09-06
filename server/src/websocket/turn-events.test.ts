@@ -103,7 +103,6 @@ test('websocket turn flow emits ordered events and survives reconnect', async ()
   await Bun.sleep(100);
 
   ws2.close();
-  server.stop();
 
   const turnEvent2 = events2.find(e => e.event === 'turn_complete');
   expect(turnEvent2.data.turnNumber).toBe(3);
