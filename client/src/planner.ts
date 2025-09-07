@@ -28,38 +28,38 @@ export async function initPlanner(gameId: string | null, player: string | null) 
     <div id="budgetsSection" style="margin-bottom:10px;">
       <h4>Budgets</h4>
       <div style="display:flex; gap:5px; margin-bottom:5px;">
-        <label style="flex:1;">Education Tier: <input type="range" id="eduTier" min="0" max="4" value="${welfare.next?.education ?? 0}" style="width:100%;"><span id="eduTierVal" style="margin-left:4px;">${welfare.next?.education ?? 0}</span></label>
-        <label style="flex:1;">Healthcare Tier: <input type="range" id="healthTier" min="0" max="4" value="${welfare.next?.healthcare ?? 0}" style="width:100%;"><span id="healthTierVal" style="margin-left:4px;">${welfare.next?.healthcare ?? 0}</span></label>
+        <label style="flex:1;">Education Tier: <input type="range" id="eduTier" min="0" max="4" value="${welfare.next?.education ?? 0}" style="width:100%;" title="Sets education welfare tier for next turn. Higher tiers cost more Gold per labor unit."><span id="eduTierVal" style="margin-left:4px;">${welfare.next?.education ?? 0}</span></label>
+        <label style="flex:1;">Healthcare Tier: <input type="range" id="healthTier" min="0" max="4" value="${welfare.next?.healthcare ?? 0}" style="width:100%;" title="Sets healthcare welfare tier for next turn. Higher tiers cost more Gold per labor unit."><span id="healthTierVal" style="margin-left:4px;">${welfare.next?.healthcare ?? 0}</span></label>
       </div>
       <div style="margin-bottom:5px;">
-        <label>Military Gold: <input type="number" id="militaryAlloc" min="0" value="${budget.military ?? 0}" style="width:60px;"></label>
+        <label>Military Gold: <input type="number" id="militaryAlloc" min="0" value="${budget.military ?? 0}" style="width:60px;" title="Gold allocated to the military; upkeep deducted first."></label>
       </div>
       <div id="sectorInputs" style="margin-bottom:5px;">
         ${SECTORS.map(s => {
           const cap = totalCapacity(econ, s);
           const val = budget.sectorOM?.[s] ?? 0;
           return `<div style="margin-bottom:3px;" data-sector="${s}">
-            <label>${capitalize(s)} (cap ${cap}): <input type="number" class="sectorInput" data-sector="${s}" min="0" max="${cap}" value="${val}" style="width:60px;"></label>
+            <label>${capitalize(s)} (cap ${cap}): <input type="number" class="sectorInput" data-sector="${s}" min="0" max="${cap}" value="${val}" style="width:60px;" title="Active slots to fund next turn (up to capacity). Idle slots incur tax."></label>
           </div>`;
         }).join('')}
       </div>
       <div style="margin-top:5px;">Total Gold Allocated: <span id="totalAllocated">0</span> / <span id="goldAvailable">${goldAvailable}</span></div>
       <div id="budgetWarning" style="color:#FFC107;"></div>
     </div>
-    <div id="policySection" style="margin-bottom:5px;">
-      <h4>Policies</h4>
-      <div style="display:flex; gap:5px;">
-        <label style="flex:1;">Tariff %: <input type="number" id="tariffRate" min="0" max="30" value="${budget.policies?.tariff ?? 0}" style="width:60px;"></label>
-        <label style="flex:1;">FX Swap: <input type="number" id="fxSwap" min="0" value="${budget.policies?.fxSwap ?? 0}" style="width:60px;"></label>
+      <div id="policySection" style="margin-bottom:5px;">
+        <h4>Policies</h4>
+        <div style="display:flex; gap:5px;">
+          <label style="flex:1;">Tariff %: <input type="number" id="tariffRate" min="0" max="30" value="${budget.policies?.tariff ?? 0}" style="width:60px;" title="Tariffs reduce import volume but generate Gold."></label>
+          <label style="flex:1;">FX Swap: <input type="number" id="fxSwap" min="0" value="${budget.policies?.fxSwap ?? 0}" style="width:60px;" title="Request Gold⇄FX conversion for next turn (fee applies)."></label>
+        </div>
       </div>
-    </div>
-    <div>
-      <h4>Sector Prioritization</h4>
-      <ul id="priorityList" style="list-style:none; padding:0; margin:0;">
-        ${SECTORS.map(s => `<li draggable="true" data-sector="${s}" style="margin:2px 0; padding:4px; background:#333; border:1px solid #555; cursor:move;">${capitalize(s)}</li>`).join('')}
-      </ul>
-    </div>
-    <button id="submitPlanBtn" style="margin-top:10px; width:100%;">Submit Plan</button>
+      <div>
+        <h4>Sector Prioritization</h4>
+        <ul id="priorityList" style="list-style:none; padding:0; margin:0;">
+          ${SECTORS.map(s => `<li draggable="true" data-sector="${s}" style="margin:2px 0; padding:4px; background:#333; border:1px solid #555; cursor:move;" title="Drag to reorder sector priority.">${capitalize(s)}</li>`).join('')}
+        </ul>
+      </div>
+      <button id="submitPlanBtn" style="margin-top:10px; width:100%;" title="Submit plan for next turn.">Submit Plan</button>
   `;
 
   // Drag and drop ordering
