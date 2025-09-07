@@ -197,6 +197,11 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     </div>
     </div>
     <div id="gameState" style="display: none;"></div>
+    <div id="gameControls" style="display: none;">
+      <details id="nationPlanner">
+        <summary>Nation Planner</summary>
+      </details>
+    </div>
   `;
 
   document.body.appendChild(uiPanel);
