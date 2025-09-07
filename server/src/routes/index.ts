@@ -22,3 +22,4 @@ export { getInfrastructure } from "./getInfrastructure";
 export { getFinance } from "./getFinance";
 export { getTrade } from "./getTrade";
 export { getWelfare } from "./getWelfare";
+export { getPlan } from "./getPlan";

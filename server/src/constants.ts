@@ -29,6 +29,7 @@ export const ENDPOINTS = [
   "GET /api/games/:gameId/finance",
   "GET /api/games/:gameId/trade",
   "GET /api/games/:gameId/welfare",
+  "GET /api/games/:gameId/plan",
   "POST /api/games/:gameId/plan",
   "POST /api/games/:gameId/advance",
   "GET /api/games/:gameId/summary",

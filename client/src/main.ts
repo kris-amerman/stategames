@@ -9,6 +9,7 @@ import {
 } from './terrain';
 import { WIDTH, HEIGHT, SERVER_BASE_URL } from './config';
 import { initializeWebSocket, closeWebSocket } from './network';
+import { togglePlanner, initPlanner } from './planner';
 import { showGameNotification } from './notifications';
 import {
   initGame,
@@ -516,26 +517,34 @@ export function handleFullGame(gameData: any) {
 }
 
 // Update game status display
-function updateGameStatus(status: string) {
+export function updateGameStatus(status: string) {
   const statusElement = document.getElementById('gameStatus');
-  if (!statusElement) return;
-  
-  switch (status) {
-    case 'waiting':
-      statusElement.textContent = 'Waiting for players...';
-      statusElement.style.color = '#FFA500';
-      break;
-    case 'in_progress':
-      statusElement.textContent = 'Game in progress';
-      statusElement.style.color = '#4CAF50';
-      break;
-    case 'finished':
-      statusElement.textContent = 'Game finished';
-      statusElement.style.color = '#666';
-      break;
-    default:
-      statusElement.textContent = status;
-      statusElement.style.color = '#FFA500';
+  if (statusElement) {
+    switch (status) {
+      case 'waiting':
+        statusElement.textContent = 'Waiting for players...';
+        statusElement.style.color = '#FFA500';
+        break;
+      case 'in_progress':
+        statusElement.textContent = 'Game in progress';
+        statusElement.style.color = '#4CAF50';
+        break;
+      case 'finished':
+        statusElement.textContent = 'Game finished';
+        statusElement.style.color = '#666';
+        break;
+      default:
+        statusElement.textContent = status;
+        statusElement.style.color = '#FFA500';
+    }
+  }
+
+  // Toggle planner visibility based on game status
+  if (status === 'in_progress') {
+    togglePlanner(true);
+    initPlanner(currentGameId, currentPlayerName);
+  } else {
+    togglePlanner(false);
   }
 }
 
