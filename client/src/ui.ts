@@ -200,6 +200,36 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     <div id="gameControls" style="display: none;">
       <details id="nationPlanner">
         <summary>Nation Planner</summary>
+        <div id="budgetControls" style="margin-top: 10px;">
+          <div style="margin-bottom: 8px;">
+            <label>
+              Military Budget: 
+              <input type="number" id="militaryBudget" min="0" value="0" style="width: 60px; margin-left: 5px;">
+              <span id="militaryBudgetInfo" style="margin-left: 5px;">$0</span>
+            </label>
+          </div>
+          <div style="margin-bottom: 8px;">
+            <label>
+              Welfare Budget: 
+              <input type="number" id="welfareBudget" min="0" value="0" style="width: 60px; margin-left: 5px;">
+              <span id="welfareBudgetInfo" style="margin-left: 5px;">$0</span>
+            </label>
+          </div>
+          <div style="margin-bottom: 8px;">
+            <label>
+              Sector Operations Budget: 
+              <input type="number" id="sectorOpsBudget" min="0" value="0" style="width: 60px; margin-left: 5px;">
+              <span id="sectorOpsBudgetInfo" style="margin-left: 5px;">$0</span>
+            </label>
+          </div>
+          <div style="margin-bottom: 8px;">
+            <label>
+              Maintenance Budget: 
+              <input type="number" id="maintenanceBudget" min="0" value="0" style="width: 60px; margin-left: 5px;">
+              <span id="maintenanceBudgetInfo" style="margin-left: 5px;">$0</span>
+            </label>
+          </div>
+        </div>
       </details>
     </div>
   `;
@@ -228,6 +258,24 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     if (!isNaN(value)) {
       elevationConfig.seed = Math.max(0, Math.min(1, value));
       generateTerrain(ctx);
+    }
+  });
+
+  // Budget input handlers
+  [
+    'military',
+    'welfare',
+    'sectorOps',
+    'maintenance'
+  ].forEach((type) => {
+    const input = document.getElementById(`${type}Budget`) as HTMLInputElement | null;
+    const info = document.getElementById(`${type}BudgetInfo`);
+    if (input && info) {
+      const updateInfo = () => {
+        info.textContent = `$${input.value}`;
+      };
+      input.addEventListener('input', updateInfo);
+      updateInfo();
     }
   });
 
