@@ -28,8 +28,8 @@ export async function initPlanner(gameId: string | null, player: string | null) 
     <div id="budgetsSection" style="margin-bottom:10px;">
       <h4>Budgets</h4>
       <div style="display:flex; gap:5px; margin-bottom:5px;">
-        <label style="flex:1;">Education Tier: <input type="number" id="eduTier" min="0" max="4" value="${welfare.next?.education ?? 0}" style="width:50px;"></label>
-        <label style="flex:1;">Healthcare Tier: <input type="number" id="healthTier" min="0" max="4" value="${welfare.next?.healthcare ?? 0}" style="width:50px;"></label>
+        <label style="flex:1;">Education Tier: <input type="range" id="eduTier" min="0" max="4" value="${welfare.next?.education ?? 0}" style="width:100%;"><span id="eduTierVal" style="margin-left:4px;">${welfare.next?.education ?? 0}</span></label>
+        <label style="flex:1;">Healthcare Tier: <input type="range" id="healthTier" min="0" max="4" value="${welfare.next?.healthcare ?? 0}" style="width:100%;"><span id="healthTierVal" style="margin-left:4px;">${welfare.next?.healthcare ?? 0}</span></label>
       </div>
       <div style="margin-bottom:5px;">
         <label>Military Gold: <input type="number" id="militaryAlloc" min="0" value="${budget.military ?? 0}" style="width:60px;"></label>
@@ -77,6 +77,21 @@ export async function initPlanner(gameId: string | null, player: string | null) 
       list.insertBefore(dragEl!, next ? target.nextSibling : target);
     }
   });
+
+  const eduInput = container.querySelector('#eduTier') as HTMLInputElement;
+  const eduVal = container.querySelector('#eduTierVal') as HTMLElement;
+  const healthInput = container.querySelector('#healthTier') as HTMLInputElement;
+  const healthVal = container.querySelector('#healthTierVal') as HTMLElement;
+  if (eduInput && eduVal) {
+    eduInput.addEventListener('input', () => {
+      eduVal.textContent = eduInput.value;
+    });
+  }
+  if (healthInput && healthVal) {
+    healthInput.addEventListener('input', () => {
+      healthVal.textContent = healthInput.value;
+    });
+  }
 
   container.querySelectorAll('input').forEach((el) => {
     el.addEventListener('input', updateBudgetTotals);
@@ -146,4 +161,9 @@ function buildPlan() {
 // Convenience function for main.ts
 export function ensurePlanner() {
   initPlanner(currentGameId, currentPlayerName);
+}
+
+// Testing utility
+export function __resetPlannerForTests() {
+  initialized = false;
 }
