@@ -10,6 +10,7 @@ import {
 import { WIDTH, HEIGHT, SERVER_BASE_URL } from './config';
 import { initializeWebSocket, closeWebSocket } from './network';
 import { showGameNotification } from './notifications';
+import { showNationPlanner, hideNationPlanner } from './planner';
 import {
   initGame,
   joinGameRoom,
@@ -512,6 +513,13 @@ export function handleFullGame(gameData: any) {
 
     // Process all the game data received in the WebSocket event
     processGameData(fullGame);
+    if (fullGame.state.status === 'in_progress') {
+      if (currentGameId && currentPlayerName) {
+        showNationPlanner(fullGame.state, currentGameId, currentPlayerName);
+      }
+    } else {
+      hideNationPlanner();
+    }
   }
 }
 

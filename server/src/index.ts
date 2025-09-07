@@ -1,5 +1,5 @@
 // server/src/index.ts
-import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame, getGameState, submitPlan, advanceTurn, getTurnSummary, leaveGame, endGame, getEconomy, getBudget, getLabor, getLogistics, getEnergy, getSuitability, getDevelopment, getInfrastructure, getFinance, getTrade, getWelfare } from "./routes";
+import { createGame, fallback, getMesh, joinGame, root, startGame, loadGame, getGameState, submitPlan, advanceTurn, getTurnSummary, leaveGame, endGame, getEconomy, getBudget, getLabor, getLogistics, getEnergy, getSuitability, getDevelopment, getInfrastructure, getFinance, getTrade, getWelfare, getPlan } from "./routes";
 import { setupWebSocketHandler } from "./websocket";
 import { ENDPOINTS, PORT } from "./constants";
 import { encode } from "./serialization";
@@ -91,6 +91,7 @@ export const server = Bun.serve({
     },
 
     "/api/games/:gameId/plan": {
+      GET: async req => getPlan(req.params.gameId),
       POST: async req => submitPlan(req.params.gameId, req)
     },
 

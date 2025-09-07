@@ -93,3 +93,21 @@ export function removeFromRoom(gameId: string | null, playerName: string | null)
   if (!gameId || !playerName) return;
   sendWebSocketMessage('remove_from_room', { gameId, playerName });
 }
+export async function fetchPlan(gameId: string) {
+  const res = await fetch(`${SERVER_BASE_URL}/api/games/${gameId}/plan`);
+  if (!res.ok) throw new Error('Failed to fetch plan');
+  return res.json();
+}
+
+export async function submitTurnPlan(gameId: string, playerId: string, plan: any) {
+  const res = await fetch(`${SERVER_BASE_URL}/api/games/${gameId}/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerId, plan }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to submit plan');
+  }
+  return res.json();
+}

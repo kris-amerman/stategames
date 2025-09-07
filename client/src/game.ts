@@ -12,6 +12,7 @@ import {
 } from './terrain';
 import { addToRoom, removeFromRoom, sendGameAction } from './network';
 import { showGameNotification } from './notifications';
+import { showNationPlanner, hideNationPlanner } from './planner';
 
 let canvas: HTMLCanvasElement;
 let ctx: CanvasRenderingContext2D;
@@ -75,6 +76,14 @@ export function handleGameUpdate(data: any): void {
     }
 
     renderGameState();
+
+    if (gameState.status === 'in_progress') {
+      if (currentGameId && currentPlayerName) {
+        showNationPlanner(gameState, currentGameId, currentPlayerName);
+      }
+    } else {
+      hideNationPlanner();
+    }
   }
 }
 
