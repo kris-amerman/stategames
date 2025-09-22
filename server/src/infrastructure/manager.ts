@@ -157,6 +157,27 @@ export class InfrastructureManager {
     entry.owner = newOwner;
   }
 
+  static redesignate(
+    state: EconomyState,
+    type: InfrastructureType,
+    canton: string,
+  ): void {
+    const list = (state.infrastructure[plural(type)] as any) as Record<
+      string,
+      InfrastructureData
+    >;
+    const entry = list[canton];
+    if (!entry) throw new Error('infrastructure not found');
+    const key = type === 'airport' ? 'airport' : type === 'port' ? 'port' : 'rail';
+    const current = (state.infrastructure.national as any)[key];
+    if (current && current !== canton) {
+      const prev = list[current];
+      if (prev) prev.national = false;
+    }
+    entry.national = true;
+    (state.infrastructure.national as any)[key] = canton;
+  }
+
   static navalResupply(unit: NavalUnit): void {
     unit.stockpile = unit.maxStockpile;
   }
@@ -169,12 +190,16 @@ export class InfrastructureManager {
     gatewayCapacities: Partial<Record<Gateway, number>>;
     lpBonus: number;
   } {
-    for (const list of [
-      state.infrastructure.airports,
-      state.infrastructure.ports,
-      state.infrastructure.railHubs,
-    ]) {
+    const applyProgress = (
+      type: InfrastructureType,
+      list: Record<string, InfrastructureData>,
+    ) => {
       for (const entry of Object.values(list)) {
+        if (entry.status === 'active') {
+          const def = getInfraDefinition(type, entry.national);
+          state.resources.gold -= def.oAndM.gold;
+          state.resources.energy -= def.oAndM.energy;
+        }
         if (entry.status === 'building') {
           entry.turns_remaining! -= 1;
           if (entry.turns_remaining! <= 0) {
@@ -191,7 +216,10 @@ export class InfrastructureManager {
           }
         }
       }
-    }
+    };
+    applyProgress('airport', state.infrastructure.airports);
+    applyProgress('port', state.infrastructure.ports);
+    applyProgress('rail', state.infrastructure.railHubs);
     return this.computeNetworks(state, ctx);
   }
 

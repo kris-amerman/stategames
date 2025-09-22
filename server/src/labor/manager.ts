@@ -1,3 +1,5 @@
+import { LABOR_BY_UL } from '../development/manager';
+import { WelfareManager } from '../welfare/manager';
 import type { EconomyState, LaborPool, SectorType, TurnPlan } from '../types';
 
 // Mapping of which labor type each sector primarily uses.
@@ -13,21 +15,34 @@ export const SECTOR_LABOR_TYPES: Record<SectorType, keyof LaborPool> = {
   energy: 'skilled',
 };
 
-// Stub labor supply by urbanization level.
-const LABOR_SUPPLY_BY_UL: Record<number, LaborPool> = {
-  1: { general: 5, skilled: 1, specialist: 0 },
-  2: { general: 10, skilled: 3, specialist: 1 },
-  3: { general: 15, skilled: 5, specialist: 2 },
-};
-
 const emptyPool = (): LaborPool => ({ general: 0, skilled: 0, specialist: 0 });
 
+/** Utility to convert a labor pool in counts to percentages and apply mix shift. */
+function applyEducation(pool: LaborPool, shift: number): LaborPool {
+  if (shift <= 0) return { ...pool };
+  const total = pool.general + pool.skilled + pool.specialist;
+  if (total <= 0) return { ...pool };
+  const perc = {
+    general: (pool.general / total) * 100,
+    skilled: (pool.skilled / total) * 100,
+    specialist: (pool.specialist / total) * 100,
+  };
+  const shifted = WelfareManager.applyLaborMixShift(perc, shift);
+  const general = Math.round((shifted.general / 100) * total);
+  const skilled = Math.round((shifted.skilled / 100) * total);
+  const specialist = total - general - skilled; // ensure sum
+  return { general, skilled, specialist };
+}
+
 export class LaborManager {
-  /** Generate labor pools for each canton based on urbanization level. */
+  /** Generate labor pools for each canton based on urbanization level and welfare. */
   static generate(economy: EconomyState): void {
+    const mods = WelfareManager.getModifiers(economy);
     for (const canton of Object.values(economy.cantons)) {
-      const base = LABOR_SUPPLY_BY_UL[canton.urbanizationLevel] || emptyPool();
-      canton.labor = { ...base };
+      const base = LABOR_BY_UL[canton.urbanizationLevel] || emptyPool();
+      const pool = applyEducation(base, mods.laborShift);
+      canton.labor = { ...pool };
+      canton.happiness = mods.happinessPerLabor;
       canton.laborDemand = {};
       canton.laborAssigned = {};
       canton.consumption = {
@@ -43,42 +58,36 @@ export class LaborManager {
 
   /** Assign labor to funded sector slots within each canton. */
   static assign(economy: EconomyState, plan?: TurnPlan): void {
-    const priorities = (plan?.slotPriorities || {}) as Partial<Record<SectorType, number>>;
+    const planPriorities = (plan?.slotPriorities || {}) as Partial<Record<SectorType, number>>;
 
-    for (const [cantonId, canton] of Object.entries(economy.cantons)) {
-      const available: LaborPool = {
-        general: Math.floor(canton.labor.general * canton.lai),
-        skilled: Math.floor(canton.labor.skilled * canton.lai),
-        specialist: Math.floor(canton.labor.specialist * canton.lai),
-      };
+    for (const canton of Object.values(economy.cantons)) {
+      const available: LaborPool = { ...canton.labor };
 
-      const entries: Array<{
-        sector: SectorType;
-        demand: LaborPool;
-        priority: number;
-        suitability: number;
-      }> = [];
-
-      for (const [sectorKey, sectorState] of Object.entries(canton.sectors) as [SectorType, any][]) {
-        if (!sectorState || sectorState.funded <= 0) continue;
+      const entries: Array<{ sector: SectorType; demand: LaborPool }> = [];
+      for (const [sectorKey, sectorState] of Object.entries(canton.sectors) as [
+        SectorType,
+        any,
+      ][]) {
+        if (!sectorState || sectorState.funded <= 0) continue; // only funded slots
         const laborType = SECTOR_LABOR_TYPES[sectorKey];
         const demand = emptyPool();
         demand[laborType] = sectorState.funded;
         canton.laborDemand[sectorKey] = { ...demand };
-        entries.push({
-          sector: sectorKey,
-          demand,
-          priority: priorities[sectorKey] ?? 0,
-          suitability: canton.suitability[sectorKey] ?? 0,
-        });
+        entries.push({ sector: sectorKey, demand });
       }
 
-      // Sort by plan priority then suitability.
+      // Sort by plan priority then suitability then sector name for determinism.
       entries.sort((a, b) => {
-        if (a.priority === b.priority) return b.suitability - a.suitability;
-        return a.priority - b.priority;
+        const pa = planPriorities[a.sector] ?? 0;
+        const pb = planPriorities[b.sector] ?? 0;
+        if (pa !== pb) return pa - pb;
+        const sa = canton.suitability[a.sector] ?? 0;
+        const sb = canton.suitability[b.sector] ?? 0;
+        if (sa !== sb) return sb - sa; // higher suitability first
+        return a.sector.localeCompare(b.sector);
       });
 
+      const assignedBefore: Record<SectorType, LaborPool> = {};
       for (const entry of entries) {
         const assigned = emptyPool();
         (Object.keys(available) as (keyof LaborPool)[]).forEach((type) => {
@@ -87,11 +96,32 @@ export class LaborManager {
           assigned[type] = give;
           available[type] -= give;
         });
-        canton.laborAssigned[entry.sector] = assigned;
+        assignedBefore[entry.sector] = assigned;
       }
 
-      // leftover labor is discarded (no stockpiling).
-      canton.labor = available;
+      // Apply LAI scaling and update sector funded/idle
+      for (const entry of entries) {
+        const assigned = assignedBefore[entry.sector];
+        const effective: LaborPool = {
+          general: Math.floor(assigned.general * canton.lai),
+          skilled: Math.floor(assigned.skilled * canton.lai),
+          specialist: Math.floor(assigned.specialist * canton.lai),
+        };
+        canton.laborAssigned[entry.sector] = effective;
+
+        const demand = canton.laborDemand[entry.sector]!;
+        const effectiveTotal =
+          effective.general + effective.skilled + effective.specialist;
+        const demandTotal = demand.general + demand.skilled + demand.specialist;
+        const unmet = demandTotal - effectiveTotal;
+        const sectorState = canton.sectors[entry.sector];
+        if (sectorState) {
+          sectorState.idle += unmet;
+          sectorState.funded = effectiveTotal;
+        }
+      }
+
+      // leftover labor is discarded (no stockpiling) - canton.labor already records supply
     }
   }
 
@@ -123,3 +153,4 @@ export class LaborManager {
     this.consume(economy);
   }
 }
+

@@ -8,6 +8,7 @@ function setup(): EconomyState {
   EconomyManager.addCanton(s, 'A');
   s.resources.gold = 10000;
   s.resources.production = 10000;
+  s.resources.energy = 1000;
   return s;
 }
 
@@ -28,6 +29,21 @@ test('project tier definitions and start for each tier', () => {
   ProjectsManager.start(state, 'A', 'agriculture', 'large');
   ProjectsManager.start(state, 'A', 'agriculture', 'mega');
   expect(state.projects.projects.length).toBe(4);
+});
+
+test('active projects incur O&M costs each turn', () => {
+  const state = setup();
+  ProjectsManager.start(state, 'A', 'agriculture', 'small');
+  for (let i = 0; i < 3; i++) ProjectsManager.advance(state); // reach active
+  const goldBefore = state.resources.gold;
+  const energyBefore = state.resources.energy;
+  ProjectsManager.advance(state);
+  expect(state.resources.gold).toBe(
+    goldBefore - getProjectDefinition('small').oAndM.gold,
+  );
+  expect(state.resources.energy).toBe(
+    energyBefore - getProjectDefinition('small').oAndM.energy,
+  );
 });
 
 // === Delays ===

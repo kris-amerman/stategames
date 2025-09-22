@@ -9,7 +9,8 @@ import type {
   EntityId,
   Entity,
   EntityType,
-  MapSize
+  MapSize,
+  InfrastructureData
 } from '../types';
 import { EconomyManager } from '../economy';
 
@@ -21,25 +22,29 @@ export class GameStateManager {
     gameId: string,
     joinCode: string,
     players: PlayerId[],
-    mapSize: MapSize
+    mapSize: MapSize,
+    nationCount: number
   ): GameMeta {
     return {
       gameId,
       joinCode,
       createdAt: new Date().toISOString(),
       players,
-      mapSize
+       mapSize,
+      nationCount
     };
   }
 
   static createInitialGameState(players: PlayerId[]): GameState {
     return {
       status: "waiting",
-      currentPlayer: players[0], // First player starts
-      turnNumber: 1,
+      currentPlayer: null,
+      turnNumber: 0,
       phase: "planning",
       currentPlan: null,
       nextPlan: null,
+      planSubmittedBy: null,
+      turnSummary: null,
 
       // Initialize empty ownership maps
       cellOwnership: {},
@@ -68,10 +73,11 @@ export class GameStateManager {
     joinCode: string,
     players: PlayerId[],
     mapSize: MapSize,
-    biomes: Uint8Array
+    biomes: Uint8Array,
+    nationCount: number
   ): Game {
     return {
-      meta: this.createInitialGameMeta(gameId, joinCode, players, mapSize),
+      meta: this.createInitialGameMeta(gameId, joinCode, players, mapSize, nationCount),
       map: this.createGameMap(biomes),
       state: this.createInitialGameState(players)
     };
@@ -249,146 +255,144 @@ export class GameStateManager {
 
   // === GAME STATE UPDATES ===
 
-  static startGame(gameState: GameState): void {
+  static startGame(gameState: GameState, players: PlayerId[]): void {
     gameState.status = "in_progress";
+    gameState.currentPlayer = players[0] ?? null;
+    gameState.turnNumber = 1;
   }
 
   // === STARTING TERRITORY ASSIGNMENT ===
 
   static assignStartingTerritories(
-    gameState: GameState, 
-    cellNeighbors: Int32Array, 
+    gameState: GameState,
+    cellNeighbors: Int32Array,
     cellOffsets: Uint32Array,
     cellCount: number,
-    cellsPerPlayer: number
+    biomes: Uint8Array,
+    deepOceanBiome: number = 7
   ): void {
     const players = Object.keys(gameState.playerCells);
-    
-    console.log(`Assigning ${cellsPerPlayer} starting cells to ${players.length} players`);
 
-    // Track which cells are already claimed
-    const claimedCells = new Set<CellId>();
-    
-    for (const playerId of players) {
-      const startingCells = this.findContiguousRegion(
-        cellCount,
-        cellNeighbors,
-        cellOffsets,
-        claimedCells,
-        cellsPerPlayer
-      );
-      
-      // Claim all cells for this player
-      for (const cellId of startingCells) {
-        this.claimCell(gameState, cellId, playerId);
-        claimedCells.add(cellId);
-      }
-      
-      console.log(`Player ${playerId} assigned ${startingCells.length} starting cells`);
-    }
-  }
-
-  private static findContiguousRegion(
-    totalCells: number,
-    cellNeighbors: Int32Array,
-    cellOffsets: Uint32Array,
-    claimedCells: Set<CellId>,
-    targetSize: number,
-    maxAttempts: number = 100
-  ): CellId[] {
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // Pick a random unclaimed starting cell
-      let startCell: CellId;
-      let attempts = 0;
-      do {
-        startCell = Math.floor(Math.random() * totalCells);
-        attempts++;
-        if (attempts > 1000) {
-          throw new Error("Could not find unclaimed starting cell after 1000 attempts");
-        }
-      } while (claimedCells.has(startCell));
-
-      // Try to grow a contiguous region from this cell
-      const region = this.growContiguousRegion(
-        startCell,
-        cellNeighbors,
-        cellOffsets,
-        claimedCells,
-        targetSize
-      );
-
-      // If we got close to our target size, use this region
-      if (region.length >= Math.min(targetSize, targetSize * 0.8)) {
-        return region.slice(0, targetSize); // Trim to exact size if we got more
-      }
+    // Gather all claimable cells (exclude deep ocean)
+    const claimable = new Set<CellId>();
+    for (let cell = 0; cell < cellCount; cell++) {
+      if (biomes[cell] !== deepOceanBiome) claimable.add(cell);
     }
 
-    // Fallback: just find any available cells
-    console.warn(`Could not find contiguous region of size ${targetSize}, falling back to scattered cells`);
-    return this.findScatteredCells(totalCells, claimedCells, targetSize);
-  }
+    if (claimable.size === 0) return; // nothing to claim
 
-  private static growContiguousRegion(
-    startCell: CellId,
-    cellNeighbors: Int32Array,
-    cellOffsets: Uint32Array,
-    claimedCells: Set<CellId>,
-    targetSize: number
-  ): CellId[] {
-    const region = new Set<CellId>([startCell]);
-    const frontier = new Set<CellId>([startCell]);
-
-    while (region.size < targetSize && frontier.size > 0) {
-      // Pick a random cell from the frontier
-      const frontierArray = Array.from(frontier);
-      const currentCell = frontierArray[Math.floor(Math.random() * frontierArray.length)];
-      frontier.delete(currentCell);
-
-      // Get neighbors of current cell
-      const start = cellOffsets[currentCell];
-      const end = cellOffsets[currentCell + 1];
-
-      for (let i = start; i < end; i++) {
-        const neighborId = cellNeighbors[i];
-        
-        // Skip invalid neighbors (boundary cells return -1)
-        if (neighborId < 0) continue;
-        
-        // Skip already claimed or already in region
-        if (claimedCells.has(neighborId) || region.has(neighborId)) continue;
-
-        // Add to region and frontier
-        region.add(neighborId);
-        frontier.add(neighborId);
-
-        // Stop if we've reached our target
-        if (region.size >= targetSize) break;
-      }
-    }
-
-    return Array.from(region);
-  }
-
-  private static findScatteredCells(
-    totalCells: number,
-    claimedCells: Set<CellId>,
-    targetSize: number
-  ): CellId[] {
-    const availableCells: CellId[] = [];
-    
-    for (let cellId = 0; cellId < totalCells; cellId++) {
-      if (!claimedCells.has(cellId)) {
-        availableCells.push(cellId);
-      }
-    }
-
-    // Shuffle and take the first targetSize cells
-    for (let i = availableCells.length - 1; i > 0; i--) {
+    // Randomize order for seed selection
+    const claimableArray = Array.from(claimable);
+    for (let i = claimableArray.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [availableCells[i], availableCells[j]] = [availableCells[j], availableCells[i]];
+      [claimableArray[i], claimableArray[j]] = [claimableArray[j], claimableArray[i]];
     }
 
-    return availableCells.slice(0, Math.min(targetSize, availableCells.length));
+    // Owner map used for BFS propagation (null = unvisited)
+    const owners: (PlayerId | null)[] = new Array(cellCount).fill(null);
+    const queue: CellId[] = [];
+
+    // Seed each player with an initial claimable cell if available
+    players.forEach((playerId, idx) => {
+      const seed = claimableArray.pop();
+      if (seed === undefined) return; // not enough cells
+      owners[seed] = playerId;
+      queue.push(seed);
+      claimable.delete(seed);
+      this.claimCell(gameState, seed, playerId);
+    });
+
+    // Helper to choose player with fewest cells for additional seeds
+    const leastCellsPlayer = (): PlayerId => {
+      return players.reduce((min, p) =>
+        this.getPlayerCellCount(gameState, p) < this.getPlayerCellCount(gameState, min)
+          ? p
+          : min,
+      players[0]);
+    };
+
+    while (claimable.size > 0 || queue.length > 0) {
+      // If queue empty but cells remain (disconnected region), seed it to the smallest player
+      if (queue.length === 0 && claimable.size > 0) {
+        const seed = claimable.values().next().value as CellId;
+        const player = leastCellsPlayer();
+        owners[seed] = player;
+        this.claimCell(gameState, seed, player);
+        claimable.delete(seed);
+        queue.push(seed);
+      }
+
+      const cell = queue.shift();
+      if (cell === undefined) continue;
+      const owner = owners[cell]!;
+
+      const start = cellOffsets[cell];
+      const end = cellOffsets[cell + 1];
+      for (let i = start; i < end; i++) {
+        const neighbor = cellNeighbors[i];
+        if (neighbor < 0) continue; // boundary
+        if (owners[neighbor] !== null) continue; // already processed
+        owners[neighbor] = owner;
+        queue.push(neighbor);
+        if (claimable.has(neighbor)) {
+          this.claimCell(gameState, neighbor, owner);
+          claimable.delete(neighbor);
+        }
+      }
+    }
+  }
+
+  static initializeNationInfrastructure(
+    gameState: GameState,
+    players: PlayerId[],
+    biomes: Uint8Array,
+    cellNeighbors: Int32Array,
+    cellOffsets: Uint32Array,
+  ): void {
+    const SHALLOW_OCEAN = 6;
+    const DEEP_OCEAN = 7;
+
+    for (const player of players) {
+      const cells = this.getPlayerCells(gameState, player);
+      if (cells.length === 0) continue;
+      const capital = cells[0];
+      const cantonId = String(capital);
+
+      // Ensure a canton exists for this capital cell
+      EconomyManager.addCanton(gameState.economy, cantonId);
+
+      const base: InfrastructureData = {
+        owner: 'national',
+        status: 'active',
+        national: true,
+        hp: 100,
+      };
+
+      // National Airport and Rail Hub
+      gameState.economy.infrastructure.airports[cantonId] = { ...base };
+      gameState.economy.infrastructure.railHubs[cantonId] = { ...base };
+      gameState.economy.infrastructure.national.airport = cantonId;
+      gameState.economy.infrastructure.national.rail = cantonId;
+
+      // Check if the capital cell is coastal for port placement
+      let coastal = false;
+      const start = cellOffsets[capital];
+      const end = cellOffsets[capital + 1];
+      for (let i = start; i < end; i++) {
+        const nb = cellNeighbors[i];
+        if (nb < 0) continue;
+        const biome = biomes[nb];
+        if (biome === SHALLOW_OCEAN || biome === DEEP_OCEAN) {
+          coastal = true;
+          break;
+        }
+      }
+
+      if (coastal) {
+        gameState.economy.infrastructure.ports[cantonId] = { ...base };
+        gameState.economy.infrastructure.national.port = cantonId;
+      }
+    }
   }
 
   static finishGame(gameState: GameState): void {

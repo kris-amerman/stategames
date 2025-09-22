@@ -1,0 +1,11 @@
+{
+  "agriculture": { "energy": 1, "logistics": 1, "inputs": {} },
+  "extraction": { "energy": 1, "logistics": 1, "inputs": {} },
+  "manufacturing": { "energy": 2, "logistics": 1, "inputs": { "materials": 1 } },
+  "defense": { "energy": 2, "logistics": 1, "inputs": { "production": 1, "materials": 1 } },
+  "luxury": { "energy": 1, "logistics": 1, "inputs": { "production": 1 } },
+  "finance": { "energy": 0, "logistics": 0, "inputs": {} },
+  "research": { "energy": 1, "logistics": 1, "inputs": {} },
+  "logistics": { "energy": 1, "logistics": 0, "inputs": {} },
+  "energy": { "energy": 0, "logistics": 0, "inputs": { "materials": 1 } }
+}

@@ -102,9 +102,9 @@ export class WelfareManager {
   static applyLaborMixShift(labor: LaborPool, points: number): LaborPool {
     const skilledAdd = Math.round((points * 2) / 3);
     const specialistAdd = points - skilledAdd;
-    const general = Math.max(0, labor.general - points);
-    const skilled = Math.min(90, labor.skilled + skilledAdd);
-    const specialist = Math.min(90, labor.specialist + specialistAdd);
+    const general = Math.min(90, Math.max(0, labor.general - points));
+    const skilled = Math.min(90, Math.max(0, labor.skilled + skilledAdd));
+    const specialist = Math.min(90, Math.max(0, labor.specialist + specialistAdd));
     return { general, skilled, specialist };
   }
 }

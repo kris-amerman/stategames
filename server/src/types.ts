@@ -143,6 +143,8 @@ export interface SectorState {
   funded: number;
   /** Slots idle and charged idle tax */
   idle: number;
+  /** Slots that actually ran after all gates */
+  utilization?: number;
 }
 
 // === Energy System Types ===
@@ -224,6 +226,8 @@ export interface CantonEconomy {
   laborDemand: Partial<Record<SectorType, LaborPool>>;
   laborAssigned: Partial<Record<SectorType, LaborPool>>;
   lai: number;
+  /** Happiness modifier from healthcare tier applied this turn */
+  happiness: number;
   consumption: LaborConsumption;
   shortages: ShortageRecord;
   urbanizationLevel: number;
@@ -294,6 +298,14 @@ export interface FinanceState {
   defaulted: boolean;
   /** Debt stress tier flags */
   debtStress: boolean[];
+  /** Summary of the last finance step */
+  summary: {
+    revenues: number;
+    expenditures: number;
+    netBorrowing: number;
+    interest: number;
+    defaulted: boolean;
+  };
 }
 
 export interface TradeState {
@@ -315,6 +327,8 @@ export interface EconomyState {
     demandBySector: Partial<Record<SectorType, number>>;
     brownouts: BrownoutRecord[];
     essentialsFirst: boolean;
+    fuelUsed: Partial<Record<ResourceType, number>>;
+    oAndMSpent: number;
   };
   /** Infrastructure registry */
   infrastructure: InfrastructureRegistry;
@@ -363,6 +377,9 @@ export interface GameMeta {
    * Determines which mesh to use.
    */
   mapSize: MapSize;
+
+  /** Total number of nations/players expected for this game */
+  nationCount: number;
 }
 
 /**
@@ -395,7 +412,7 @@ export interface GameState {
   status: "waiting" | "in_progress" | "finished";
 
   /** ID of the player whose turn it currently is */
-  currentPlayer: PlayerId;
+  currentPlayer: PlayerId | null;
 
   /** Current turn number (increments when all players have taken their turn) */
   turnNumber: number;
@@ -408,6 +425,12 @@ export interface GameState {
 
   /** Plan being prepared for the next turn */
   nextPlan: TurnPlan | null;
+
+  /** Player who submitted the next plan, if any */
+  planSubmittedBy?: PlayerId | null;
+
+  /** Summary generated when the last turn executed */
+  turnSummary?: TurnSummary | null;
 
   /**
    * Maps each cell to its current owner.

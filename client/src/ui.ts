@@ -21,6 +21,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
   `;
 
   uiPanel.innerHTML = `
+    <div id="terrainControls">
     <h3 style="margin: 0 0 15px 0; color: #4CAF50;">Biome Terrain Controls</h3>
 
     <div style="margin-bottom: 15px;">
@@ -185,11 +186,17 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     </div>
 
     <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
+      <div style="margin-bottom: 10px;">
+        <label>Nation Count:</label>
+        <input type="number" id="nationCount" min="1" max="8" value="2" style="width: 100%; padding: 4px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
+      </div>
       <div style="display: flex; gap: 10px; margin-bottom: 10px;">
         <button id="createGame" style="flex: 1; background: #4CAF50; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer;">Create Game</button>
         <button id="joinGame" style="flex: 1; background: #2196F3; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer;">Join Game</button>
       </div>
     </div>
+    </div>
+    <div id="gameState" style="display: none;"></div>
   `;
 
   document.body.appendChild(uiPanel);
@@ -298,4 +305,9 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       });
     }
   }
+}
+
+export function hideTerrainControls() {
+  const controls = document.getElementById('terrainControls');
+  if (controls) controls.style.display = 'none';
 }

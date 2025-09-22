@@ -90,9 +90,14 @@ export class SuitabilityManager {
   private static computeSector(canton: CantonEconomy, sector: SectorType): SuitabilityResult {
     const geoMods = this.geoModifiers[sector] || {};
     let tfpRaw = 0;
+    let total = 0;
     for (const [tile, share] of Object.entries(canton.geography) as [TileType, number][]) {
       const mod = geoMods[tile] ?? 0;
       tfpRaw += share * mod;
+      total += share;
+    }
+    if (total > 0 && Math.abs(total - 1) > 1e-6) {
+      tfpRaw /= total; // normalize if shares don't sum to 1
     }
     const ulMod = this.ulModifiers[sector]?.[canton.urbanizationLevel] ?? 0;
     const combined = tfpRaw + ulMod;

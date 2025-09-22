@@ -50,7 +50,19 @@ export class BudgetManager {
     state.resources.gold -= budgets.military;
     state.resources.gold -= budgets.welfare;
 
-    for (const sector of Object.keys(budgets.sectorOM) as SectorType[]) {
+    // Determine all sectors present in the economy so that unfunded sectors
+    // still incur idle costs. Include sectors specified in the budget even if
+    // no canton currently hosts them.
+    const sectors = new Set<SectorType>();
+    for (const canton of Object.values(state.cantons)) {
+      for (const s of Object.keys(canton.sectors) as SectorType[]) {
+        sectors.add(s);
+      }
+    }
+    for (const s of Object.keys(budgets.sectorOM) as SectorType[]) {
+      sectors.add(s);
+    }
+    for (const sector of sectors) {
       const sectorBudget = budgets.sectorOM[sector] ?? 0;
       this.fundSector(state, sector, sectorBudget);
     }
@@ -93,7 +105,11 @@ export class BudgetManager {
     const slotsToFund = Math.min(maxFundableSlots, totalCapacity);
 
     // Sort by suitability descending for baseline allocation.
-    entries.sort((a, b) => b.suitability - a.suitability);
+    // Break ties deterministically by canton id to ensure stable results across engines.
+    entries.sort((a, b) => {
+      const diff = b.suitability - a.suitability;
+      return diff !== 0 ? diff : a.id.localeCompare(b.id);
+    });
 
     if (slotsToFund >= totalCapacity) {
       for (const e of entries) {
@@ -113,13 +129,15 @@ export class BudgetManager {
     let allocated = entries.reduce((sum, e) => sum + e.funded, 0);
     const remaining = slotsToFund - allocated;
     if (remaining > 0) {
-      // Distribute remaining slots by remainder, breaking ties by suitability.
+      // Distribute remaining slots by remainder,
+      // breaking ties by suitability then canton id for determinism.
       entries
         .sort((a, b) => {
-          if (b.remainder === a.remainder) {
-            return b.suitability - a.suitability;
-          }
-          return b.remainder - a.remainder;
+          const remDiff = b.remainder - a.remainder;
+          if (remDiff !== 0) return remDiff;
+          const suitDiff = b.suitability - a.suitability;
+          if (suitDiff !== 0) return suitDiff;
+          return a.id.localeCompare(b.id);
         })
         .slice(0, remaining)
         .forEach((e) => {
@@ -146,6 +164,7 @@ export class BudgetManager {
     const sectorState = canton.sectors[sector];
     sectorState.funded = funded;
     sectorState.idle = idle;
+    sectorState.utilization = 0;
 
     const activeCost = funded * costPer;
     const idleCost = idle * costPer * IDLE_TAX_RATE;
@@ -185,6 +204,7 @@ export class BudgetManager {
         capacity: 0,
         funded: 0,
         idle: 0,
+        utilization: 0,
       });
       toState.capacity += order.slots;
     }
