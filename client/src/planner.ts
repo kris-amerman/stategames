@@ -817,18 +817,18 @@ function buildPlannerMarkup(): string {
                 <span id="plannerEducationTierValue" style="color: #8BC34A; font-size: 12px;">Tier 0</span>
               </div>
               <div style="display: flex; align-items: center; gap: 12px;">
-                <input id="plannerEducation" type="range" min="0" max="4" step="1" style="flex: 1;" />
+                <input id="plannerEducation" type="range" min="0" max="4" step="1" list="plannerEducationMarks" style="flex: 1;" />
+                <datalist id="plannerEducationMarks">
+                  <option value="0"></option>
+                  <option value="1"></option>
+                  <option value="2"></option>
+                  <option value="3"></option>
+                  <option value="4"></option>
+                </datalist>
                 <div style="min-width: 120px; text-align: right;">
                   <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
                   <div id="plannerEducationCost" style="font-size: 12px; color: #fff; font-weight: 600;">0</div>
                 </div>
-              </div>
-              <div style="display: grid; grid-template-columns: repeat(5, 1fr); font-size: 10px; color: #888; margin-top: 4px;">
-                <span style="text-align: center;">0</span>
-                <span style="text-align: center;">1</span>
-                <span style="text-align: center;">2</span>
-                <span style="text-align: center;">3</span>
-                <span style="text-align: center;">4</span>
               </div>
             </div>
             <div>
@@ -837,18 +837,18 @@ function buildPlannerMarkup(): string {
                 <span id="plannerHealthcareTierValue" style="color: #8BC34A; font-size: 12px;">Tier 0</span>
               </div>
               <div style="display: flex; align-items: center; gap: 12px;">
-                <input id="plannerHealthcare" type="range" min="0" max="4" step="1" style="flex: 1;" />
+                <input id="plannerHealthcare" type="range" min="0" max="4" step="1" list="plannerHealthcareMarks" style="flex: 1;" />
+                <datalist id="plannerHealthcareMarks">
+                  <option value="0"></option>
+                  <option value="1"></option>
+                  <option value="2"></option>
+                  <option value="3"></option>
+                  <option value="4"></option>
+                </datalist>
                 <div style="min-width: 120px; text-align: right;">
                   <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
                   <div id="plannerHealthcareCost" style="font-size: 12px; color: #fff; font-weight: 600;">0</div>
                 </div>
-              </div>
-              <div style="display: grid; grid-template-columns: repeat(5, 1fr); font-size: 10px; color: #888; margin-top: 4px;">
-                <span style="text-align: center;">0</span>
-                <span style="text-align: center;">1</span>
-                <span style="text-align: center;">2</span>
-                <span style="text-align: center;">3</span>
-                <span style="text-align: center;">4</span>
               </div>
             </div>
           </div>
@@ -856,19 +856,9 @@ function buildPlannerMarkup(): string {
         </section>
 
         <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <h5 style="margin: 0; color: #fff;">Sector Operations &amp; Maintenance</h5>
-            <div style="font-size: 12px; color: #ccc; display: flex; gap: 10px;">
-              <label><input type="radio" name="plannerMode" id="plannerModeCustom" value="custom" checked /> Custom</label>
-              <label><input type="radio" name="plannerMode" id="plannerModeProrata" value="pro-rata" /> Pro-rata</label>
-            </div>
-          </div>
-          <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 10px;">
             <span>Total O&amp;M Allocation</span>
             <span id="plannerTotalOmValue" style="color: #fff; font-weight: 600;">0</span>
-          </div>
-          <div style="font-size: 11px; color: #888; margin-bottom: 10px;">
-            Custom mode enables dragging and editing sector funding. Pro-rata locks the cards and splits funding evenly.
           </div>
           <div style="display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr; gap: 8px; font-size: 12px; font-weight: 600; color: #ccc; margin-bottom: 6px;">
             <div>Sector</div>
@@ -878,6 +868,16 @@ function buildPlannerMarkup(): string {
             <div>Funding</div>
           </div>
           <div id="plannerSectors"></div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
+            <h5 style="margin: 0; color: #fff;">Priority Mode</h5>
+            <div style="font-size: 12px; color: #ccc; display: flex; gap: 10px;">
+              <label><input type="radio" name="plannerMode" id="plannerModeCustom" value="custom" checked /> Custom</label>
+              <label><input type="radio" name="plannerMode" id="plannerModeProrata" value="pro-rata" /> Pro-rata</label>
+            </div>
+          </div>
+          <div style="font-size: 11px; color: #888; margin-top: 6px;">
+            Custom mode enables dragging and editing sector funding. Pro-rata locks the cards and splits funding evenly.
+          </div>
         </section>
 
         <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
