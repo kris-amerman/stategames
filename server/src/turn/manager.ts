@@ -209,6 +209,8 @@ export class TurnManager {
       slotPriorities: {},
       tradeOrders: {},
       projects: {},
+      allocationMode: 'custom',
+      sectorPriority: [],
     };
   }
 }

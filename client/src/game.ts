@@ -12,6 +12,7 @@ import {
 } from './terrain';
 import { addToRoom, removeFromRoom, sendGameAction } from './network';
 import { showGameNotification } from './notifications';
+import { updatePlannerSnapshot } from './planner';
 
 let canvas: HTMLCanvasElement;
 let ctx: CanvasRenderingContext2D;
@@ -75,6 +76,7 @@ export function handleGameUpdate(data: any): void {
     }
 
     renderGameState();
+    updatePlannerSnapshot(gameState);
   }
 }
 
@@ -151,9 +153,11 @@ export function processGameData(gameData: any): void {
       console.log(`Loading ${gameData.meta.mapSize} mesh for game...`);
       loadOrGetMesh(gameData.meta.mapSize as MapSize, ctx).then(() => {
         renderGameState();
+        updatePlannerSnapshot(gameData.state);
       });
     } else {
       renderGameState();
+      updatePlannerSnapshot(gameData.state);
     }
 
   } catch (error: any) {

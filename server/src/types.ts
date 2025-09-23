@@ -41,6 +41,8 @@ export interface TurnPlan {
   slotPriorities?: Record<string, any>;
   tradeOrders?: Record<string, any>;
   projects?: Record<string, any>;
+  allocationMode?: 'custom' | 'pro-rata';
+  sectorPriority?: string[];
 }
 
 export interface TurnSummary {
