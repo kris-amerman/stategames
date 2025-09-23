@@ -13,4 +13,11 @@ const runInVitest = typeof (globalThis as any).Bun === 'undefined';
     const panel = document.body.querySelector('div');
     expect(panel).not.toBeNull();
   });
+
+  it('creates game controls container hidden by default', () => {
+    createUI({} as CanvasRenderingContext2D);
+    const controls = document.getElementById('gameControls');
+    expect(controls).not.toBeNull();
+    expect(controls?.style.display).toBe('none');
+  });
 });
