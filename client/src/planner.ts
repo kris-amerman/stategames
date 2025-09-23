@@ -72,7 +72,6 @@ interface SerializedPlan {
   sectorOrder: SectorKey[];
   sectorAllocations: Record<SectorKey, number>;
   militaryAllocation: number;
-  welfareBudget: number;
   educationTier: number;
   healthcareTier: number;
 }
@@ -91,8 +90,6 @@ interface PlannerElements {
   healthcareTierValue: HTMLElement;
   educationCost: HTMLElement;
   healthcareCost: HTMLElement;
-  welfareRequired: HTMLElement;
-  welfareAvailable: HTMLElement;
   welfareDownshift: HTMLElement;
   allocationModeCustom: HTMLInputElement;
   allocationModeProrata: HTMLInputElement;
@@ -537,16 +534,24 @@ function renderPlanner() {
 
   elements.educationSlider.value = String(state.educationTier);
   elements.healthcareSlider.value = String(state.healthcareTier);
-  elements.educationSlider.min = String(state.educationMin);
-  elements.educationSlider.max = String(state.educationMax);
-  elements.healthcareSlider.min = String(state.healthcareMin);
-  elements.healthcareSlider.max = String(state.healthcareMax);
+  elements.educationSlider.min = '0';
+  elements.educationSlider.max = '4';
+  elements.educationSlider.step = '1';
+  elements.educationSlider.setAttribute('data-allowed-min', String(state.educationMin));
+  elements.educationSlider.setAttribute('data-allowed-max', String(state.educationMax));
+  elements.educationSlider.title = `Allowed tiers this turn: ${state.educationMin} – ${state.educationMax}`;
+  elements.healthcareSlider.min = '0';
+  elements.healthcareSlider.max = '4';
+  elements.healthcareSlider.step = '1';
+  elements.healthcareSlider.setAttribute('data-allowed-min', String(state.healthcareMin));
+  elements.healthcareSlider.setAttribute('data-allowed-max', String(state.healthcareMax));
+  elements.healthcareSlider.title = `Allowed tiers this turn: ${state.healthcareMin} – ${state.healthcareMax}`;
   elements.educationTierValue.textContent = `Tier ${state.educationTier}`;
+  elements.educationTierValue.title = `Allowed this turn: ${state.educationMin} – ${state.educationMax}`;
   elements.healthcareTierValue.textContent = `Tier ${state.healthcareTier}`;
+  elements.healthcareTierValue.title = `Allowed this turn: ${state.healthcareMin} – ${state.healthcareMax}`;
   elements.educationCost.textContent = formatGold(state.educationCost);
   elements.healthcareCost.textContent = formatGold(state.healthcareCost);
-  elements.welfareRequired.textContent = formatGold(state.welfareBudget);
-  elements.welfareAvailable.textContent = formatGold(state.welfareAvailable);
 
   if (state.welfareAvailable + 0.001 < state.welfareBudget) {
     const shortfall = Math.max(0, state.welfareBudget - state.welfareAvailable);
@@ -652,7 +657,6 @@ async function fetchPlannerData() {
       sectorOrder: [...state.sectorOrder],
       sectorAllocations: { ...state.sectorAllocations },
       militaryAllocation: state.militaryAllocation,
-      welfareBudget: state.welfareBudget,
       educationTier: state.educationTier,
       healthcareTier: state.healthcareTier,
     };
@@ -747,15 +751,25 @@ function attachEventListeners() {
   });
 
   elements.educationSlider.addEventListener('input', () => {
-    const value = Number(elements?.educationSlider.value) || 0;
-    state.educationTier = Math.min(state.educationMax, Math.max(state.educationMin, value));
+    const raw = Number(elements?.educationSlider.value) || 0;
+    const normalized = Math.max(0, Math.min(4, Math.round(raw)));
+    const constrained = Math.min(state.educationMax, Math.max(state.educationMin, normalized));
+    if (constrained !== normalized) {
+      elements.educationSlider.value = String(constrained);
+    }
+    state.educationTier = constrained;
     refreshTotals();
     renderPlanner();
   });
 
   elements.healthcareSlider.addEventListener('input', () => {
-    const value = Number(elements?.healthcareSlider.value) || 0;
-    state.healthcareTier = Math.min(state.healthcareMax, Math.max(state.healthcareMin, value));
+    const raw = Number(elements?.healthcareSlider.value) || 0;
+    const normalized = Math.max(0, Math.min(4, Math.round(raw)));
+    const constrained = Math.min(state.healthcareMax, Math.max(state.healthcareMin, normalized));
+    if (constrained !== normalized) {
+      elements.healthcareSlider.value = String(constrained);
+    }
+    state.healthcareTier = constrained;
     refreshTotals();
     renderPlanner();
   });
@@ -802,17 +816,19 @@ function buildPlannerMarkup(): string {
                 <label for="plannerEducation" style="color: #fff; font-weight: 600;">Education Tier</label>
                 <span id="plannerEducationTierValue" style="color: #8BC34A; font-size: 12px;">Tier 0</span>
               </div>
-              <input id="plannerEducation" type="range" min="0" max="4" step="1" style="width: 100%;" />
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <input id="plannerEducation" type="range" min="0" max="4" step="1" style="flex: 1;" />
+                <div style="min-width: 120px; text-align: right;">
+                  <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
+                  <div id="plannerEducationCost" style="font-size: 12px; color: #fff; font-weight: 600;">0</div>
+                </div>
+              </div>
               <div style="display: grid; grid-template-columns: repeat(5, 1fr); font-size: 10px; color: #888; margin-top: 4px;">
                 <span style="text-align: center;">0</span>
                 <span style="text-align: center;">1</span>
                 <span style="text-align: center;">2</span>
                 <span style="text-align: center;">3</span>
                 <span style="text-align: center;">4</span>
-              </div>
-              <div style="margin-top: 6px; font-size: 12px; color: #bbb; display: flex; justify-content: space-between;">
-                <span>Allocated Gold</span>
-                <span id="plannerEducationCost">0</span>
               </div>
             </div>
             <div>
@@ -820,7 +836,13 @@ function buildPlannerMarkup(): string {
                 <label for="plannerHealthcare" style="color: #fff; font-weight: 600;">Healthcare Tier</label>
                 <span id="plannerHealthcareTierValue" style="color: #8BC34A; font-size: 12px;">Tier 0</span>
               </div>
-              <input id="plannerHealthcare" type="range" min="0" max="4" step="1" style="width: 100%;" />
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <input id="plannerHealthcare" type="range" min="0" max="4" step="1" style="flex: 1;" />
+                <div style="min-width: 120px; text-align: right;">
+                  <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
+                  <div id="plannerHealthcareCost" style="font-size: 12px; color: #fff; font-weight: 600;">0</div>
+                </div>
+              </div>
               <div style="display: grid; grid-template-columns: repeat(5, 1fr); font-size: 10px; color: #888; margin-top: 4px;">
                 <span style="text-align: center;">0</span>
                 <span style="text-align: center;">1</span>
@@ -828,20 +850,6 @@ function buildPlannerMarkup(): string {
                 <span style="text-align: center;">3</span>
                 <span style="text-align: center;">4</span>
               </div>
-              <div style="margin-top: 6px; font-size: 12px; color: #bbb; display: flex; justify-content: space-between;">
-                <span>Allocated Gold</span>
-                <span id="plannerHealthcareCost">0</span>
-              </div>
-            </div>
-          </div>
-          <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; font-size: 12px; color: #bbb;">
-            <div style="display: flex; justify-content: space-between; gap: 8px;">
-              <span>Total Welfare Spend</span>
-              <span id="plannerWelfareRequired" style="color: #fff;">0</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; gap: 8px;">
-              <span>Gold Available for Welfare</span>
-              <span id="plannerWelfareAvailable" style="color: #fff;">0</span>
             </div>
           </div>
           <div id="plannerWelfareDownshift" style="display:none; color: #FFC107; margin-top: 6px; font-size: 12px;"></div>
@@ -926,8 +934,6 @@ export function initializePlannerUI(container: HTMLElement, provider: PlannerCon
     healthcareTierValue: container.querySelector('#plannerHealthcareTierValue') as HTMLElement,
     educationCost: container.querySelector('#plannerEducationCost') as HTMLElement,
     healthcareCost: container.querySelector('#plannerHealthcareCost') as HTMLElement,
-    welfareRequired: container.querySelector('#plannerWelfareRequired') as HTMLElement,
-    welfareAvailable: container.querySelector('#plannerWelfareAvailable') as HTMLElement,
     welfareDownshift: container.querySelector('#plannerWelfareDownshift') as HTMLElement,
     allocationModeCustom: container.querySelector('#plannerModeCustom') as HTMLInputElement,
     allocationModeProrata: container.querySelector('#plannerModeProrata') as HTMLInputElement,
