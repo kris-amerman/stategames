@@ -7,6 +7,8 @@ import { getTurnSummary } from './getTurnSummary';
 import { leaveGame } from './leaveGame';
 import { endGame } from './endGame';
 import { getGameState } from './getGameState';
+import { TurnManager } from '../turn';
+import { totalLabor, EDUCATION_TIERS, HEALTHCARE_TIERS } from '../welfare/manager';
 
 async function setupGame() {
   const cellCount = 833;
@@ -46,4 +48,49 @@ test('plan submission gating and turn advancement', async () => {
   expect(endRes.status).toBe(200);
   const finalState = await GameService.getGameState(gameId);
   expect(finalState?.status).toBe('finished');
+});
+
+test('submitted planner payload persists and executes next turn', async () => {
+  const { gameId } = await setupGame();
+  const state = await GameService.getGameState(gameId);
+  expect(state).not.toBeNull();
+  if (!state) return;
+  state.economy.resources.gold = 100;
+  await GameService.saveGameState(state, gameId);
+
+  const plan: TurnPlan = {
+    budgets: { military: 30, welfare: 0, sectorOM: {} },
+    policies: { welfare: { education: 1, healthcare: 1 } },
+    slotPriorities: { agriculture: 0 },
+    allocationMode: 'pro-rata',
+    sectorPriority: ['agriculture'],
+  };
+
+  const submitReq = new Request('http://localhost', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerId: 'player1', plan }),
+  });
+  const submitRes = await submitPlan(gameId, submitReq);
+  expect(submitRes.status).toBe(200);
+
+  const updated = await GameService.getGameState(gameId);
+  expect(updated?.nextPlan?.allocationMode).toBe('pro-rata');
+  expect(updated?.nextPlan?.sectorPriority).toEqual(['agriculture']);
+  expect(updated?.nextPlan?.policies?.welfare?.education).toBe(1);
+
+  // Execute turns directly with manager to check one-turn lag
+  const execState = updated!;
+  const goldBefore = execState.economy.resources.gold;
+  TurnManager.advanceTurn(execState); // move plan into currentPlan
+  const goldAfterFirst = execState.economy.resources.gold;
+  TurnManager.advanceTurn(execState); // execute plan
+  const goldAfterSecond = execState.economy.resources.gold;
+  const labor = totalLabor(execState.economy);
+  const welfareCost = labor * (EDUCATION_TIERS[1].cost + HEALTHCARE_TIERS[1].cost);
+  const firstDelta = goldBefore - goldAfterFirst;
+  const secondDelta = goldAfterFirst - goldAfterSecond;
+  expect(secondDelta).toBeGreaterThan(firstDelta);
+  expect(secondDelta).toBeGreaterThanOrEqual(30);
+  expect(secondDelta).toBeGreaterThanOrEqual(welfareCost);
 });

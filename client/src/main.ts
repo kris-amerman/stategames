@@ -21,7 +21,9 @@ import {
   currentGameId,
   currentPlayerName,
   requiredPlayers,
+  isMyTurn,
 } from './game';
+import { initializePlannerUI, setPlannerVisibility } from './planner';
 
 const canvas = document.createElement('canvas');
 const container = document.getElementById('canvas-container')!;
@@ -37,6 +39,14 @@ async function initializeApp() {
 
   // Create UI first
   createUI(ctx);
+  const controlsContainer = document.getElementById('gameControls');
+  if (controlsContainer) {
+    initializePlannerUI(controlsContainer, () => ({
+      gameId: currentGameId,
+      playerId: currentPlayerName,
+      isMyTurn,
+    }));
+  }
 
   // Initialize gameplay handlers
   initGame(canvas, ctx);
@@ -481,7 +491,7 @@ function handlePlayerJoined(data: { gameId: string, players: string[], newPlayer
 // Handle game state updates
 function handleGameStateUpdate(data: { gameId: string, status: string, players: string[] }) {
   console.log('Game state update:', data);
-  
+
   if (data.gameId === currentGameId) {
     updateGameStatus(data.status);
     updatePlayersList(data.players, currentPlayerName || undefined);
@@ -519,7 +529,7 @@ export function handleFullGame(gameData: any) {
 function updateGameStatus(status: string) {
   const statusElement = document.getElementById('gameStatus');
   if (!statusElement) return;
-  
+
   switch (status) {
     case 'waiting':
       statusElement.textContent = 'Waiting for players...';
@@ -537,6 +547,8 @@ function updateGameStatus(status: string) {
       statusElement.textContent = status;
       statusElement.style.color = '#FFA500';
   }
+
+  setPlannerVisibility(status === 'in_progress');
 }
 
 // Start the application
