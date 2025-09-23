@@ -39,6 +39,7 @@ interface PlannerState {
   totalOmBudget: number;
   militaryAllocation: number;
   welfareBudget: number;
+  welfareAvailable: number;
   educationTier: number;
   healthcareTier: number;
   educationMin: number;
@@ -84,16 +85,18 @@ interface PlannerElements {
   upkeepSpan: HTMLElement;
   gapSpan: HTMLElement;
   remainderSpan: HTMLElement;
-  welfareBudgetInput: HTMLInputElement;
   educationSlider: HTMLInputElement;
   healthcareSlider: HTMLInputElement;
+  educationTierValue: HTMLElement;
+  healthcareTierValue: HTMLElement;
   educationCost: HTMLElement;
   healthcareCost: HTMLElement;
   welfareRequired: HTMLElement;
+  welfareAvailable: HTMLElement;
   welfareDownshift: HTMLElement;
   allocationModeCustom: HTMLInputElement;
   allocationModeProrata: HTMLInputElement;
-  totalOmInput: HTMLInputElement;
+  totalOmValue: HTMLElement;
   sectorContainer: HTMLElement;
   warningsList: HTMLElement;
   idleTaxLine: HTMLElement;
@@ -158,6 +161,7 @@ const state: PlannerState = {
   totalOmBudget: 0,
   militaryAllocation: 0,
   welfareBudget: 0,
+  welfareAvailable: 0,
   educationTier: 0,
   healthcareTier: 0,
   educationMin: 0,
@@ -219,17 +223,10 @@ export function evaluatePlannerWarnings(options: {
   availableGold: number;
   militaryAllocation: number;
   militaryUpkeep: number;
-  welfareBudget: number;
-  totalLabor: number;
-  educationTier: number;
-  healthcareTier: number;
+  welfareCost: number;
+  welfareAvailable: number;
 }): string[] {
   const warnings: string[] = [];
-  const welfareCosts = calculateWelfareCost(
-    options.totalLabor,
-    options.educationTier,
-    options.healthcareTier,
-  );
 
   if (options.projectedSpend > options.availableGold) {
     warnings.push('Total planned spending exceeds treasury.');
@@ -237,7 +234,7 @@ export function evaluatePlannerWarnings(options: {
   if (options.militaryAllocation < options.militaryUpkeep) {
     warnings.push('Military funding is below upkeep and units may degrade.');
   }
-  if (options.welfareBudget < welfareCosts.total) {
+  if (options.welfareAvailable < options.welfareCost) {
     warnings.push('Welfare budget cannot sustain selected tiers; automatic downshift expected.');
   }
 
@@ -391,11 +388,9 @@ function applyBasePlan(plan: SerializedPlan) {
   state.sectorOrder = [...plan.sectorOrder];
   state.sectorAllocations = { ...plan.sectorAllocations } as Record<SectorKey, number>;
   state.militaryAllocation = plan.militaryAllocation;
-  state.welfareBudget = plan.welfareBudget;
   state.educationTier = plan.educationTier;
   state.healthcareTier = plan.healthcareTier;
   state.totalOmBudget = Object.values(state.sectorAllocations).reduce((sum, value) => sum + value, 0);
-  state.projectedSpend = state.totalOmBudget + state.militaryAllocation + state.welfareBudget;
 }
 
 function refreshTotals() {
@@ -403,9 +398,11 @@ function refreshTotals() {
   const welfareCosts = calculateWelfareCost(state.totalLabor, state.educationTier, state.healthcareTier);
   state.educationCost = welfareCosts.education;
   state.healthcareCost = welfareCosts.healthcare;
+  state.welfareBudget = state.educationCost + state.healthcareCost;
+  state.welfareAvailable = Math.max(0, state.availableGold - state.militaryAllocation - state.totalOmBudget);
   state.projectedSpend = state.militaryAllocation + state.welfareBudget + state.totalOmBudget;
   const affordable = predictAffordableWelfare(
-    state.welfareBudget,
+    state.welfareAvailable,
     state.totalLabor,
     state.educationTier,
     state.healthcareTier,
@@ -417,10 +414,8 @@ function refreshTotals() {
     availableGold: state.availableGold,
     militaryAllocation: state.militaryAllocation,
     militaryUpkeep: state.militaryUpkeep,
-    welfareBudget: state.welfareBudget,
-    totalLabor: state.totalLabor,
-    educationTier: state.educationTier,
-    healthcareTier: state.healthcareTier,
+    welfareCost: state.welfareBudget,
+    welfareAvailable: state.welfareAvailable,
   });
 }
 
@@ -431,20 +426,24 @@ function renderSectorCards() {
 
   state.sectorOrder.forEach((sector) => {
     const card = document.createElement('div');
+    const isCustom = state.mode === 'custom';
     card.className = 'planner-sector-card';
-    card.draggable = state.mode === 'custom';
+    card.draggable = isCustom;
     card.dataset.sector = sector;
+    card.setAttribute('aria-disabled', String(!isCustom));
     card.style.cssText = `
       display: grid;
       grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr;
       gap: 8px;
       padding: 8px;
-      border: 1px solid rgba(255,255,255,0.1);
+      border: ${isCustom ? '1px solid rgba(76, 175, 80, 0.35)' : '1px dashed rgba(255,255,255,0.25)'};
       border-radius: 6px;
       margin-bottom: 6px;
-      background: rgba(0, 0, 0, 0.2);
+      background: ${isCustom ? 'rgba(76, 175, 80, 0.09)' : 'rgba(255,255,255,0.03)'};
       align-items: center;
-      cursor: ${state.mode === 'custom' ? 'grab' : 'default'};
+      cursor: ${isCustom ? 'grab' : 'not-allowed'};
+      opacity: ${isCustom ? '1' : '0.75'};
+      transition: background 0.2s ease, border 0.2s ease, opacity 0.2s ease;
     `;
 
     const sectorStats = stats[sector];
@@ -457,8 +456,16 @@ function renderSectorCards() {
     fundingInput.min = '0';
     fundingInput.step = '1';
     fundingInput.value = String(state.sectorAllocations[sector] ?? 0);
-    fundingInput.disabled = state.mode !== 'custom';
-    fundingInput.style.cssText = 'width: 100%; padding: 4px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;';
+    fundingInput.disabled = !isCustom;
+    fundingInput.style.cssText = `
+      width: 100%;
+      padding: 4px;
+      background: ${isCustom ? '#222' : '#151515'};
+      color: #fff;
+      border: 1px solid ${isCustom ? '#444' : '#333'};
+      border-radius: 4px;
+      cursor: ${isCustom ? 'text' : 'not-allowed'};
+    `;
     fundingInput.addEventListener('input', () => {
       const value = Math.max(0, Number(fundingInput.value) || 0);
       state.sectorAllocations[sector] = value;
@@ -528,20 +535,22 @@ function renderPlanner() {
   const remainder = Math.max(0, state.militaryAllocation - state.militaryUpkeep);
   elements.remainderSpan.textContent = remainder > 0 ? formatGold(remainder) : 'None';
 
-  elements.welfareBudgetInput.value = String(state.welfareBudget);
   elements.educationSlider.value = String(state.educationTier);
   elements.healthcareSlider.value = String(state.healthcareTier);
   elements.educationSlider.min = String(state.educationMin);
   elements.educationSlider.max = String(state.educationMax);
   elements.healthcareSlider.min = String(state.healthcareMin);
   elements.healthcareSlider.max = String(state.healthcareMax);
+  elements.educationTierValue.textContent = `Tier ${state.educationTier}`;
+  elements.healthcareTierValue.textContent = `Tier ${state.healthcareTier}`;
   elements.educationCost.textContent = formatGold(state.educationCost);
   elements.healthcareCost.textContent = formatGold(state.healthcareCost);
-  const welfareTotalCost = state.educationCost + state.healthcareCost;
-  elements.welfareRequired.textContent = formatGold(welfareTotalCost);
+  elements.welfareRequired.textContent = formatGold(state.welfareBudget);
+  elements.welfareAvailable.textContent = formatGold(state.welfareAvailable);
 
-  if (state.welfareBudget < welfareTotalCost) {
-    elements.welfareDownshift.textContent = `Budget funds Education Tier ${state.affordableEducation} and Healthcare Tier ${state.affordableHealthcare}.`;
+  if (state.welfareAvailable + 0.001 < state.welfareBudget) {
+    const shortfall = Math.max(0, state.welfareBudget - state.welfareAvailable);
+    elements.welfareDownshift.textContent = `Funding shortfall of ${formatGold(shortfall)}; available gold supports up to Education Tier ${state.affordableEducation} and Healthcare Tier ${state.affordableHealthcare}.`;
     elements.welfareDownshift.style.display = 'block';
   } else {
     elements.welfareDownshift.style.display = 'none';
@@ -549,8 +558,7 @@ function renderPlanner() {
 
   elements.allocationModeCustom.checked = state.mode === 'custom';
   elements.allocationModeProrata.checked = state.mode === 'pro-rata';
-  elements.totalOmInput.value = String(state.totalOmBudget);
-  elements.totalOmInput.disabled = state.mode !== 'pro-rata';
+  elements.totalOmValue.textContent = formatGold(state.totalOmBudget);
 
   renderSectorCards();
   renderWarnings();
@@ -624,7 +632,6 @@ async function fetchPlannerData() {
       ...sectorBudget,
     } as Record<SectorKey, number>;
     state.militaryAllocation = budgets.military || 0;
-    state.welfareBudget = budgets.welfare || 0;
     state.mode = (nextPlan.allocationMode === 'pro-rata' ? 'pro-rata' : 'custom');
     state.sectorOrder = Array.isArray(nextPlan.sectorPriority) && nextPlan.sectorPriority.length > 0
       ? nextPlan.sectorPriority.filter((s: any): s is SectorKey => SECTORS.includes(s))
@@ -639,6 +646,7 @@ async function fetchPlannerData() {
     state.healthcareMin = Math.max(0, (currentWelfare.healthcare ?? 0) - 1);
     state.healthcareMax = Math.min(4, (currentWelfare.healthcare ?? 0) + 1);
 
+    refreshTotals();
     state.basePlan = {
       mode: state.mode,
       sectorOrder: [...state.sectorOrder],
@@ -648,8 +656,6 @@ async function fetchPlannerData() {
       educationTier: state.educationTier,
       healthcareTier: state.healthcareTier,
     };
-
-    refreshTotals();
     renderPlanner();
   } catch (error: any) {
     console.error('Failed to load planner data', error);
@@ -681,6 +687,7 @@ async function submitPlan() {
     state.planSubmittedBy = payload.playerId;
     if (state.basePlan) {
       applyBasePlan(state.basePlan);
+      refreshTotals();
     }
   } catch (error: any) {
     console.error('Plan submission error', error);
@@ -739,12 +746,6 @@ function attachEventListeners() {
     renderPlanner();
   });
 
-  elements.welfareBudgetInput.addEventListener('input', () => {
-    state.welfareBudget = Math.max(0, Number(elements?.welfareBudgetInput.value) || 0);
-    refreshTotals();
-    renderPlanner();
-  });
-
   elements.educationSlider.addEventListener('input', () => {
     const value = Number(elements?.educationSlider.value) || 0;
     state.educationTier = Math.min(state.educationMax, Math.max(state.educationMin, value));
@@ -761,26 +762,6 @@ function attachEventListeners() {
 
   elements.allocationModeCustom.addEventListener('change', () => handleModeChange('custom'));
   elements.allocationModeProrata.addEventListener('change', () => handleModeChange('pro-rata'));
-
-  elements.totalOmInput.addEventListener('input', () => {
-    if (state.mode !== 'pro-rata') return;
-    state.totalOmBudget = Math.max(0, Number(elements?.totalOmInput.value) || 0);
-    const perSector = state.totalOmBudget / SECTORS.length;
-    let remaining = Math.round(state.totalOmBudget);
-    const allocations: Record<SectorKey, number> = { ...state.sectorAllocations };
-    SECTORS.forEach((sector, index) => {
-      if (index === SECTORS.length - 1) {
-        allocations[sector] = Math.max(0, remaining);
-      } else {
-        const value = Math.max(0, Math.round(perSector));
-        allocations[sector] = value;
-        remaining -= value;
-      }
-    });
-    state.sectorAllocations = allocations;
-    refreshTotals();
-    renderPlanner();
-  });
 
   elements.saveButton.addEventListener('click', (event) => {
     event.preventDefault();
@@ -812,18 +793,58 @@ function buildPlannerMarkup(): string {
 
         <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
           <h5 style="margin: 0 0 10px 0; color: #fff;">Welfare</h5>
-          <label style="display: block; color: #ccc; font-size: 12px;">Education Tier</label>
-          <input id="plannerEducation" type="range" min="0" max="4" step="1" style="width: 100%;" />
-          <label style="display: block; color: #ccc; font-size: 12px; margin-top: 8px;">Healthcare Tier</label>
-          <input id="plannerHealthcare" type="range" min="0" max="4" step="1" style="width: 100%;" />
-          <label style="display: block; color: #ccc; font-size: 12px; margin-top: 10px;">Welfare Budget (Gold)</label>
-          <input id="plannerWelfareBudget" type="number" min="0" step="1" style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;" />
-          <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px; color: #bbb; font-size: 12px;">
-            <div>Education Allocation: <span id="plannerEducationCost">0</span></div>
-            <div>Healthcare Allocation: <span id="plannerHealthcareCost">0</span></div>
-            <div>Required Gold: <span id="plannerWelfareRequired">0</span></div>
-            <div id="plannerWelfareDownshift" style="display:none; color: #FFC107;"></div>
+          <div style="color: #bbb; font-size: 12px; margin-bottom: 10px;">
+            Adjust Education and Healthcare tiers. You may shift at most one tier per turn; gold costs update automatically.
           </div>
+          <div style="display: grid; gap: 12px;">
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 4px;">
+                <label for="plannerEducation" style="color: #fff; font-weight: 600;">Education Tier</label>
+                <span id="plannerEducationTierValue" style="color: #8BC34A; font-size: 12px;">Tier 0</span>
+              </div>
+              <input id="plannerEducation" type="range" min="0" max="4" step="1" style="width: 100%;" />
+              <div style="display: grid; grid-template-columns: repeat(5, 1fr); font-size: 10px; color: #888; margin-top: 4px;">
+                <span style="text-align: center;">0</span>
+                <span style="text-align: center;">1</span>
+                <span style="text-align: center;">2</span>
+                <span style="text-align: center;">3</span>
+                <span style="text-align: center;">4</span>
+              </div>
+              <div style="margin-top: 6px; font-size: 12px; color: #bbb; display: flex; justify-content: space-between;">
+                <span>Allocated Gold</span>
+                <span id="plannerEducationCost">0</span>
+              </div>
+            </div>
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 4px;">
+                <label for="plannerHealthcare" style="color: #fff; font-weight: 600;">Healthcare Tier</label>
+                <span id="plannerHealthcareTierValue" style="color: #8BC34A; font-size: 12px;">Tier 0</span>
+              </div>
+              <input id="plannerHealthcare" type="range" min="0" max="4" step="1" style="width: 100%;" />
+              <div style="display: grid; grid-template-columns: repeat(5, 1fr); font-size: 10px; color: #888; margin-top: 4px;">
+                <span style="text-align: center;">0</span>
+                <span style="text-align: center;">1</span>
+                <span style="text-align: center;">2</span>
+                <span style="text-align: center;">3</span>
+                <span style="text-align: center;">4</span>
+              </div>
+              <div style="margin-top: 6px; font-size: 12px; color: #bbb; display: flex; justify-content: space-between;">
+                <span>Allocated Gold</span>
+                <span id="plannerHealthcareCost">0</span>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; font-size: 12px; color: #bbb;">
+            <div style="display: flex; justify-content: space-between; gap: 8px;">
+              <span>Total Welfare Spend</span>
+              <span id="plannerWelfareRequired" style="color: #fff;">0</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; gap: 8px;">
+              <span>Gold Available for Welfare</span>
+              <span id="plannerWelfareAvailable" style="color: #fff;">0</span>
+            </div>
+          </div>
+          <div id="plannerWelfareDownshift" style="display:none; color: #FFC107; margin-top: 6px; font-size: 12px;"></div>
         </section>
 
         <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
@@ -834,8 +855,13 @@ function buildPlannerMarkup(): string {
               <label><input type="radio" name="plannerMode" id="plannerModeProrata" value="pro-rata" /> Pro-rata</label>
             </div>
           </div>
-          <label style="display: block; color: #ccc; font-size: 12px; margin-bottom: 6px;">Total O&amp;M Allocation</label>
-          <input id="plannerTotalOm" type="number" min="0" step="1" style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; margin-bottom: 10px;" />
+          <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 8px;">
+            <span>Total O&amp;M Allocation</span>
+            <span id="plannerTotalOmValue" style="color: #fff; font-weight: 600;">0</span>
+          </div>
+          <div style="font-size: 11px; color: #888; margin-bottom: 10px;">
+            Custom mode enables dragging and editing sector funding. Pro-rata locks the cards and splits funding evenly.
+          </div>
           <div style="display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr; gap: 8px; font-size: 12px; font-weight: 600; color: #ccc; margin-bottom: 6px;">
             <div>Sector</div>
             <div>Ceiling</div>
@@ -848,14 +874,21 @@ function buildPlannerMarkup(): string {
 
         <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
           <h5 style="margin: 0 0 8px 0; color: #fff;">Finance Summary</h5>
-          <div style="display: flex; flex-direction: column; gap: 4px; color: #bbb; font-size: 12px;">
-            <div>Total Idle Tax: <span id="plannerIdleTax">0</span></div>
-            <div>Energy &amp; Infrastructure: <span id="plannerEnergy">0</span></div>
-            <div>Miscellaneous Expenses: <span id="plannerMisc">0</span></div>
-            <div>Gold Spent Last Round: <span id="plannerLastRound">0</span></div>
-            <div>Projected Gold This Round: <span id="plannerProjected">0</span></div>
-            <div>Gold in Treasury: <span id="plannerTreasury">0</span></div>
-            <div>National Debt: <span id="plannerDebt">0</span></div>
+          <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; color: #bbb; font-size: 12px; align-items: center;">
+            <div>Total Idle Tax</div>
+            <div id="plannerIdleTax" style="text-align: right; color: #fff;">0</div>
+            <div>Energy &amp; Infrastructure</div>
+            <div id="plannerEnergy" style="text-align: right; color: #fff;">0</div>
+            <div>Miscellaneous Expenses</div>
+            <div id="plannerMisc" style="text-align: right; color: #fff;">0</div>
+            <div>Gold Spent Last Round</div>
+            <div id="plannerLastRound" style="text-align: right; color: #fff;">0</div>
+            <div>Projected Gold This Round</div>
+            <div id="plannerProjected" style="text-align: right; color: #fff;">0</div>
+            <div>Gold in Treasury</div>
+            <div id="plannerTreasury" style="text-align: right; color: #fff;">0</div>
+            <div>National Debt</div>
+            <div id="plannerDebt" style="text-align: right; color: #fff;">0</div>
           </div>
         </section>
 
@@ -887,16 +920,18 @@ export function initializePlannerUI(container: HTMLElement, provider: PlannerCon
     upkeepSpan: container.querySelector('#plannerMilitaryUpkeep') as HTMLElement,
     gapSpan: container.querySelector('#plannerMilitaryGap') as HTMLElement,
     remainderSpan: container.querySelector('#plannerMilitaryRemainder') as HTMLElement,
-    welfareBudgetInput: container.querySelector('#plannerWelfareBudget') as HTMLInputElement,
     educationSlider: container.querySelector('#plannerEducation') as HTMLInputElement,
     healthcareSlider: container.querySelector('#plannerHealthcare') as HTMLInputElement,
+    educationTierValue: container.querySelector('#plannerEducationTierValue') as HTMLElement,
+    healthcareTierValue: container.querySelector('#plannerHealthcareTierValue') as HTMLElement,
     educationCost: container.querySelector('#plannerEducationCost') as HTMLElement,
     healthcareCost: container.querySelector('#plannerHealthcareCost') as HTMLElement,
     welfareRequired: container.querySelector('#plannerWelfareRequired') as HTMLElement,
+    welfareAvailable: container.querySelector('#plannerWelfareAvailable') as HTMLElement,
     welfareDownshift: container.querySelector('#plannerWelfareDownshift') as HTMLElement,
     allocationModeCustom: container.querySelector('#plannerModeCustom') as HTMLInputElement,
     allocationModeProrata: container.querySelector('#plannerModeProrata') as HTMLInputElement,
-    totalOmInput: container.querySelector('#plannerTotalOm') as HTMLInputElement,
+    totalOmValue: container.querySelector('#plannerTotalOmValue') as HTMLElement,
     sectorContainer: container.querySelector('#plannerSectors') as HTMLElement,
     warningsList: container.querySelector('#plannerWarnings') as HTMLElement,
     idleTaxLine: container.querySelector('#plannerIdleTax') as HTMLElement,

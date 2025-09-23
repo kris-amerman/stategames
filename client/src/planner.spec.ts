@@ -23,15 +23,14 @@ describe('Nation Planner helpers', () => {
   });
 
   it('flags overspending and upkeep gaps', () => {
+    const welfareCost = calculateWelfareCost(100, 2, 2).total;
     const warnings = evaluatePlannerWarnings({
       projectedSpend: 120,
       availableGold: 100,
       militaryAllocation: 10,
       militaryUpkeep: 15,
-      welfareBudget: 20,
-      totalLabor: 100,
-      educationTier: 2,
-      healthcareTier: 2,
+      welfareCost,
+      welfareAvailable: 20,
     });
     expect(warnings).toContain('Total planned spending exceeds treasury.');
     expect(warnings).toContain('Military funding is below upkeep and units may degrade.');
