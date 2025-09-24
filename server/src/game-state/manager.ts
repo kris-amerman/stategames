@@ -10,9 +10,122 @@ import type {
   Entity,
   EntityType,
   MapSize,
-  InfrastructureData
+  InfrastructureData,
+  Resources,
+  EconomyState,
+  CantonEconomy,
+  SectorType,
+  WelfarePolicies,
+  PlantType,
+  PlantRegistryEntry,
 } from '../types';
 import { EconomyManager } from '../economy';
+
+export const STARTING_RESOURCES_PER_NATION: Resources = {
+  gold: 600,
+  fx: 180,
+  food: 320,
+  materials: 240,
+  production: 220,
+  ordnance: 90,
+  luxury: 110,
+  energy: 180,
+  uranium: 24,
+  coal: 260,
+  oil: 190,
+  rareEarths: 70,
+  research: 80,
+  logistics: 0,
+  labor: 0,
+};
+
+export const STARTING_SECTOR_PROFILE: Record<
+  SectorType,
+  { capacity: number; suitability: number }
+> = {
+  agriculture: { capacity: 6, suitability: 12 },
+  extraction: { capacity: 4, suitability: 8 },
+  manufacturing: { capacity: 5, suitability: 10 },
+  defense: { capacity: 2, suitability: 6 },
+  luxury: { capacity: 3, suitability: 7 },
+  finance: { capacity: 3, suitability: 5 },
+  research: { capacity: 4, suitability: 9 },
+  logistics: { capacity: 4, suitability: 3 },
+  energy: { capacity: 3, suitability: 0 },
+};
+
+export const STARTING_URBANIZATION_LEVEL = 5;
+export const STARTING_DEVELOPMENT_PROGRESS = 2;
+export const STARTING_LABOR_ACCESS = 0.9;
+const COASTAL_GEOGRAPHY: Record<string, number> = {
+  plains: 0.5,
+  hills: 0.2,
+  coast: 0.3,
+};
+const INLAND_GEOGRAPHY: Record<string, number> = {
+  plains: 0.5,
+  hills: 0.3,
+  woods: 0.2,
+};
+export const STARTING_WELFARE_POLICIES: WelfarePolicies = {
+  education: 2,
+  healthcare: 2,
+  socialSupport: 1,
+};
+export const STARTING_ENERGY_PLANTS: readonly PlantType[] = ['coal', 'wind'];
+export const STARTING_CREDIT_LIMIT_PER_NATION = 1000;
+
+function applyStartingResources(economy: EconomyState, nationCount: number): void {
+  for (const [resource, amount] of Object.entries(STARTING_RESOURCES_PER_NATION) as [
+    keyof Resources,
+    number,
+  ][]) {
+    economy.resources[resource] = amount * nationCount;
+  }
+  economy.finance.creditLimit = STARTING_CREDIT_LIMIT_PER_NATION * nationCount;
+}
+
+function configureCantonProfile(canton: CantonEconomy, coastal: boolean): void {
+  canton.urbanizationLevel = STARTING_URBANIZATION_LEVEL;
+  canton.nextUrbanizationLevel = STARTING_URBANIZATION_LEVEL;
+  canton.development = STARTING_DEVELOPMENT_PROGRESS;
+  canton.lai = STARTING_LABOR_ACCESS;
+  canton.geography = coastal
+    ? { ...COASTAL_GEOGRAPHY }
+    : { ...INLAND_GEOGRAPHY };
+  canton.suitability = {};
+  canton.suitabilityMultipliers = {};
+
+  for (const [sector, profile] of Object.entries(STARTING_SECTOR_PROFILE) as [
+    SectorType,
+    { capacity: number; suitability: number },
+  ][]) {
+    canton.sectors[sector] = {
+      capacity: profile.capacity,
+      funded: 0,
+      idle: 0,
+      utilization: 0,
+    };
+    canton.suitability[sector] = profile.suitability;
+    canton.suitabilityMultipliers[sector] = 1 + profile.suitability / 100;
+  }
+}
+
+function seedEnergyPlants(economy: EconomyState, cantonId: string): void {
+  for (const plantType of STARTING_ENERGY_PLANTS) {
+    const plant: PlantRegistryEntry = {
+      canton: cantonId,
+      type: plantType,
+      status: 'active',
+    };
+    economy.energy.plants.push(plant);
+  }
+}
+
+function applyStartingPolicies(economy: EconomyState): void {
+  economy.welfare.current = { ...STARTING_WELFARE_POLICIES };
+  economy.welfare.next = { ...STARTING_WELFARE_POLICIES };
+}
 
 export class GameStateManager {
   
@@ -351,6 +464,9 @@ export class GameStateManager {
   ): void {
     const SHALLOW_OCEAN = 6;
     const DEEP_OCEAN = 7;
+    const economy = gameState.economy;
+
+    economy.energy.plants = [];
 
     for (const player of players) {
       const cells = this.getPlayerCells(gameState, player);
@@ -359,22 +475,10 @@ export class GameStateManager {
       const cantonId = String(capital);
 
       // Ensure a canton exists for this capital cell
-      EconomyManager.addCanton(gameState.economy, cantonId);
+      if (!economy.cantons[cantonId]) {
+        EconomyManager.addCanton(economy, cantonId);
+      }
 
-      const base: InfrastructureData = {
-        owner: 'national',
-        status: 'active',
-        national: true,
-        hp: 100,
-      };
-
-      // National Airport and Rail Hub
-      gameState.economy.infrastructure.airports[cantonId] = { ...base };
-      gameState.economy.infrastructure.railHubs[cantonId] = { ...base };
-      gameState.economy.infrastructure.national.airport = cantonId;
-      gameState.economy.infrastructure.national.rail = cantonId;
-
-      // Check if the capital cell is coastal for port placement
       let coastal = false;
       const start = cellOffsets[capital];
       const end = cellOffsets[capital + 1];
@@ -388,11 +492,31 @@ export class GameStateManager {
         }
       }
 
+      configureCantonProfile(economy.cantons[cantonId], coastal);
+
+      const base: InfrastructureData = {
+        owner: 'national',
+        status: 'active',
+        national: true,
+        hp: 100,
+      };
+
+      // National Airport and Rail Hub
+      economy.infrastructure.airports[cantonId] = { ...base };
+      economy.infrastructure.railHubs[cantonId] = { ...base };
+      economy.infrastructure.national.airport = cantonId;
+      economy.infrastructure.national.rail = cantonId;
+
       if (coastal) {
-        gameState.economy.infrastructure.ports[cantonId] = { ...base };
-        gameState.economy.infrastructure.national.port = cantonId;
+        economy.infrastructure.ports[cantonId] = { ...base };
+        economy.infrastructure.national.port = cantonId;
       }
+
+      seedEnergyPlants(economy, cantonId);
     }
+
+    applyStartingResources(economy, Math.max(players.length, 1));
+    applyStartingPolicies(economy);
   }
 
   static finishGame(gameState: GameState): void {
