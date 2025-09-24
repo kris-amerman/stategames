@@ -39,7 +39,19 @@ test('system retrieval endpoints return deterministic data', async () => {
   // Budget default
   let budgetRes = await getBudget(gameId);
   let budget = await budgetRes.json();
-  expect(budget).toEqual({ military: 0, welfare: 0, sectorOM: {} });
+  expect(budget.military).toBe(90);
+  expect(budget.welfare).toBe(65);
+  expect(budget.sectorOM).toMatchObject({
+    agriculture: 24,
+    extraction: 18,
+    manufacturing: 28,
+    defense: 16,
+    luxury: 12,
+    finance: 10,
+    research: 14,
+    logistics: 18,
+    energy: 20,
+  });
 
   // Submit plan with budgets within available gold
   const gold: number = econ.resources.gold;
