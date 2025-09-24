@@ -10,14 +10,49 @@ import type {
   Entity,
   EntityType,
   MapSize,
-  InfrastructureData
+  InfrastructureData,
+  SectorType,
+  TurnPlan,
 } from '../types';
 import { EconomyManager } from '../economy';
+import { LaborManager } from '../labor/manager';
 
 export class GameStateManager {
-  
+
   // === INITIALIZATION ===
-  
+
+  private static clonePlan(plan: TurnPlan): TurnPlan {
+    return JSON.parse(JSON.stringify(plan));
+  }
+
+  private static createBaselinePlan(): TurnPlan {
+    return {
+      budgets: {
+        military: 90,
+        welfare: 65,
+        sectorOM: {
+          agriculture: 24,
+          extraction: 18,
+          manufacturing: 28,
+          defense: 16,
+          luxury: 12,
+          finance: 10,
+          research: 14,
+          logistics: 18,
+          energy: 20,
+        },
+      },
+      policies: {
+        welfare: { education: 2, healthcare: 2, socialSupport: 1 },
+      },
+      slotPriorities: {},
+      tradeOrders: {},
+      projects: {},
+      allocationMode: 'custom',
+      sectorPriority: ['manufacturing', 'research'],
+    };
+  }
+
   static createInitialGameMeta(
     gameId: string,
     joinCode: string,
@@ -36,20 +71,73 @@ export class GameStateManager {
   }
 
   static createInitialGameState(players: PlayerId[]): GameState {
+    const playerCount = Math.max(1, players.length);
+    const economy = EconomyManager.createInitialState();
+    const baselinePlan = this.createBaselinePlan();
+
+    economy.resources = {
+      gold: 650 + playerCount * 180,
+      fx: 220 + playerCount * 35,
+      food: 200 + playerCount * 25,
+      materials: 180 + playerCount * 30,
+      production: 160 + playerCount * 30,
+      ordnance: 70 + playerCount * 12,
+      luxury: 60 + playerCount * 10,
+      energy: 120 + playerCount * 20,
+      uranium: 10 + playerCount * 2,
+      coal: 130 + playerCount * 25,
+      oil: 100 + playerCount * 20,
+      rareEarths: 30 + playerCount * 5,
+      research: 50 + playerCount * 8,
+      logistics: 80 + playerCount * 12,
+      labor: 0,
+    };
+
+    economy.trade.pendingImports = { food: 25, materials: 20 };
+    economy.trade.pendingExports = { luxury: 8, production: 5 };
+
+    economy.finance.debt = 180 + playerCount * 60;
+    economy.finance.creditLimit = 1200 + playerCount * 200;
+    economy.finance.debtStress = [
+      economy.finance.debt >= 50,
+      economy.finance.debt >= 100,
+      economy.finance.debt >= 200,
+    ];
+    economy.finance.summary = {
+      revenues: 260,
+      expenditures: 230,
+      netBorrowing: 20,
+      interest: Math.round(economy.finance.debt * economy.finance.interestRate),
+      defaulted: false,
+    };
+
+    economy.welfare.current = { education: 2, healthcare: 2, socialSupport: 1 };
+    economy.welfare.next = { ...economy.welfare.current };
+
+    economy.energy.state = { supply: 0, demand: 0, ratio: 1 };
+    economy.energy.demandBySector = {};
+    economy.energy.brownouts = [];
+    economy.energy.fuelUsed = {};
+    economy.energy.oAndMSpent = 0;
+    economy.energy.essentialsFirst = true;
+
+    const currentPlan = this.clonePlan(baselinePlan);
+    const nextPlan = this.clonePlan(baselinePlan);
+
     return {
       status: "waiting",
       currentPlayer: null,
       turnNumber: 0,
       phase: "planning",
-      currentPlan: null,
-      nextPlan: null,
+      currentPlan,
+      nextPlan,
       planSubmittedBy: null,
       turnSummary: null,
 
       // Initialize empty ownership maps
       cellOwnership: {},
       playerCells: Object.fromEntries(players.map(p => [p, []])),
-      
+
       // Initialize empty entity tracking
       entities: {},
       cellEntities: {},
@@ -57,7 +145,7 @@ export class GameStateManager {
       entitiesByType: {
         unit: []
       },
-      economy: EconomyManager.createInitialState(),
+      economy,
       nextEntityId: 1
     };
   }
@@ -351,48 +439,255 @@ export class GameStateManager {
   ): void {
     const SHALLOW_OCEAN = 6;
     const DEEP_OCEAN = 7;
+    const economy = gameState.economy;
+    const sectorList: SectorType[] = [
+      'agriculture',
+      'extraction',
+      'manufacturing',
+      'defense',
+      'luxury',
+      'finance',
+      'research',
+      'logistics',
+      'energy',
+    ];
+    const baseSuitability: Record<SectorType, number> = {
+      agriculture: 60,
+      extraction: 52,
+      manufacturing: 58,
+      defense: 50,
+      luxury: 48,
+      finance: 55,
+      research: 57,
+      logistics: 53,
+      energy: 51,
+    };
+    const energyWeights: Record<SectorType, number> = {
+      agriculture: 1,
+      extraction: 1.2,
+      manufacturing: 1.6,
+      defense: 1.5,
+      luxury: 1.1,
+      finance: 0.8,
+      research: 1.3,
+      logistics: 1,
+      energy: 1.2,
+    };
+
+    const demandBySector: Partial<Record<SectorType, number>> = {};
+    let energySupply = 0;
+    let energyDemand = 0;
+
+    economy.energy.plants = [];
+    economy.energy.demandBySector = {};
+    economy.infrastructure.airports = { ...economy.infrastructure.airports };
+    economy.infrastructure.ports = { ...economy.infrastructure.ports };
+    economy.infrastructure.railHubs = { ...economy.infrastructure.railHubs };
+
+    let nationalAirport = economy.infrastructure.national.airport;
+    let nationalRail = economy.infrastructure.national.rail;
+    let nationalPort = economy.infrastructure.national.port;
 
     for (const player of players) {
-      const cells = this.getPlayerCells(gameState, player);
-      if (cells.length === 0) continue;
-      const capital = cells[0];
-      const cantonId = String(capital);
+      const rawCells = this.getPlayerCells(gameState, player);
+      if (!rawCells || rawCells.length === 0) continue;
+      const ownedCells = [...rawCells].sort((a, b) => a - b);
 
-      // Ensure a canton exists for this capital cell
-      EconomyManager.addCanton(gameState.economy, cantonId);
+      ownedCells.forEach((cell, idx) => {
+        const cantonId = String(cell);
+        if (!economy.cantons[cantonId]) {
+          EconomyManager.addCanton(economy, cantonId);
+        }
+        const canton = economy.cantons[cantonId];
+        const ulCycle = [3, 4, 2];
+        const urbanization = ulCycle[idx % ulCycle.length];
+        canton.urbanizationLevel = urbanization;
+        canton.nextUrbanizationLevel = urbanization;
+        canton.development = Math.min(3, 1 + (idx % 3));
+        canton.lai = Number((1 + urbanization * 0.05).toFixed(2));
 
-      const base: InfrastructureData = {
-        owner: 'national',
+        const coastal = this.isCoastalCell(
+          cell,
+          biomes,
+          cellNeighbors,
+          cellOffsets,
+          SHALLOW_OCEAN,
+          DEEP_OCEAN,
+        );
+        canton.geography = coastal
+          ? { plains: 0.5, coast: 0.35, woods: 0.15 }
+          : { plains: 0.55, hills: 0.25, woods: 0.2 };
+
+        sectorList.forEach((sector, sectorIdx) => {
+          const capacity = 4 + ((idx + sectorIdx) % 3);
+          const idle = Math.max(1, Math.floor(capacity / 3));
+          const funded = Math.max(1, capacity - idle);
+          const utilization = Math.max(1, funded - 1);
+          canton.sectors[sector] = {
+            capacity,
+            funded,
+            idle,
+            utilization,
+          };
+
+          const adjustment = ((idx + sectorIdx) % 3) * 2;
+          canton.suitability[sector] = baseSuitability[sector] + adjustment;
+          const multiplier = Number((1 + (urbanization - 2) * 0.05).toFixed(2));
+          canton.suitabilityMultipliers[sector] = multiplier;
+
+          const demandContribution = Math.max(
+            1,
+            Math.round((funded + idle * 0.5) * (energyWeights[sector] ?? 1)),
+          );
+          energyDemand += demandContribution;
+          demandBySector[sector] = (demandBySector[sector] || 0) + demandContribution;
+        });
+      });
+
+      const capital = rawCells[0];
+      const capitalId = String(capital);
+      const capitalCoastal = this.isCoastalCell(
+        capital,
+        biomes,
+        cellNeighbors,
+        cellOffsets,
+        SHALLOW_OCEAN,
+        DEEP_OCEAN,
+      );
+
+      const infraBase: InfrastructureData = {
+        owner: player,
         status: 'active',
-        national: true,
         hp: 100,
       };
 
-      // National Airport and Rail Hub
-      gameState.economy.infrastructure.airports[cantonId] = { ...base };
-      gameState.economy.infrastructure.railHubs[cantonId] = { ...base };
-      gameState.economy.infrastructure.national.airport = cantonId;
-      gameState.economy.infrastructure.national.rail = cantonId;
+      economy.infrastructure.airports[capitalId] = {
+        ...infraBase,
+        national: false,
+      };
+      if (!nationalAirport) {
+        economy.infrastructure.airports[capitalId].national = true;
+        economy.infrastructure.national.airport = capitalId;
+        nationalAirport = capitalId;
+      }
 
-      // Check if the capital cell is coastal for port placement
-      let coastal = false;
-      const start = cellOffsets[capital];
-      const end = cellOffsets[capital + 1];
-      for (let i = start; i < end; i++) {
-        const nb = cellNeighbors[i];
-        if (nb < 0) continue;
-        const biome = biomes[nb];
-        if (biome === SHALLOW_OCEAN || biome === DEEP_OCEAN) {
-          coastal = true;
-          break;
+      economy.infrastructure.railHubs[capitalId] = {
+        ...infraBase,
+        national: false,
+      };
+      if (!nationalRail) {
+        economy.infrastructure.railHubs[capitalId].national = true;
+        economy.infrastructure.national.rail = capitalId;
+        nationalRail = capitalId;
+      }
+
+      if (capitalCoastal) {
+        economy.infrastructure.ports[capitalId] = {
+          ...infraBase,
+          national: false,
+        };
+        if (!nationalPort) {
+          economy.infrastructure.ports[capitalId].national = true;
+          economy.infrastructure.national.port = capitalId;
+          nationalPort = capitalId;
         }
       }
 
-      if (coastal) {
-        gameState.economy.infrastructure.ports[cantonId] = { ...base };
-        gameState.economy.infrastructure.national.port = cantonId;
+      const plantConfigs = [
+        { index: 0, type: 'coal', output: 28 },
+        { index: 1, type: capitalCoastal ? 'hydro' : 'wind', output: capitalCoastal ? 18 : 14 },
+        { index: 2, type: 'solar', output: 12 },
+      ];
+      for (const config of plantConfigs) {
+        const source = ownedCells[config.index];
+        if (source === undefined) continue;
+        economy.energy.plants.push({
+          canton: String(source),
+          type: config.type as any,
+          status: 'active',
+        });
+        energySupply += config.output;
+      }
+
+      const unitTemplates = [
+        { role: 'infantry', strength: 6, upkeep: 12, readiness: 0.8, experience: 2 },
+        { role: 'armor', strength: 8, upkeep: 18, readiness: 0.7, experience: 1 },
+      ];
+      unitTemplates.forEach((template, idx) => {
+        const location = ownedCells[idx] ?? capital;
+        const entityId = this.getNextEntityId(gameState);
+        this.addEntity(gameState, {
+          id: entityId,
+          type: 'unit',
+          owner: player,
+          cellId: location,
+          data: {
+            role: template.role,
+            strength: template.strength,
+            readiness: template.readiness,
+            upkeep: template.upkeep,
+            experience: template.experience,
+          },
+        });
+      });
+    }
+
+    LaborManager.generate(economy);
+
+    let totalLabor = 0;
+    for (const canton of Object.values(economy.cantons)) {
+      totalLabor += canton.labor.general + canton.labor.skilled + canton.labor.specialist;
+    }
+    economy.resources.labor = totalLabor;
+    const logisticsFloor = Math.round(totalLabor * 0.5);
+    if (economy.resources.logistics < logisticsFloor) {
+      economy.resources.logistics = logisticsFloor;
+    }
+
+    if (energyDemand > 0) {
+      if (energySupply < energyDemand) {
+        energySupply = energyDemand + players.length * 8;
+      }
+      economy.energy.state = {
+        supply: energySupply,
+        demand: energyDemand,
+        ratio: Number((energySupply / energyDemand).toFixed(2)),
+      };
+    } else {
+      economy.energy.state = { supply: energySupply, demand: 0, ratio: 1 };
+    }
+    economy.energy.demandBySector = demandBySector;
+    economy.energy.fuelUsed = {
+      coal: Math.round(energySupply * 0.4),
+      oil: Math.round(energySupply * 0.25),
+      uranium: Math.round(energySupply * 0.1),
+    };
+    economy.energy.oAndMSpent = Math.round(energySupply * 0.35);
+    const storedEnergy = Math.round(energySupply * 0.6);
+    if (storedEnergy > economy.resources.energy) {
+      economy.resources.energy = storedEnergy;
+    }
+  }
+
+  private static isCoastalCell(
+    cell: CellId,
+    biomes: Uint8Array,
+    cellNeighbors: Int32Array,
+    cellOffsets: Uint32Array,
+    shallowOcean: number,
+    deepOcean: number,
+  ): boolean {
+    const start = cellOffsets[cell];
+    const end = cell + 1 < cellOffsets.length ? cellOffsets[cell + 1] : start;
+    for (let i = start; i < end; i++) {
+      const neighbor = cellNeighbors[i];
+      if (neighbor < 0) continue;
+      const biome = biomes[neighbor];
+      if (biome === shallowOcean || biome === deepOcean) {
+        return true;
       }
     }
+    return false;
   }
 
   static finishGame(gameState: GameState): void {

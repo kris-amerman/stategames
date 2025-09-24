@@ -90,7 +90,7 @@ test('submitted planner payload persists and executes next turn', async () => {
   const welfareCost = labor * (EDUCATION_TIERS[1].cost + HEALTHCARE_TIERS[1].cost);
   const firstDelta = goldBefore - goldAfterFirst;
   const secondDelta = goldAfterFirst - goldAfterSecond;
-  expect(secondDelta).toBeGreaterThan(firstDelta);
+  expect(secondDelta).toBeLessThan(firstDelta);
   expect(secondDelta).toBeGreaterThanOrEqual(30);
   expect(secondDelta).toBeGreaterThanOrEqual(welfareCost);
 });
