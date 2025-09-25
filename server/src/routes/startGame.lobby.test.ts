@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { createGame } from './createGame';
 import { startGame } from './startGame';
 import { GameService } from '../game-state';
+import { defaultNationInputs } from '../test-utils/nations';
 
 // verify that game cannot start until required players have joined
 
@@ -10,12 +11,14 @@ test('startGame requires all nation slots filled', async () => {
   const req = new Request('http://localhost', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/octet-stream',
-      'X-Cell-Count': '4',
-      'X-Map-Size': 'small',
-      'X-Nation-Count': '2'
+      'Content-Type': 'application/json',
     },
-    body: biomes
+    body: JSON.stringify({
+      mapSize: 'small',
+      cellCount: 4,
+      biomes: Array.from(biomes),
+      nations: defaultNationInputs(2),
+    }),
   });
 
   const res = await createGame(req);

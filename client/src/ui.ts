@@ -1,6 +1,184 @@
 import { MapSize } from './mesh';
 import { loadOrGetMesh, generateTerrain, elevationConfig, biomeConfig, setCurrentMapSize } from './terrain';
 
+const PRESET_OPTIONS: { value: string; label: string }[] = [
+  { value: 'Industrializing Exporter', label: 'Industrializing Exporter' },
+  { value: 'Agrarian Surplus', label: 'Agrarian Surplus' },
+  { value: 'Finance and Services Hub', label: 'Finance and Services Hub' },
+  { value: 'Research State', label: 'Research State' },
+  { value: 'Defense-Manufacturing Complex', label: 'Defense-Manufacturing Complex' },
+  { value: 'Balanced Mixed Economy', label: 'Balanced Mixed Economy' },
+];
+
+const DEFAULT_NATION_NAMES = [
+  'Aurora Dominion',
+  'Silverhaven',
+  'Sunreach Coalition',
+  'Northwind Pact',
+  'Verdant Accord',
+  'Ironcrest Union',
+  'Azure Federation',
+  'Highland Concordat',
+  'Stormfall Republic',
+  'Golden Meridian',
+  'Starborne Compact',
+  'Lakeshore Assembly',
+  'Crimson Banner',
+  'Riverlight League',
+  'Thunderhold',
+  'Everfree Collective',
+  'Obsidian Frontier',
+  'Coastwatch Alliance',
+  'Celestial Ward',
+  'Gilded Spire',
+  'Midnight Expanse',
+  'Emerald Reach',
+  'Horizon Stronghold',
+  'Radiant Isles',
+  'Autumn Gate',
+  'Frostwall Dominion',
+  'Cinderveil',
+  'Skyward Pact',
+  'Oceanus Combine',
+  'Granite Bastion',
+];
+
+type NationFormRow = {
+  name: string;
+  preset: string;
+  errors?: { name?: string; preset?: string };
+};
+
+let nationFormState: NationFormRow[] = [];
+
+export interface ClientNationInput {
+  name: string;
+  preset: string;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function pickUniqueName(existing: Set<string>): string {
+  const pool = DEFAULT_NATION_NAMES.slice();
+  while (pool.length > 0) {
+    const index = Math.floor(Math.random() * pool.length);
+    const candidate = pool.splice(index, 1)[0];
+    if (!existing.has(candidate.toLowerCase())) {
+      existing.add(candidate.toLowerCase());
+      return candidate;
+    }
+  }
+  const fallback = `Nation ${existing.size + 1}`;
+  existing.add(fallback.toLowerCase());
+  return fallback;
+}
+
+function initializeNationForm(count: number): void {
+  const usedNames = new Set<string>();
+  nationFormState = Array.from({ length: count }, () => ({
+    name: pickUniqueName(usedNames),
+    preset: '',
+  }));
+}
+
+function setNationCount(count: number): void {
+  if (count < 2) count = 2;
+  if (count > 25) count = 25;
+  if (nationFormState.length === 0) {
+    initializeNationForm(count);
+    return;
+  }
+  const used = new Set<string>(nationFormState.map(row => row.name.toLowerCase()));
+  if (count > nationFormState.length) {
+    while (nationFormState.length < count) {
+      nationFormState.push({ name: pickUniqueName(used), preset: '' });
+    }
+  } else if (count < nationFormState.length) {
+    nationFormState = nationFormState.slice(0, count);
+  }
+}
+
+function renderNationRows(): void {
+  const container = document.getElementById('nationRows');
+  if (!container) return;
+  container.innerHTML = nationFormState
+    .map((row, index) => {
+      const presetOptions = PRESET_OPTIONS
+        .map(
+          option =>
+            `<option value="${escapeHtml(option.value)}"${row.preset === option.value ? ' selected' : ''}>${escapeHtml(option.label)}</option>`,
+        )
+        .join('');
+      return `
+        <div class="nation-row" data-index="${index}" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start;">
+          <div style="flex: 1;">
+            <input type="text" class="nation-name" data-index="${index}" value="${escapeHtml(row.name)}" placeholder="Nation name" style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;" />
+            <div class="nation-error-name" style="min-height: 14px; font-size: 11px; color: #FF8A80; margin-top: 3px;">${row.errors?.name ? escapeHtml(row.errors.name) : ''}</div>
+          </div>
+          <div style="flex: 1;">
+            <select class="nation-preset" data-index="${index}" style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;">
+              <option value="">Select preset…</option>
+              ${presetOptions}
+            </select>
+            <div class="nation-error-preset" style="min-height: 14px; font-size: 11px; color: #FF8A80; margin-top: 3px;">${row.errors?.preset ? escapeHtml(row.errors.preset) : ''}</div>
+          </div>
+        </div>
+      `;
+    })
+    .join('');
+
+  container.querySelectorAll<HTMLInputElement>('.nation-name').forEach(input => {
+    const index = Number(input.dataset.index);
+    input.addEventListener('input', () => {
+      if (!Number.isFinite(index) || index >= nationFormState.length) return;
+      nationFormState[index].name = input.value;
+      if (nationFormState[index].errors) {
+        delete nationFormState[index].errors!.name;
+      }
+    });
+  });
+
+  container.querySelectorAll<HTMLSelectElement>('.nation-preset').forEach(select => {
+    const index = Number(select.dataset.index);
+    select.addEventListener('change', () => {
+      if (!Number.isFinite(index) || index >= nationFormState.length) return;
+      nationFormState[index].preset = select.value;
+      if (nationFormState[index].errors) {
+        delete nationFormState[index].errors!.preset;
+      }
+    });
+  });
+}
+
+export function applyNationErrors(errors: Array<{ index: number; field: 'name' | 'preset'; message: string }>): void {
+  nationFormState.forEach(row => {
+    if (row.errors) {
+      row.errors = {};
+    }
+  });
+  for (const error of errors) {
+    const row = nationFormState[error.index];
+    if (!row) continue;
+    if (!row.errors) row.errors = {};
+    row.errors[error.field] = error.message;
+  }
+  renderNationRows();
+}
+
+export function collectNationPayload(): ClientNationInput[] {
+  return nationFormState.map(row => ({
+    name: row.name.trim(),
+    preset: row.preset,
+  }));
+}
+
 export function createUI(ctx: CanvasRenderingContext2D) {
   // Create UI panel
   const uiPanel = document.createElement("div");
@@ -186,10 +364,13 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     </div>
 
     <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
-      <div style="margin-bottom: 10px;">
-        <label>Nation Count:</label>
-        <input type="number" id="nationCount" min="1" max="8" value="2" style="width: 100%; padding: 4px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
+      <div style="margin-bottom: 10px; display: grid; gap: 6px;">
+        <label for="nationCount">Number of Nations (2–25):</label>
+        <input type="number" id="nationCount" min="2" max="25" value="3" style="width: 100%; padding: 4px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
+        <label for="nationSeed" style="margin-top: 6px;">Seed (optional for reproducibility):</label>
+        <input type="text" id="nationSeed" placeholder="Leave blank for random" style="width: 100%; padding: 4px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
       </div>
+      <div id="nationRows" style="margin-bottom: 10px;"></div>
       <div style="display: flex; gap: 10px; margin-bottom: 10px;">
         <button id="createGame" style="flex: 1; background: #4CAF50; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer;">Create Game</button>
         <button id="joinGame" style="flex: 1; background: #2196F3; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer;">Join Game</button>
@@ -201,6 +382,19 @@ export function createUI(ctx: CanvasRenderingContext2D) {
   `;
 
   document.body.appendChild(uiPanel);
+
+  const nationCountInput = document.getElementById("nationCount") as HTMLInputElement;
+  const nationSeedInput = document.getElementById("nationSeed") as HTMLInputElement;
+
+  const initialCount = Number(nationCountInput.value) || 3;
+  setNationCount(initialCount);
+  renderNationRows();
+
+  nationCountInput.addEventListener('change', () => {
+    const value = Number(nationCountInput.value) || initialCount;
+    setNationCount(value);
+    renderNationRows();
+  });
 
   // Map size selectors
   document.getElementById("mapSize")!.addEventListener("change", async (e) => {

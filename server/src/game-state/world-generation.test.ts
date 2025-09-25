@@ -2,13 +2,7 @@ import { expect, test } from 'bun:test';
 import { GameService } from './service';
 import { GameStateManager } from './manager';
 import { meshService } from '../mesh-service';
-
-function seededRandom(seed: number) {
-  return () => {
-    seed = (seed * 16807) % 2147483647;
-    return (seed - 1) / 2147483646;
-  };
-}
+import { defaultNationInputs } from '../test-utils/nations';
 
 test('world generation assigns contiguous balanced territories with infrastructure', async () => {
   const meshData = await meshService.getMeshData('small');
@@ -20,10 +14,8 @@ test('world generation assigns contiguous balanced territories with infrastructu
 
   const gameId = 'g' + Math.random().toString(36).slice(2,8);
   const joinCode = 'J' + Math.random().toString(36).slice(2,7).toUpperCase();
-  const originalRandom = Math.random;
-  Math.random = seededRandom(8);
-  await GameService.createGame(gameId, joinCode, 'small', cellCount, 2, biomes);
-  Math.random = originalRandom;
+  const nations = defaultNationInputs(2);
+  await GameService.createGame(gameId, joinCode, 'small', cellCount, nations, biomes, 'eta');
 
   const state = await GameService.getGameState(gameId);
   if (!state) throw new Error('state missing');
