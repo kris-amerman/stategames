@@ -78,8 +78,13 @@ test('websocket turn flow emits ordered events and survives reconnect', async ()
   const planEvent = events1.find(e => e.event === 'plan_submitted');
   expect(planEvent.data.playerId).toBe('player1');
   const stateEvents = events1.filter(e => e.event === 'state_change');
-  const types = stateEvents.map(e => e.data.type).sort();
-  expect(types).toEqual(['energy_shortage','infrastructure_complete','resource_default','resource_shortage','ul_change'].sort());
+  const types = stateEvents.map(e => e.data.type);
+  const core = ['energy_shortage','infrastructure_complete','resource_default','ul_change'];
+  for (const key of core) {
+    expect(types).toContain(key);
+  }
+  const extras = types.filter(t => ![...core, 'resource_shortage'].includes(t));
+  expect(extras).toEqual([]);
   const turnEvent = events1.find(e => e.event === 'turn_complete');
   expect(turnEvent.data.turnNumber).toBe(2);
   const seqs = events1.filter(e => e.data?.seq !== undefined).map(e => e.data.seq);

@@ -3,6 +3,8 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
 import { encode, decode } from '../serialization';
 import { GameStateManager } from './manager';
+import { INITIALIZATION_CONFIG } from './initialization';
+import type { InitializationOptions } from './initialization';
 import type { Game, GameState, GameMeta, GameMap, MapSize, PlayerId } from '../types';
 
 // In-memory game store (replace with database later)
@@ -79,7 +81,8 @@ export class GameService {
     mapSize: MapSize,
     cellCount: number,
     nationCount: number,
-    biomes: Uint8Array
+    biomes: Uint8Array,
+    options: InitializationOptions = {}
   ): Promise<Game> {
     const players = Array.from({ length: nationCount }, (_, i) => `player${i + 1}`);
 
@@ -96,12 +99,24 @@ export class GameService {
     const { meshService } = await import('../mesh-service');
     const meshData = await meshService.getMeshData(mapSize);
 
+    let territoryRng: (() => number) | undefined;
+    if (options.seed !== undefined) {
+      const { modulus, multiplier } = INITIALIZATION_CONFIG.rng;
+      let stateSeed = options.seed % modulus;
+      if (stateSeed <= 0) stateSeed += modulus - 1;
+      territoryRng = () => {
+        stateSeed = (stateSeed * multiplier) % modulus;
+        return (stateSeed - 1) / (modulus - 1);
+      };
+    }
+
     GameStateManager.assignStartingTerritories(
       game.state,
       meshData.cellNeighbors,
       meshData.cellOffsets,
       meshData.cellCount,
-      biomes
+      biomes,
+      territoryRng ?? Math.random
     );
 
     GameStateManager.initializeNationInfrastructure(
@@ -111,6 +126,8 @@ export class GameService {
       meshData.cellNeighbors,
       meshData.cellOffsets
     );
+
+    GameStateManager.initializeEconomyState(game.state, options);
 
     // Only the creator is in the lobby initially
     game.meta.players = ['player1'];

@@ -1,6 +1,7 @@
 // server/src/routes/createGame.ts
 import { CORS_HEADERS, MAP_SIZES, MAX_BIOME_ID, MAX_NATIONS } from "../constants";
 import { GameService } from "../game-state";
+import type { InitializationOptions } from "../game-state/initialization";
 import { encode } from "../serialization";
 import type { MapSize } from "../types";
 
@@ -162,6 +163,16 @@ export async function createGame(req: Request) {
     const gameId = GameService.generateGameId();
     const joinCode = GameService.generateJoinCode();
 
+    // Optional deterministic seed for initialization
+    const seedHeader = req.headers.get("x-rng-seed");
+    let initOptions: InitializationOptions | undefined;
+    if (seedHeader !== null) {
+      const parsedSeed = Number(seedHeader);
+      if (!Number.isNaN(parsedSeed) && Number.isFinite(parsedSeed)) {
+        initOptions = { seed: parsedSeed };
+      }
+    }
+
     // Create game and generate world
     const game = await GameService.createGame(
       gameId,
@@ -169,7 +180,8 @@ export async function createGame(req: Request) {
       mapSizeHeader,
       cellCount,
       nationCount,
-      biomes
+      biomes,
+      initOptions
     );
 
     console.log(

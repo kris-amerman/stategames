@@ -3,13 +3,6 @@ import { GameService } from './service';
 import { GameStateManager } from './manager';
 import { meshService } from '../mesh-service';
 
-function seededRandom(seed: number) {
-  return () => {
-    seed = (seed * 16807) % 2147483647;
-    return (seed - 1) / 2147483646;
-  };
-}
-
 test('world generation assigns contiguous balanced territories with infrastructure', async () => {
   const meshData = await meshService.getMeshData('small');
   const cellCount = meshData.cellCount;
@@ -20,10 +13,7 @@ test('world generation assigns contiguous balanced territories with infrastructu
 
   const gameId = 'g' + Math.random().toString(36).slice(2,8);
   const joinCode = 'J' + Math.random().toString(36).slice(2,7).toUpperCase();
-  const originalRandom = Math.random;
-  Math.random = seededRandom(8);
-  await GameService.createGame(gameId, joinCode, 'small', cellCount, 2, biomes);
-  Math.random = originalRandom;
+  await GameService.createGame(gameId, joinCode, 'small', cellCount, 2, biomes, { seed: 8 });
 
   const state = await GameService.getGameState(gameId);
   if (!state) throw new Error('state missing');
@@ -90,6 +80,42 @@ test('world generation assigns contiguous balanced territories with infrastructu
     }
     const hasPort = !!state.economy.infrastructure.ports[cantonId];
     expect(hasPort).toBe(coastal);
+
+    const canton = state.economy.cantons[cantonId];
+    expect(canton).toBeDefined();
+    expect([2, 3, 4]).toContain(canton.urbanizationLevel);
+    expect(canton.development).toBeGreaterThanOrEqual(1);
+    expect(canton.development).toBeLessThanOrEqual(2.5);
+
+    let fundedSectors = 0;
+    let totalCapacity = 0;
+    let totalFunded = 0;
+    let totalIdle = 0;
+    for (const sectorState of Object.values(canton.sectors)) {
+      if (!sectorState || sectorState.capacity <= 0) continue;
+      totalCapacity += sectorState.capacity;
+      totalFunded += sectorState.funded;
+      totalIdle += sectorState.idle;
+      if (sectorState.funded > 0) fundedSectors += 1;
+    }
+    expect(totalCapacity).toBeGreaterThan(0);
+    expect(fundedSectors).toBeGreaterThanOrEqual(3);
+    const activeShare = totalFunded / totalCapacity;
+    expect(activeShare).toBeGreaterThan(0.3);
+    expect(activeShare).toBeLessThanOrEqual(0.7);
+    const idleShare = totalIdle / totalCapacity;
+    expect(idleShare).toBeLessThanOrEqual(0.65);
   }
+
+  expect(state.economy.welfare.current.education).toBeGreaterThanOrEqual(1);
+  expect(state.economy.welfare.current.education).toBeLessThanOrEqual(2);
+  expect(state.economy.welfare.current.healthcare).toBeGreaterThanOrEqual(1);
+  expect(state.economy.welfare.current.healthcare).toBeLessThanOrEqual(2);
+  expect(state.economy.energy.plants.length).toBeGreaterThan(0);
+  expect(state.economy.energy.state.ratio).toBeGreaterThan(0.9);
+  expect(state.economy.energy.state.ratio).toBeLessThanOrEqual(1.2);
+  expect(state.economy.finance.debt).toBeLessThanOrEqual(state.economy.finance.creditLimit);
+  expect(state.economy.resources.gold).toBeLessThan(150);
+  expect(state.economy.resources.gold).toBeGreaterThan(-150);
 });
 

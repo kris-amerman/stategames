@@ -13,6 +13,7 @@ import type {
   InfrastructureData
 } from '../types';
 import { EconomyManager } from '../economy';
+import { initializeEconomy, type InitializationOptions } from './initialization';
 
 export class GameStateManager {
   
@@ -269,6 +270,7 @@ export class GameStateManager {
     cellOffsets: Uint32Array,
     cellCount: number,
     biomes: Uint8Array,
+    rng: () => number = Math.random,
     deepOceanBiome: number = 7
   ): void {
     const players = Object.keys(gameState.playerCells);
@@ -284,7 +286,7 @@ export class GameStateManager {
     // Randomize order for seed selection
     const claimableArray = Array.from(claimable);
     for (let i = claimableArray.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(rng() * (i + 1));
       [claimableArray[i], claimableArray[j]] = [claimableArray[j], claimableArray[i]];
     }
 
@@ -393,6 +395,13 @@ export class GameStateManager {
         gameState.economy.infrastructure.national.port = cantonId;
       }
     }
+  }
+
+  static initializeEconomyState(
+    gameState: GameState,
+    options: InitializationOptions = {},
+  ): void {
+    initializeEconomy(gameState, options);
   }
 
   static finishGame(gameState: GameState): void {
