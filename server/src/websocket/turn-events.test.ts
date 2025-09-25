@@ -4,6 +4,7 @@ import { submitPlan } from '../routes/submitPlan';
 import { advanceTurn } from '../routes/advanceTurn';
 import type { TurnPlan } from '../types';
 import { server } from '../index';
+import { defaultNationInputs } from '../test-utils/nations';
 
 const PORT = process.env.PORT || 3000;
 
@@ -13,7 +14,8 @@ async function setupGame() {
   const biomes = new Uint8Array(cellCount).fill(1);
   const gameId = 'g' + Math.random().toString(36).slice(2,8);
   const joinCode = 'J' + Math.random().toString(36).slice(2,7).toUpperCase();
-  await GameService.createGame(gameId, joinCode, 'small', cellCount, 2, biomes);
+  const nations = defaultNationInputs(2);
+  await GameService.createGame(gameId, joinCode, 'small', cellCount, nations, biomes);
   await GameService.joinGame(joinCode);
   await GameService.startGame(gameId);
   const player2 = 'player2';

@@ -3,6 +3,25 @@ export type PlayerId = string;
 export type CellId = number;
 export type EntityId = number;
 
+export type NationPreset =
+  | "Industrializing Exporter"
+  | "Agrarian Surplus"
+  | "Finance and Services Hub"
+  | "Research State"
+  | "Defense-Manufacturing Complex"
+  | "Balanced Mixed Economy";
+
+export interface NationMeta {
+  id: PlayerId;
+  name: string;
+  preset: NationPreset;
+}
+
+export interface NationCreationInput {
+  name: string;
+  preset: NationPreset;
+}
+
 export type EntityType = 
   | "unit";
 
@@ -147,6 +166,101 @@ export interface SectorState {
   idle: number;
   /** Slots that actually ran after all gates */
   utilization?: number;
+}
+
+export interface NationEnergySnapshot {
+  supply: number;
+  demand: number;
+  ratio: number;
+  plants: PlantRegistryEntry[];
+  throttledSectors: Partial<Record<SectorType, number>>;
+}
+
+export interface NationLogisticsSnapshot {
+  supply: number;
+  demand: number;
+  ratio: number;
+  slots: number;
+  throttledSectors: Partial<Record<SectorType, number>>;
+}
+
+export interface NationWelfareSnapshot {
+  education: number;
+  healthcare: number;
+  socialSupport: number;
+  cost: number;
+  autoDownshifted: boolean;
+}
+
+export interface NationFinanceWaterfall {
+  initial: number;
+  interest: number;
+  operations: number;
+  welfare: number;
+  military: number;
+  projects: number;
+  surplus: number;
+}
+
+export interface NationFinanceSnapshot {
+  treasury: number;
+  stableRevenue: number;
+  creditLimit: number;
+  debt: number;
+  interest: number;
+  waterfall: NationFinanceWaterfall;
+}
+
+export interface NationLaborSnapshot {
+  available: LaborPool;
+  assigned: LaborPool;
+  lai: number;
+  happiness: number;
+  consumption: LaborConsumption;
+}
+
+export interface NationStockpileSnapshot {
+  food: number;
+  fuel: number;
+  materials: number;
+  fx: number;
+  luxury: number;
+  ordnance: number;
+  production: number;
+}
+
+export interface NationMilitarySnapshot {
+  upkeep: number;
+  funded: number;
+  discretionary: number;
+}
+
+export interface NationProjectSnapshot {
+  id: number;
+  sector: SectorType;
+  tier: ProjectTier;
+  turnsRemaining: number;
+  delayed: boolean;
+}
+
+export interface NationState {
+  id: PlayerId;
+  name: string;
+  preset: NationPreset;
+  canton: string;
+  coastal: boolean;
+  signature: string;
+  energy: NationEnergySnapshot;
+  logistics: NationLogisticsSnapshot;
+  welfare: NationWelfareSnapshot;
+  finance: NationFinanceSnapshot;
+  labor: NationLaborSnapshot;
+  stockpiles: NationStockpileSnapshot;
+  military: NationMilitarySnapshot;
+  sectors: Partial<Record<SectorType, SectorState>>;
+  projects: NationProjectSnapshot[];
+  idleCost: number;
+  omCost: number;
 }
 
 // === Energy System Types ===
@@ -374,6 +488,12 @@ export interface GameMeta {
    */
   players: PlayerId[];
 
+  /** Display metadata for each nation configured at creation */
+  nations: NationMeta[];
+
+  /** Optional reproducibility seed provided at game creation */
+  seed?: string | null;
+
   /**
    * Size of the map for this game.
    * Determines which mesh to use.
@@ -481,6 +601,9 @@ export interface GameState {
    * Incremented each time a new entity is created.
    */
   nextEntityId: number;
+
+  /** Per-nation initialization snapshots for in-media-res starts */
+  nations: Record<PlayerId, NationState>;
 }
 
 /**

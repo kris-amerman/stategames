@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { GameService } from '../game-state';
 import { setupWebSocketHandler } from '../websocket';
 import { gameRooms, socketToGame } from '../index';
+import { defaultNationInputs } from '../test-utils/nations';
 
 test('joining player receives full game data on websocket connect', async () => {
   // create a small world and join a second player
@@ -9,7 +10,8 @@ test('joining player receives full game data on websocket connect', async () => 
   const biomes = new Uint8Array(cellCount).fill(1);
   const gameId = 'g' + Math.random().toString(36).slice(2, 8);
   const joinCode = 'J' + Math.random().toString(36).slice(2, 7).toUpperCase();
-  await GameService.createGame(gameId, joinCode, 'small', cellCount, 2, biomes);
+  const nations = defaultNationInputs(2);
+  await GameService.createGame(gameId, joinCode, 'small', cellCount, nations, biomes);
   const joinRes = await GameService.joinGame(joinCode);
   if (!joinRes) throw new Error('join failed');
 

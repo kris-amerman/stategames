@@ -26,24 +26,31 @@ test('client and server integrate on game creation', async () => {
     headers: {
       Origin: 'http://localhost:5173',
       'Access-Control-Request-Method': 'POST',
-      'Access-Control-Request-Headers': 'X-Nation-Count, Content-Type, X-Cell-Count, X-Map-Size',
+      'Access-Control-Request-Headers': 'Content-Type',
     },
   });
   expect(preflight.status).toBe(200);
-  expect(preflight.headers.get('Access-Control-Allow-Headers') || '').toContain('X-Nation-Count');
+  expect(preflight.headers.get('Access-Control-Allow-Headers') || '').toContain('Content-Type');
 
   // Create game request with biome data
   const cellCount = 4;
   const biomes = new Uint8Array([1,1,1,7]);
+  const nations = [
+    { name: 'Alpha', preset: 'Industrializing Exporter' },
+    { name: 'Beta', preset: 'Agrarian Surplus' },
+  ];
   const res = await fetch(`http://localhost:${PORT}/api/games/create`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/octet-stream',
-      'X-Cell-Count': String(cellCount),
-      'X-Map-Size': 'small',
-      'X-Nation-Count': '2',
+      'Content-Type': 'application/json',
     },
-    body: biomes,
+    body: JSON.stringify({
+      mapSize: 'small',
+      cellCount,
+      biomes: Array.from(biomes),
+      nations,
+      seed: 'integration-seed',
+    }),
   });
   expect(res.status).toBe(201);
   const body = await res.text();
