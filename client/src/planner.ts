@@ -210,6 +210,38 @@ function formatGold(value: number, includeUnit = true): string {
   return includeUnit ? `${formatted} g` : formatted;
 }
 
+export function computeLastRoundSpendFromSnapshot(
+  snapshot: any,
+  playerNation: any,
+  previous: number,
+): number {
+  const turnNumber = typeof snapshot?.turnNumber === 'number' ? snapshot.turnNumber : 0;
+  if (turnNumber <= 1) {
+    return 0;
+  }
+
+  const waterfall = playerNation?.finance?.waterfall;
+  if (waterfall) {
+    const total =
+      (waterfall.operations ?? 0) +
+      (waterfall.welfare ?? 0) +
+      (waterfall.military ?? 0) +
+      (waterfall.projects ?? 0) +
+      (waterfall.interest ?? 0);
+
+    if (Number.isFinite(total)) {
+      return total;
+    }
+  }
+
+  const expenditures = snapshot?.economy?.finance?.summary?.expenditures;
+  if (typeof expenditures === 'number' && Number.isFinite(expenditures)) {
+    return expenditures;
+  }
+
+  return previous ?? 0;
+}
+
 function getContext() {
   return contextProvider ? contextProvider() : { gameId: null, playerId: null, isMyTurn: false };
 }
@@ -766,13 +798,11 @@ async function fetchPlannerData() {
     updateStatusBarFromGameState(fullState, playerId);
     state.economy = fullState.economy;
     state.availableGold = state.nation?.finance?.treasury ?? fullState.economy?.resources?.gold ?? 0;
-    state.lastRoundSpend = state.nation?.finance?.waterfall?.operations
-      ? state.nation.finance.waterfall.operations +
-        state.nation.finance.waterfall.welfare +
-        state.nation.finance.waterfall.military +
-        state.nation.finance.waterfall.projects +
-        state.nation.finance.waterfall.interest
-      : fullState.economy?.finance?.summary?.expenditures ?? 0;
+    state.lastRoundSpend = computeLastRoundSpendFromSnapshot(
+      fullState,
+      state.nation,
+      0,
+    );
     state.miscSpend = 0;
     state.treasury = state.nation?.finance?.treasury ?? fullState.economy?.resources?.gold ?? 0;
     state.debt = state.nation?.finance?.debt ?? fullState.economy?.finance?.debt ?? 0;
@@ -1134,13 +1164,11 @@ export function updatePlannerSnapshot(snapshot: any) {
     state.treasury = playerNation?.finance?.treasury ?? snapshot.economy.resources?.gold ?? state.treasury;
     state.debt = playerNation?.finance?.debt ?? snapshot.economy.finance?.debt ?? state.debt;
     state.availableGold = playerNation?.finance?.treasury ?? snapshot.economy.resources?.gold ?? state.availableGold;
-    state.lastRoundSpend = financeWaterfall
-      ? financeWaterfall.operations +
-        financeWaterfall.welfare +
-        financeWaterfall.military +
-        financeWaterfall.projects +
-        financeWaterfall.interest
-      : snapshot.economy.finance?.summary?.expenditures ?? state.lastRoundSpend;
+    state.lastRoundSpend = computeLastRoundSpendFromSnapshot(
+      snapshot,
+      playerNation ?? state.nation,
+      state.lastRoundSpend,
+    );
     state.energySpend = snapshot.economy.energy?.oAndMSpent ?? state.energySpend;
     state.miscSpend = financeWaterfall?.interest ?? snapshot.economy.finance?.summary?.interest ?? state.miscSpend;
     state.idleTax = computeIdleTax(snapshot.economy, playerNation ?? state.nation);
