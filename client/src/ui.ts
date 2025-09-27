@@ -1,6 +1,7 @@
 import { MapSize } from './mesh';
 import { loadOrGetMesh, generateTerrain, elevationConfig, biomeConfig, setCurrentMapSize } from './terrain';
 import { initializeStatusBar } from './statusBar';
+import { initializeDebugSidebar } from './debugSidebar';
 
 const PRESET_OPTIONS: { value: string; label: string }[] = [
   { value: 'Industrializing Exporter', label: 'Industrializing Exporter' },
@@ -182,6 +183,7 @@ export function collectNationPayload(): ClientNationInput[] {
 
 export function createUI(ctx: CanvasRenderingContext2D) {
   initializeStatusBar();
+  initializeDebugSidebar();
   // Create UI panel
   const uiPanel = document.createElement("div");
   uiPanel.id = 'uiPanelRoot';

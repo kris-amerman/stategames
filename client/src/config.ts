@@ -4,6 +4,9 @@ export const HEIGHT = 600;
 // Server configuration
 export const SERVER_BASE_URL: string = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
+export const DEBUG_SIDEBAR_ENABLED: boolean =
+  (import.meta.env.VITE_ENABLE_DEBUG_SIDEBAR ?? 'true').toLowerCase() !== 'false';
+
 // Biome color scheme
 export const BIOME_COLORS: { [key: number]: string } = {
   0: "#88aa55",   // Plains - Grassland

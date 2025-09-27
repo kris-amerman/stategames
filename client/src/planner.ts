@@ -2,6 +2,7 @@ import { SERVER_BASE_URL } from './config';
 import { deserializeTypedArrays } from './mesh';
 import { showGameNotification } from './notifications';
 import { updateStatusBarFromGameState } from './statusBar';
+import { updateDebugSidebarFromGameState } from './debugSidebar';
 
 type PlannerContext = () => {
   gameId: string | null;
@@ -9,7 +10,7 @@ type PlannerContext = () => {
   isMyTurn: boolean;
 };
 
-type SectorKey =
+export type SectorKey =
   | 'agriculture'
   | 'extraction'
   | 'manufacturing'
@@ -115,7 +116,7 @@ interface PlannerElements {
   cancelButton: HTMLButtonElement;
 }
 
-const SECTORS: SectorKey[] = [
+export const SECTORS: SectorKey[] = [
   'agriculture',
   'extraction',
   'manufacturing',
@@ -126,7 +127,7 @@ const SECTORS: SectorKey[] = [
   'logistics',
 ];
 
-const SECTOR_TITLES: Record<SectorKey, string> = {
+export const SECTOR_TITLES: Record<SectorKey, string> = {
   agriculture: 'Agriculture',
   extraction: 'Extraction',
   manufacturing: 'Manufacturing',
@@ -137,7 +138,7 @@ const SECTOR_TITLES: Record<SectorKey, string> = {
   logistics: 'Logistics',
 };
 
-const OM_COST_PER_SLOT: Record<SectorKey, number> = {
+export const OM_COST_PER_SLOT: Record<SectorKey, number> = {
   agriculture: 6,
   extraction: 8,
   manufacturing: 10,
@@ -147,12 +148,12 @@ const OM_COST_PER_SLOT: Record<SectorKey, number> = {
   research: 11,
   logistics: 5,
 };
-const IDLE_TAX_RATE = 0.25;
+export const IDLE_TAX_RATE = 0.25;
 
 export const EDUCATION_TIERS = [0, 0.25, 0.5, 0.75, 1];
 export const HEALTHCARE_TIERS = [0, 0.25, 0.5, 0.75, 1];
 
-const SECTOR_OUTPUTS: Record<SectorKey, Record<string, number>> = {
+export const SECTOR_OUTPUTS: Record<SectorKey, Record<string, number>> = {
   agriculture: { food: 1 },
   extraction: { materials: 1 },
   manufacturing: { production: 1 },
@@ -796,6 +797,7 @@ async function fetchPlannerData() {
     const { playerId } = getContext();
     state.nation = playerId ? fullState.nations?.[playerId] ?? null : null;
     updateStatusBarFromGameState(fullState, playerId);
+    updateDebugSidebarFromGameState(fullState, playerId);
     state.economy = fullState.economy;
     state.availableGold = state.nation?.finance?.treasury ?? fullState.economy?.resources?.gold ?? 0;
     state.lastRoundSpend = computeLastRoundSpendFromSnapshot(
@@ -1159,6 +1161,7 @@ export function updatePlannerSnapshot(snapshot: any) {
     state.nation = playerNation;
   }
   updateStatusBarFromGameState(snapshot, playerId);
+  updateDebugSidebarFromGameState(snapshot, playerId);
   if (snapshot?.economy) {
     const financeWaterfall = playerNation?.finance?.waterfall;
     state.treasury = playerNation?.finance?.treasury ?? snapshot.economy.resources?.gold ?? state.treasury;
