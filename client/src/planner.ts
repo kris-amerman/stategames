@@ -458,7 +458,7 @@ function renderSectorCards() {
     const ceilingCell = document.createElement('div');
     ceilingCell.id = `plannerSectorCeiling-${sector}`;
     ceilingCell.style.color = '#bbb';
-    ceilingCell.textContent = `${sectorStats.capacity} (${formatGold(sectorStats.capacity * OM_COST_PER_SLOT)})`;
+    ceilingCell.textContent = `${sectorStats.capacity}`;
 
     const utilizationCell = document.createElement('div');
     utilizationCell.id = `plannerSectorUtilization-${sector}`;
@@ -889,10 +889,10 @@ function buildPlannerMarkup(): string {
           </div>
           <div id="plannerOmColumnHeaders" style="display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr; gap: 8px; font-size: 12px; font-weight: 600; color: #ccc; margin-bottom: 6px;">
             <div id="plannerOmColumnHeaderSector">Sector</div>
-            <div id="plannerOmColumnHeaderCeiling">Ceiling</div>
+            <div id="plannerOmColumnHeaderCeiling">Ceiling (g)</div>
             <div id="plannerOmColumnHeaderUtilization">Utilization</div>
             <div id="plannerOmColumnHeaderOutput">Output</div>
-            <div id="plannerOmColumnHeaderFunding">Funding</div>
+            <div id="plannerOmColumnHeaderFunding">Funding (g)</div>
           </div>
           <div id="plannerSectors"></div>
           <div id="plannerPriorityRow" style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
