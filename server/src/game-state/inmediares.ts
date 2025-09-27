@@ -605,9 +605,11 @@ export class InMediaResInitializer {
       );
 
       const interestRate = economy.finance.interestRate ?? 0.05;
-      const debt = Math.round(stableRevenue * rng.nextRange(0.4, 0.7));
+      const debtSample = Math.round(stableRevenue * rng.nextRange(0.4, 0.7));
+      const startInDebt = rng.nextBoolean();
+      const debt = startInDebt ? debtSample : 0;
       const interest = Math.round(debt * interestRate * 100) / 100;
-      const creditLimit = Math.max(debt + 20, Math.round(stableRevenue * profile.creditLimitMultiplier));
+      const creditLimit = Math.max(debtSample + 20, Math.round(stableRevenue * profile.creditLimitMultiplier));
 
       const sectorStates: Record<SectorType, { capacity: number; funded: number; idle: number; utilization?: number }> = {} as any;
       let omCost = 0;
@@ -659,7 +661,7 @@ export class InMediaResInitializer {
       const buffer = Math.max(8, Math.round(stableRevenue * 0.25));
       const totalOps = omCost + idleCost;
       const totalObligations = interest + totalOps + welfarePlan.cost + militarySpend + projectSpendPerTurn;
-      let treasury = buffer;
+      let treasury = startInDebt ? 0 : buffer;
       const initialTreasury = totalObligations + treasury;
 
       const energyShort = energyRatio < 0.98;

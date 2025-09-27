@@ -131,7 +131,7 @@ describe('nation status summary', () => {
     expect(status.gold.value).toBeCloseTo(75, 2);
 
     nation.finance.debt = 40;
-    nation.finance.treasury = 120;
+    nation.finance.treasury = 0;
     status = computeNationStatusSummary(nation);
     expect(status.gold.isDebt).toBe(true);
     expect(status.gold.value).toBe(-40);

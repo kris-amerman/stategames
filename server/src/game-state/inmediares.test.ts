@@ -124,6 +124,11 @@ test('in-media-res initialization satisfies balance, finance, and stockpile targ
 
     expect(nation.military.funded).toBeGreaterThanOrEqual(nation.military.upkeep);
     expect(nation.finance.debt).toBeLessThanOrEqual(nation.finance.creditLimit);
+    if (nation.finance.debt > 0) {
+      expect(nation.finance.treasury).toBe(0);
+    } else {
+      expect(nation.finance.treasury).toBeGreaterThan(0);
+    }
 
     const waterfall = nation.finance.waterfall;
     const obligations =
