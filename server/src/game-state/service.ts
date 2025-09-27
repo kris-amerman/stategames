@@ -3,7 +3,18 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
 import { encode, decode } from '../serialization';
 import { GameStateManager } from './manager';
-import type { Game, GameState, GameMeta, GameMap, MapSize, PlayerId } from '../types';
+import type {
+  Game,
+  GameState,
+  GameMeta,
+  GameMap,
+  MapSize,
+  PlayerId,
+  NationCreationInput,
+  NationMeta,
+} from '../types';
+import { InMediaResInitializer } from './inmediares';
+import { SeededRandom } from '../utils/random';
 
 // In-memory game store (replace with database later)
 const games = new Map<string, Game>();
@@ -78,10 +89,18 @@ export class GameService {
     joinCode: string,
     mapSize: MapSize,
     cellCount: number,
-    nationCount: number,
-    biomes: Uint8Array
+    nationInputs: NationCreationInput[],
+    biomes: Uint8Array,
+    seed?: string | number,
   ): Promise<Game> {
+    const nationCount = nationInputs.length;
     const players = Array.from({ length: nationCount }, (_, i) => `player${i + 1}`);
+    const nationMetas: NationMeta[] = nationInputs.map((nation, index) => ({
+      id: players[index],
+      name: nation.name,
+      preset: nation.preset,
+    }));
+    const normalizedSeed = seed !== undefined && seed !== null ? String(seed) : null;
 
     const game = GameStateManager.createCompleteGame(
       gameId,
@@ -89,19 +108,24 @@ export class GameService {
       players,
       mapSize,
       biomes,
-      nationCount
+      nationCount,
+      nationMetas,
+      normalizedSeed,
     );
 
     // Import mesh service to generate starting territories
     const { meshService } = await import('../mesh-service');
     const meshData = await meshService.getMeshData(mapSize);
 
+    const territoryRandom = new SeededRandom(normalizedSeed);
     GameStateManager.assignStartingTerritories(
       game.state,
       meshData.cellNeighbors,
       meshData.cellOffsets,
       meshData.cellCount,
-      biomes
+      biomes,
+      7,
+      () => territoryRandom.next(),
     );
 
     GameStateManager.initializeNationInfrastructure(
@@ -111,6 +135,17 @@ export class GameService {
       meshData.cellNeighbors,
       meshData.cellOffsets
     );
+
+    const metas = InMediaResInitializer.initialize(
+      game,
+      nationInputs,
+      biomes,
+      meshData.cellNeighbors,
+      meshData.cellOffsets,
+      normalizedSeed ?? undefined,
+    );
+    game.meta.nations = metas;
+    game.meta.seed = normalizedSeed;
 
     // Only the creator is in the lobby initially
     game.meta.players = ['player1'];
@@ -122,7 +157,9 @@ export class GameService {
     await this.saveGame(game);
     await this.saveGameMap(gameId, game.map);
 
-    console.log(`Created game ${gameId} with join code ${joinCode} (${mapSize}, ${cellCount} cells)`);
+    console.log(
+      `Created game ${gameId} with join code ${joinCode} (${mapSize}, ${cellCount} cells, ${nationCount} nations)`
+    );
 
     return game;
   }

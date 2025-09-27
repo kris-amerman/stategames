@@ -14,6 +14,7 @@ import { getInfrastructure } from './getInfrastructure';
 import { getFinance } from './getFinance';
 import { getTrade } from './getTrade';
 import { getWelfare } from './getWelfare';
+import { defaultNationInputs } from '../test-utils/nations';
 
 async function setupGame() {
   const cellCount = 833;
@@ -21,7 +22,8 @@ async function setupGame() {
   const biomes = new Uint8Array(cellCount).fill(1);
   const gameId = 'g' + Math.random().toString(36).slice(2,8);
   const joinCode = 'J' + Math.random().toString(36).slice(2,7).toUpperCase();
-  await GameService.createGame(gameId, joinCode, 'small', cellCount, 2, biomes);
+  const nations = defaultNationInputs(2);
+  await GameService.createGame(gameId, joinCode, 'small', cellCount, nations, biomes);
   await GameService.joinGame(joinCode);
   await GameService.startGame(gameId);
   return { gameId };

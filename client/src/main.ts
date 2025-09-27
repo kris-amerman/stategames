@@ -1,4 +1,4 @@
-import { createUI, hideTerrainControls } from './ui';
+import { createUI, hideTerrainControls, collectNationPayload, applyNationErrors } from './ui';
 import {
   loadOrGetMesh,
   preloadMeshes,
@@ -89,40 +89,40 @@ function showCreatorGameUI(gameData: any) {
   
   gameStateDiv.innerHTML = `
     <h4 style="margin: 0 0 10px 0; color: #4CAF50;">Game Created!</h4>
-    
-    <div style="margin-bottom: 10px;">
-      <strong>Join Code:</strong> 
+
+    <div id="joinCodeContainer" style="margin-bottom: 10px;">
+      <strong>Join Code:</strong>
       <span style="
-        font-family: monospace; 
-        font-size: 16px; 
-        background: rgba(255,255,255,0.1); 
-        padding: 4px 8px; 
+        font-family: monospace;
+        font-size: 16px;
+        background: rgba(255,255,255,0.1);
+        padding: 4px 8px;
         border-radius: 4px;
         letter-spacing: 2px;
       ">${gameData.joinCode}</span>
       <button id="copyJoinCode" style="
         margin-left: 8px;
-        background: #666; 
-        color: white; 
-        border: none; 
-        padding: 4px 8px; 
-        border-radius: 4px; 
+        background: #666;
+        color: white;
+        border: none;
+        padding: 4px 8px;
+        border-radius: 4px;
         cursor: pointer;
         font-size: 11px;
       ">Copy</button>
     </div>
-    
-    <div style="margin-bottom: 10px;">
-      <strong>Game ID:</strong> 
+
+    <div id="gameIdContainer" style="margin-bottom: 10px;">
+      <strong>Game ID:</strong>
       <span style="font-family: monospace; font-size: 12px; color: #aaa;">${gameData.gameId}</span>
     </div>
-    
-    <div style="margin-bottom: 15px;">
+
+    <div id="creatorStatusContainer" style="margin-bottom: 15px;">
       <strong>Status:</strong>
       <span id="gameStatus" style="color: #FFA500;">Waiting for players...</span>
     </div>
 
-    <div style="margin-bottom: 15px;">
+    <div id="creatorPlayersContainer" style="margin-bottom: 15px;">
       <strong>Players:</strong>
       <ul id="playersList" style="
         margin: 5px 0 0 0;
@@ -168,27 +168,27 @@ function showJoinerGameUI(gameData: any) {
   
   gameStateDiv.innerHTML = `
     <h4 style="margin: 0 0 10px 0; color: #4CAF50;">Joined Game!</h4>
-    
-    <div style="margin-bottom: 10px;">
-      <strong>Game ID:</strong> 
+
+    <div id="joinerGameIdContainer" style="margin-bottom: 10px;">
+      <strong>Game ID:</strong>
       <span style="font-family: monospace; font-size: 12px; color: #aaa;">${gameData.gameId}</span>
     </div>
-    
-    <div style="margin-bottom: 10px;">
-      <strong>Your Player:</strong> 
+
+    <div id="joinerPlayerContainer" style="margin-bottom: 10px;">
+      <strong>Your Player:</strong>
       <span style="color: #4CAF50;">${gameData.playerName}</span>
     </div>
-    
-    <div style="margin-bottom: 15px;">
-      <strong>Status:</strong> 
+
+    <div id="joinerStatusContainer" style="margin-bottom: 15px;">
+      <strong>Status:</strong>
       <span id="gameStatus" style="color: #FFA500;">Waiting for game to start...</span>
     </div>
-    
-    <div style="margin-bottom: 15px;">
+
+    <div id="joinerPlayersContainer" style="margin-bottom: 15px;">
       <strong>Players:</strong>
       <ul id="playersList" style="
-        margin: 5px 0 0 0; 
-        padding-left: 20px; 
+        margin: 5px 0 0 0;
+        padding-left: 20px;
         color: #ccc;
       ">
         ${gameData.players.map((player: string) => 
@@ -242,8 +242,8 @@ function showJoinGameForm() {
   joinFormDiv.style.display = "block";
   joinFormDiv.innerHTML = `
     <h4 style="margin: 0 0 15px 0; color: #2196F3;">Join Game</h4>
-    
-    <div style="margin-bottom: 15px;">
+
+    <div id="joinCodeInputContainer" style="margin-bottom: 15px;">
       <label style="display: block; margin-bottom: 5px;">Enter Join Code:</label>
       <input type="text" id="joinCodeInput" placeholder="ABC123" style="
         width: 100%;
@@ -260,8 +260,8 @@ function showJoinGameForm() {
         box-sizing: border-box;
       " maxlength="6">
     </div>
-    
-    <div style="display: flex; gap: 10px;">
+
+    <div id="joinFormButtons" style="display: flex; gap: 10px;">
       <button id="submitJoinCode" style="
         flex: 1;
         background: #2196F3;
@@ -560,45 +560,84 @@ if (!(import.meta as any).vitest) {
 }
 
 document.getElementById("createGame")!.addEventListener("click", async () => {
-  console.log(`SENDING ${currentCellCount} BIOMES TO ${SERVER_BASE_URL}/api/games/create`);
+  console.log(`SENDING ${currentCellCount} biomes to ${SERVER_BASE_URL}/api/games/create`);
   console.time('createGame');
-  
-  // Disable buttons during creation
+
   setGameButtonsState(false, "Creating...", "Join Game");
-  
+
   try {
-    const nationCountInput = document.getElementById('nationCount') as HTMLInputElement;
-    const nationCount = parseInt(nationCountInput.value) || 1;
+    const nations = collectNationPayload();
+    const clientErrors: Array<{ index: number; field: 'name' | 'preset'; message: string }> = [];
+    const nameSet = new Map<string, number>();
+    nations.forEach((nation, index) => {
+      if (!nation.name) {
+        clientErrors.push({ index, field: 'name', message: 'Name is required' });
+      } else {
+        const key = nation.name.toLowerCase();
+        if (nameSet.has(key)) {
+          clientErrors.push({ index, field: 'name', message: 'Name must be unique' });
+          const firstIndex = nameSet.get(key)!;
+          clientErrors.push({ index: firstIndex, field: 'name', message: 'Name must be unique' });
+        } else {
+          nameSet.set(key, index);
+        }
+      }
+      if (!nation.preset) {
+        clientErrors.push({ index, field: 'preset', message: 'Select a preset' });
+      }
+    });
+
+    if (clientErrors.length > 0) {
+      applyNationErrors(clientErrors);
+      setGameButtonsState(true, "Create Game", "Join Game");
+      console.timeEnd('createGame');
+      return;
+    }
+
+    applyNationErrors([]);
+
+    const nationSeedInput = document.getElementById('nationSeed') as HTMLInputElement | null;
+    const seedValue = nationSeedInput?.value?.trim() ?? '';
 
     const response = await fetch(`${SERVER_BASE_URL}/api/games/create`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/octet-stream',
-        'X-Cell-Count': currentCellCount.toString(),
-        'X-Map-Size': currentMapSize,
-        'X-Nation-Count': nationCount.toString(),
+        'Content-Type': 'application/json',
       },
-      body: currentCellBiomes
+      body: JSON.stringify({
+        mapSize: currentMapSize,
+        cellCount: currentCellCount,
+        biomes: Array.from(currentCellBiomes),
+        nations,
+        seed: seedValue.length > 0 ? seedValue : undefined,
+      }),
     });
-    
+
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || `Failed to create game: ${response.status}`);
+      let errorMessage = `Failed to create game: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        if (errorData?.errors) {
+          applyNationErrors(errorData.errors);
+        }
+        errorMessage = errorData.error || errorMessage;
+      } catch (err) {
+        // ignore
+      }
+      throw new Error(errorMessage);
     }
-    
+
     const gameData = await response.json();
     console.log('Game created:', gameData);
 
-    // Show creator's game state UI and render map
     showCreatorGameUI(gameData);
     processGameData(gameData.game);
     updateGameStatus('waiting');
     updatePlayersList(gameData.players, 'player1');
-    
+
   } catch (error: any) {
     console.error('Game creation failed:', error);
     showGameNotification(error.message || 'Game creation failed', 'error');
-    // Reset buttons on error
     setGameButtonsState(true, "Create Game", "Join Game");
   }
   console.timeEnd('createGame');
