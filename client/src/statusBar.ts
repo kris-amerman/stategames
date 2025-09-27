@@ -150,6 +150,12 @@ export function initializeStatusBar(): void {
     flowGroup.appendChild(wrapper);
   });
 
+  const flowLaborDivider = document.createElement('div');
+  flowLaborDivider.textContent = '|';
+  flowLaborDivider.style.opacity = '0.6';
+  flowLaborDivider.style.fontSize = '13px';
+  flowGroup.appendChild(flowLaborDivider);
+
   LABOR_ORDER.forEach(({ key, label }) => {
     const wrapper = document.createElement('div');
     wrapper.className = 'status-labor-item';
