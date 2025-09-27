@@ -187,7 +187,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     position: fixed;
     top: 10px;
     right: 10px;
-    width: 380px;
+    width: 480px;
     background: rgba(0, 0, 0, 0.8);
     color: white;
     padding: 15px;
