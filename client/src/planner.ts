@@ -382,6 +382,35 @@ function computeIdleTaxFromStats(stats: Record<SectorKey, SectorStats>): number 
   return SECTORS.reduce((sum, sector) => sum + stats[sector].idleCost, 0);
 }
 
+function computeIdleTax(economy: any, nation: any = state.nation): number {
+  if (!economy || !nation?.canton) return 0;
+  const canton = economy.cantons?.[nation.canton];
+  if (!canton?.sectors) return 0;
+
+  return SECTORS.reduce((sum, sector) => {
+    const sectorState = canton.sectors?.[sector];
+    if (!sectorState) return sum;
+
+    const capacity = typeof sectorState.capacity === 'number' ? sectorState.capacity : 0;
+    const running =
+      typeof sectorState.utilization === 'number'
+        ? sectorState.utilization
+        : typeof sectorState.funded === 'number'
+        ? sectorState.funded
+        : 0;
+
+    if (capacity <= 0) return sum;
+
+    const idleSlots = Math.max(0, capacity - running);
+    if (idleSlots <= 0) return sum;
+
+    const costPer = OM_COST_PER_SLOT[sector];
+    if (costPer <= 0) return sum;
+
+    return sum + idleSlots * costPer * IDLE_TAX_RATE;
+  }, 0);
+}
+
 function computeSectorOutputs(stats: SectorStats): string {
   const parts: string[] = [];
   for (const [resource, amount] of Object.entries(stats.outputs)) {
@@ -1095,15 +1124,26 @@ export function setPlannerVisibility(visible: boolean) {
 export function updatePlannerSnapshot(snapshot: any) {
   state.snapshot = snapshot;
   const { playerId } = getContext();
+  const playerNation = playerId ? snapshot?.nations?.[playerId] ?? null : null;
+  if (playerNation) {
+    state.nation = playerNation;
+  }
   updateStatusBarFromGameState(snapshot, playerId);
   if (snapshot?.economy) {
-    state.treasury = snapshot.economy.resources?.gold ?? state.treasury;
-    state.debt = snapshot.economy.finance?.debt ?? state.debt;
-    state.availableGold = snapshot.economy.resources?.gold ?? state.availableGold;
-    state.lastRoundSpend = snapshot.economy.finance?.summary?.expenditures ?? state.lastRoundSpend;
+    const financeWaterfall = playerNation?.finance?.waterfall;
+    state.treasury = playerNation?.finance?.treasury ?? snapshot.economy.resources?.gold ?? state.treasury;
+    state.debt = playerNation?.finance?.debt ?? snapshot.economy.finance?.debt ?? state.debt;
+    state.availableGold = playerNation?.finance?.treasury ?? snapshot.economy.resources?.gold ?? state.availableGold;
+    state.lastRoundSpend = financeWaterfall
+      ? financeWaterfall.operations +
+        financeWaterfall.welfare +
+        financeWaterfall.military +
+        financeWaterfall.projects +
+        financeWaterfall.interest
+      : snapshot.economy.finance?.summary?.expenditures ?? state.lastRoundSpend;
     state.energySpend = snapshot.economy.energy?.oAndMSpent ?? state.energySpend;
-    state.miscSpend = snapshot.economy.finance?.summary?.interest ?? state.miscSpend;
-    state.idleTax = computeIdleTax(snapshot.economy);
+    state.miscSpend = financeWaterfall?.interest ?? snapshot.economy.finance?.summary?.interest ?? state.miscSpend;
+    state.idleTax = computeIdleTax(snapshot.economy, playerNation ?? state.nation);
     state.militaryUpkeep = estimateMilitaryUpkeep(snapshot);
     state.totalLabor = calculateTotalLabor(snapshot.economy);
     refreshTotals();
