@@ -89,40 +89,40 @@ function showCreatorGameUI(gameData: any) {
   
   gameStateDiv.innerHTML = `
     <h4 style="margin: 0 0 10px 0; color: #4CAF50;">Game Created!</h4>
-    
-    <div style="margin-bottom: 10px;">
-      <strong>Join Code:</strong> 
+
+    <div id="joinCodeContainer" style="margin-bottom: 10px;">
+      <strong>Join Code:</strong>
       <span style="
-        font-family: monospace; 
-        font-size: 16px; 
-        background: rgba(255,255,255,0.1); 
-        padding: 4px 8px; 
+        font-family: monospace;
+        font-size: 16px;
+        background: rgba(255,255,255,0.1);
+        padding: 4px 8px;
         border-radius: 4px;
         letter-spacing: 2px;
       ">${gameData.joinCode}</span>
       <button id="copyJoinCode" style="
         margin-left: 8px;
-        background: #666; 
-        color: white; 
-        border: none; 
-        padding: 4px 8px; 
-        border-radius: 4px; 
+        background: #666;
+        color: white;
+        border: none;
+        padding: 4px 8px;
+        border-radius: 4px;
         cursor: pointer;
         font-size: 11px;
       ">Copy</button>
     </div>
-    
-    <div style="margin-bottom: 10px;">
-      <strong>Game ID:</strong> 
+
+    <div id="gameIdContainer" style="margin-bottom: 10px;">
+      <strong>Game ID:</strong>
       <span style="font-family: monospace; font-size: 12px; color: #aaa;">${gameData.gameId}</span>
     </div>
-    
-    <div style="margin-bottom: 15px;">
+
+    <div id="creatorStatusContainer" style="margin-bottom: 15px;">
       <strong>Status:</strong>
       <span id="gameStatus" style="color: #FFA500;">Waiting for players...</span>
     </div>
 
-    <div style="margin-bottom: 15px;">
+    <div id="creatorPlayersContainer" style="margin-bottom: 15px;">
       <strong>Players:</strong>
       <ul id="playersList" style="
         margin: 5px 0 0 0;
@@ -168,27 +168,27 @@ function showJoinerGameUI(gameData: any) {
   
   gameStateDiv.innerHTML = `
     <h4 style="margin: 0 0 10px 0; color: #4CAF50;">Joined Game!</h4>
-    
-    <div style="margin-bottom: 10px;">
-      <strong>Game ID:</strong> 
+
+    <div id="joinerGameIdContainer" style="margin-bottom: 10px;">
+      <strong>Game ID:</strong>
       <span style="font-family: monospace; font-size: 12px; color: #aaa;">${gameData.gameId}</span>
     </div>
-    
-    <div style="margin-bottom: 10px;">
-      <strong>Your Player:</strong> 
+
+    <div id="joinerPlayerContainer" style="margin-bottom: 10px;">
+      <strong>Your Player:</strong>
       <span style="color: #4CAF50;">${gameData.playerName}</span>
     </div>
-    
-    <div style="margin-bottom: 15px;">
-      <strong>Status:</strong> 
+
+    <div id="joinerStatusContainer" style="margin-bottom: 15px;">
+      <strong>Status:</strong>
       <span id="gameStatus" style="color: #FFA500;">Waiting for game to start...</span>
     </div>
-    
-    <div style="margin-bottom: 15px;">
+
+    <div id="joinerPlayersContainer" style="margin-bottom: 15px;">
       <strong>Players:</strong>
       <ul id="playersList" style="
-        margin: 5px 0 0 0; 
-        padding-left: 20px; 
+        margin: 5px 0 0 0;
+        padding-left: 20px;
         color: #ccc;
       ">
         ${gameData.players.map((player: string) => 
@@ -242,8 +242,8 @@ function showJoinGameForm() {
   joinFormDiv.style.display = "block";
   joinFormDiv.innerHTML = `
     <h4 style="margin: 0 0 15px 0; color: #2196F3;">Join Game</h4>
-    
-    <div style="margin-bottom: 15px;">
+
+    <div id="joinCodeInputContainer" style="margin-bottom: 15px;">
       <label style="display: block; margin-bottom: 5px;">Enter Join Code:</label>
       <input type="text" id="joinCodeInput" placeholder="ABC123" style="
         width: 100%;
@@ -260,8 +260,8 @@ function showJoinGameForm() {
         box-sizing: border-box;
       " maxlength="6">
     </div>
-    
-    <div style="display: flex; gap: 10px;">
+
+    <div id="joinFormButtons" style="display: flex; gap: 10px;">
       <button id="submitJoinCode" style="
         flex: 1;
         background: #2196F3;

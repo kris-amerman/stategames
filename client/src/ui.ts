@@ -117,17 +117,17 @@ function renderNationRows(): void {
         )
         .join('');
       return `
-        <div class="nation-row" data-index="${index}" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start;">
-          <div style="flex: 1;">
+        <div id="nationRow-${index}" class="nation-row" data-index="${index}" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start;">
+          <div id="nationNameColumn-${index}" style="flex: 1;">
             <input type="text" class="nation-name" data-index="${index}" value="${escapeHtml(row.name)}" placeholder="Nation name" style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;" />
-            <div class="nation-error-name" style="min-height: 14px; font-size: 11px; color: #FF8A80; margin-top: 3px;">${row.errors?.name ? escapeHtml(row.errors.name) : ''}</div>
+            <div id="nationNameError-${index}" class="nation-error-name" style="min-height: 14px; font-size: 11px; color: #FF8A80; margin-top: 3px;">${row.errors?.name ? escapeHtml(row.errors.name) : ''}</div>
           </div>
-          <div style="flex: 1;">
+          <div id="nationPresetColumn-${index}" style="flex: 1;">
             <select class="nation-preset" data-index="${index}" style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;">
               <option value="">Select preset…</option>
               ${presetOptions}
             </select>
-            <div class="nation-error-preset" style="min-height: 14px; font-size: 11px; color: #FF8A80; margin-top: 3px;">${row.errors?.preset ? escapeHtml(row.errors.preset) : ''}</div>
+            <div id="nationPresetError-${index}" class="nation-error-preset" style="min-height: 14px; font-size: 11px; color: #FF8A80; margin-top: 3px;">${row.errors?.preset ? escapeHtml(row.errors.preset) : ''}</div>
           </div>
         </div>
       `;
@@ -182,6 +182,7 @@ export function collectNationPayload(): ClientNationInput[] {
 export function createUI(ctx: CanvasRenderingContext2D) {
   // Create UI panel
   const uiPanel = document.createElement("div");
+  uiPanel.id = 'uiPanelRoot';
   uiPanel.style.cssText = `
     position: fixed;
     top: 10px;
@@ -202,7 +203,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     <div id="terrainControls">
     <h3 style="margin: 0 0 15px 0; color: #4CAF50;">Biome Terrain Controls</h3>
 
-    <div style="margin-bottom: 15px;">
+    <div id="islandModeContainer" style="margin-bottom: 15px;">
       <label>
         <input type="checkbox" id="useIslands" ${
           elevationConfig.useIslands ? "checked" : ""
@@ -211,7 +212,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       </label>
     </div>
 
-    <div style="margin-bottom: 15px;">
+    <div id="smoothColorsContainer" style="margin-bottom: 15px;">
       <label>
         <input type="checkbox" id="smoothColors" ${
           biomeConfig.smoothColors ? "checked" : ""
@@ -220,7 +221,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       </label>
     </div>
 
-    <div style="margin-bottom: 15px;">
+    <div id="mapSizeContainer" style="margin-bottom: 15px;">
       <label>Map Size:</label>
       <select id="mapSize" style="width: 100%; margin-top: 5px; background: #333; color: white; border: 1px solid #555; padding: 4px;">
         <option value="small">Small</option>
@@ -233,7 +234,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     <details style="margin-bottom: 15px;">
       <summary style="cursor: pointer; margin-bottom: 10px;">Biome Settings</summary>
 
-      <div style="margin-bottom: 10px;">
+      <div id="waterLevelContainer" style="margin-bottom: 10px;">
         <label>Water Level: <span id="waterLevelValue">${
           biomeConfig.waterLevel
         }</span></label>
@@ -242,7 +243,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         }" style="width: 100%; margin-top: 5px;">
       </div>
 
-      <div style="margin-bottom: 10px;">
+      <div id="moistureFrequencyContainer" style="margin-bottom: 10px;">
         <label>Moisture Frequency: <span id="moistureFrequencyValue">${
           biomeConfig.moistureFrequency
         }</span></label>
@@ -251,7 +252,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         }" style="width: 100%; margin-top: 5px;">
       </div>
 
-      <div style="margin-bottom: 10px;">
+      <div id="temperatureFrequencyContainer" style="margin-bottom: 10px;">
         <label>Temperature Frequency: <span id="temperatureFrequencyValue">${
           biomeConfig.temperatureFrequency
         }</span></label>
@@ -260,7 +261,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         }" style="width: 100%; margin-top: 5px;">
       </div>
 
-      <div style="margin-bottom: 10px;">
+      <div id="moistureOctavesContainer" style="margin-bottom: 10px;">
         <label>Moisture Octaves: <span id="moistureOctavesValue">${
           biomeConfig.moistureOctaves
         }</span></label>
@@ -269,7 +270,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         }" style="width: 100%; margin-top: 5px;">
       </div>
 
-      <div style="margin-bottom: 15px;">
+      <div id="temperatureOctavesContainer" style="margin-bottom: 15px;">
         <label>Temperature Octaves: <span id="temperatureOctavesValue">${
           biomeConfig.temperatureOctaves
         }</span></label>
@@ -280,7 +281,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       <hr></hr>
     </details>
 
-    <div style="margin-bottom: 10px;">
+    <div id="elevationShiftContainer" style="margin-bottom: 10px;">
       <label>Elevation Shift: <span id="elevationShiftValue">${
         elevationConfig.elevationShift
       }</span></label>
@@ -289,7 +290,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       }" style="width: 100%; margin-top: 5px;">
     </div>
 
-    <div style="margin-bottom: 10px;">
+    <div id="octavesContainer" style="margin-bottom: 10px;">
       <label>Octaves: <span id="octavesValue">${
         elevationConfig.octaves
       }</span></label>
@@ -298,7 +299,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       }" style="width: 100%; margin-top: 5px;">
     </div>
 
-    <div style="margin-bottom: 10px;">
+    <div id="redistributionContainer" style="margin-bottom: 10px;">
       <label>Redistribution:</label>
       <select id="redistribution" style="width: 100%; margin-top: 5px; background: #333; color: white; border: 1px solid #555; padding: 4px;">
         <option value="none">None</option>
@@ -316,9 +317,9 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       }" style="width: 100%; margin-top: 5px;">
     </div>
 
-    <div style="margin-bottom: 10px;">
+    <div id="seedContainer" style="margin-bottom: 10px;">
       <label>Seed:</label>
-      <div style="display: flex; gap: 5px; margin-top: 5px; align-items: center;">
+      <div id="seedInputGroup" style="display: flex; gap: 5px; margin-top: 5px; align-items: center;">
         <input type="number" id="seedInput" min="0" max="1" step="0.001" value="${elevationConfig.seed.toFixed(3)}" style="flex: 1; background: #333; color: white; border: 1px solid #555; padding: 4px; border-radius: 4px;">
         <button id="randomSeed" style="background: #666; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">Random</button>
       </div>
@@ -332,7 +333,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         ${elevationConfig.amplitudes
           .map(
             (amp, i) =>
-              `<div style="margin: 5px 0;">
+              `<div id="amplitudeControl-${i}" style="margin: 5px 0;">
             <label>Octave ${
               i + 1
             }: <span id="amp${i}Value">${amp}</span></label>
@@ -347,7 +348,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         ${elevationConfig.frequencies
           .map(
             (freq, i) =>
-              `<div style="margin: 5px 0;">
+              `<div id="frequencyControl-${i}" style="margin: 5px 0;">
             <label>Octave ${
               i + 1
             }: <span id="freq${i}Value">${freq}</span></label>
@@ -358,20 +359,20 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       </div>
     </details>
 
-    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
+    <div id="terrainStatsSection" style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
       <div id="stats"></div>
       <div id="biomeStats" style="margin-top: 10px;"></div>
     </div>
 
-    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
-      <div style="margin-bottom: 10px; display: grid; gap: 6px;">
+    <div id="nationControlsSection" style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
+      <div id="nationInputsContainer" style="margin-bottom: 10px; display: grid; gap: 6px;">
         <label for="nationCount">Number of Nations (2–25):</label>
         <input type="number" id="nationCount" min="2" max="25" value="3" style="width: 100%; padding: 4px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
         <label for="nationSeed" style="margin-top: 6px;">Seed (optional for reproducibility):</label>
         <input type="text" id="nationSeed" placeholder="Leave blank for random" style="width: 100%; padding: 4px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
       </div>
       <div id="nationRows" style="margin-bottom: 10px;"></div>
-      <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+      <div id="gameActionButtons" style="display: flex; gap: 10px; margin-bottom: 10px;">
         <button id="createGame" style="flex: 1; background: #4CAF50; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer;">Create Game</button>
         <button id="joinGame" style="flex: 1; background: #2196F3; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer;">Join Game</button>
       </div>

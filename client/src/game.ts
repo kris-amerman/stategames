@@ -325,7 +325,7 @@ export function updateTurnIndicator(currentPlayer: string, turnNumber: number): 
   if (isMyTurn) {
     turnIndicator.style.background = 'rgba(76, 175, 80, 0.9)';
     turnIndicator.innerHTML = `
-      <div>Your Turn - Turn ${turnNumber}</div>
+      <div id="turnStatus">Your Turn - Turn ${turnNumber}</div>
       <button id="endTurnButton" style="
         background: #4CAF50;
         color: white;
@@ -352,7 +352,7 @@ export function updateTurnIndicator(currentPlayer: string, turnNumber: number): 
   } else {
     turnIndicator.style.background = 'rgba(255, 193, 7, 0.9)';
     turnIndicator.innerHTML = `
-      <div>Waiting for ${currentPlayer} - Turn ${turnNumber}</div>
+      <div id="waitingStatus">Waiting for ${currentPlayer} - Turn ${turnNumber}</div>
     `;
   }
 }
