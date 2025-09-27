@@ -10,7 +10,9 @@ import type {
   Entity,
   EntityType,
   MapSize,
-  InfrastructureData
+  InfrastructureData,
+  NationMeta,
+  NationState,
 } from '../types';
 import { EconomyManager } from '../economy';
 
@@ -23,15 +25,19 @@ export class GameStateManager {
     joinCode: string,
     players: PlayerId[],
     mapSize: MapSize,
-    nationCount: number
+    nationCount: number,
+    nations: NationMeta[] = [],
+    seed: string | null = null,
   ): GameMeta {
     return {
       gameId,
       joinCode,
       createdAt: new Date().toISOString(),
       players,
-       mapSize,
-      nationCount
+      nations,
+      seed,
+      mapSize,
+      nationCount,
     };
   }
 
@@ -58,7 +64,8 @@ export class GameStateManager {
         unit: []
       },
       economy: EconomyManager.createInitialState(),
-      nextEntityId: 1
+      nextEntityId: 1,
+      nations: {} as Record<PlayerId, NationState>,
     };
   }
 
@@ -74,10 +81,20 @@ export class GameStateManager {
     players: PlayerId[],
     mapSize: MapSize,
     biomes: Uint8Array,
-    nationCount: number
+    nationCount: number,
+    nations: NationMeta[] = [],
+    seed: string | null = null,
   ): Game {
     return {
-      meta: this.createInitialGameMeta(gameId, joinCode, players, mapSize, nationCount),
+      meta: this.createInitialGameMeta(
+        gameId,
+        joinCode,
+        players,
+        mapSize,
+        nationCount,
+        nations,
+        seed,
+      ),
       map: this.createGameMap(biomes),
       state: this.createInitialGameState(players)
     };
@@ -269,7 +286,8 @@ export class GameStateManager {
     cellOffsets: Uint32Array,
     cellCount: number,
     biomes: Uint8Array,
-    deepOceanBiome: number = 7
+    deepOceanBiome: number = 7,
+    randomFn: () => number = Math.random,
   ): void {
     const players = Object.keys(gameState.playerCells);
 
@@ -284,7 +302,7 @@ export class GameStateManager {
     // Randomize order for seed selection
     const claimableArray = Array.from(claimable);
     for (let i = claimableArray.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(randomFn() * (i + 1));
       [claimableArray[i], claimableArray[j]] = [claimableArray[j], claimableArray[i]];
     }
 
@@ -371,8 +389,13 @@ export class GameStateManager {
       // National Airport and Rail Hub
       gameState.economy.infrastructure.airports[cantonId] = { ...base };
       gameState.economy.infrastructure.railHubs[cantonId] = { ...base };
-      gameState.economy.infrastructure.national.airport = cantonId;
-      gameState.economy.infrastructure.national.rail = cantonId;
+      const national = gameState.economy.infrastructure.national as Record<string, string | undefined>;
+      if (!national.airport) {
+        national.airport = cantonId;
+      }
+      if (!national.rail) {
+        national.rail = cantonId;
+      }
 
       // Check if the capital cell is coastal for port placement
       let coastal = false;
@@ -390,7 +413,10 @@ export class GameStateManager {
 
       if (coastal) {
         gameState.economy.infrastructure.ports[cantonId] = { ...base };
-        gameState.economy.infrastructure.national.port = cantonId;
+        const national = gameState.economy.infrastructure.national as Record<string, string | undefined>;
+        if (!national.port) {
+          national.port = cantonId;
+        }
       }
     }
   }

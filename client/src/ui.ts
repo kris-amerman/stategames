@@ -1,14 +1,197 @@
 import { MapSize } from './mesh';
 import { loadOrGetMesh, generateTerrain, elevationConfig, biomeConfig, setCurrentMapSize } from './terrain';
+import { initializeStatusBar } from './statusBar';
+import { initializeDebugSidebar } from './debugSidebar';
+
+const PRESET_OPTIONS: { value: string; label: string }[] = [
+  { value: 'Industrializing Exporter', label: 'Industrializing Exporter' },
+  { value: 'Agrarian Surplus', label: 'Agrarian Surplus' },
+  { value: 'Finance and Services Hub', label: 'Finance and Services Hub' },
+  { value: 'Research State', label: 'Research State' },
+  { value: 'Defense-Manufacturing Complex', label: 'Defense-Manufacturing Complex' },
+  { value: 'Balanced Mixed Economy', label: 'Balanced Mixed Economy' },
+];
+
+const DEFAULT_NATION_NAMES = [
+  'Aurora Dominion',
+  'Silverhaven',
+  'Sunreach Coalition',
+  'Northwind Pact',
+  'Verdant Accord',
+  'Ironcrest Union',
+  'Azure Federation',
+  'Highland Concordat',
+  'Stormfall Republic',
+  'Golden Meridian',
+  'Starborne Compact',
+  'Lakeshore Assembly',
+  'Crimson Banner',
+  'Riverlight League',
+  'Thunderhold',
+  'Everfree Collective',
+  'Obsidian Frontier',
+  'Coastwatch Alliance',
+  'Celestial Ward',
+  'Gilded Spire',
+  'Midnight Expanse',
+  'Emerald Reach',
+  'Horizon Stronghold',
+  'Radiant Isles',
+  'Autumn Gate',
+  'Frostwall Dominion',
+  'Cinderveil',
+  'Skyward Pact',
+  'Oceanus Combine',
+  'Granite Bastion',
+];
+
+type NationFormRow = {
+  name: string;
+  preset: string;
+  errors?: { name?: string; preset?: string };
+};
+
+let nationFormState: NationFormRow[] = [];
+
+export interface ClientNationInput {
+  name: string;
+  preset: string;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function pickUniqueName(existing: Set<string>): string {
+  const pool = DEFAULT_NATION_NAMES.slice();
+  while (pool.length > 0) {
+    const index = Math.floor(Math.random() * pool.length);
+    const candidate = pool.splice(index, 1)[0];
+    if (!existing.has(candidate.toLowerCase())) {
+      existing.add(candidate.toLowerCase());
+      return candidate;
+    }
+  }
+  const fallback = `Nation ${existing.size + 1}`;
+  existing.add(fallback.toLowerCase());
+  return fallback;
+}
+
+function initializeNationForm(count: number): void {
+  const usedNames = new Set<string>();
+  nationFormState = Array.from({ length: count }, () => ({
+    name: pickUniqueName(usedNames),
+    preset: '',
+  }));
+}
+
+function setNationCount(count: number): void {
+  if (count < 2) count = 2;
+  if (count > 25) count = 25;
+  if (nationFormState.length === 0) {
+    initializeNationForm(count);
+    return;
+  }
+  const used = new Set<string>(nationFormState.map(row => row.name.toLowerCase()));
+  if (count > nationFormState.length) {
+    while (nationFormState.length < count) {
+      nationFormState.push({ name: pickUniqueName(used), preset: '' });
+    }
+  } else if (count < nationFormState.length) {
+    nationFormState = nationFormState.slice(0, count);
+  }
+}
+
+function renderNationRows(): void {
+  const container = document.getElementById('nationRows');
+  if (!container) return;
+  container.innerHTML = nationFormState
+    .map((row, index) => {
+      const presetOptions = PRESET_OPTIONS
+        .map(
+          option =>
+            `<option value="${escapeHtml(option.value)}"${row.preset === option.value ? ' selected' : ''}>${escapeHtml(option.label)}</option>`,
+        )
+        .join('');
+      return `
+        <div id="nationRow-${index}" class="nation-row" data-index="${index}" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start;">
+          <div id="nationNameColumn-${index}" style="flex: 1;">
+            <input type="text" class="nation-name" data-index="${index}" value="${escapeHtml(row.name)}" placeholder="Nation name" style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;" />
+            <div id="nationNameError-${index}" class="nation-error-name" style="min-height: 14px; font-size: 11px; color: #FF8A80; margin-top: 3px;">${row.errors?.name ? escapeHtml(row.errors.name) : ''}</div>
+          </div>
+          <div id="nationPresetColumn-${index}" style="flex: 1;">
+            <select class="nation-preset" data-index="${index}" style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;">
+              <option value="">Select preset…</option>
+              ${presetOptions}
+            </select>
+            <div id="nationPresetError-${index}" class="nation-error-preset" style="min-height: 14px; font-size: 11px; color: #FF8A80; margin-top: 3px;">${row.errors?.preset ? escapeHtml(row.errors.preset) : ''}</div>
+          </div>
+        </div>
+      `;
+    })
+    .join('');
+
+  container.querySelectorAll<HTMLInputElement>('.nation-name').forEach(input => {
+    const index = Number(input.dataset.index);
+    input.addEventListener('input', () => {
+      if (!Number.isFinite(index) || index >= nationFormState.length) return;
+      nationFormState[index].name = input.value;
+      if (nationFormState[index].errors) {
+        delete nationFormState[index].errors!.name;
+      }
+    });
+  });
+
+  container.querySelectorAll<HTMLSelectElement>('.nation-preset').forEach(select => {
+    const index = Number(select.dataset.index);
+    select.addEventListener('change', () => {
+      if (!Number.isFinite(index) || index >= nationFormState.length) return;
+      nationFormState[index].preset = select.value;
+      if (nationFormState[index].errors) {
+        delete nationFormState[index].errors!.preset;
+      }
+    });
+  });
+}
+
+export function applyNationErrors(errors: Array<{ index: number; field: 'name' | 'preset'; message: string }>): void {
+  nationFormState.forEach(row => {
+    if (row.errors) {
+      row.errors = {};
+    }
+  });
+  for (const error of errors) {
+    const row = nationFormState[error.index];
+    if (!row) continue;
+    if (!row.errors) row.errors = {};
+    row.errors[error.field] = error.message;
+  }
+  renderNationRows();
+}
+
+export function collectNationPayload(): ClientNationInput[] {
+  return nationFormState.map(row => ({
+    name: row.name.trim(),
+    preset: row.preset,
+  }));
+}
 
 export function createUI(ctx: CanvasRenderingContext2D) {
+  initializeStatusBar();
+  initializeDebugSidebar();
   // Create UI panel
   const uiPanel = document.createElement("div");
+  uiPanel.id = 'uiPanelRoot';
   uiPanel.style.cssText = `
     position: fixed;
-    top: 10px;
+    top: 56px;
     right: 10px;
-    width: 380px;
+    width: 480px;
     background: rgba(0, 0, 0, 0.8);
     color: white;
     padding: 15px;
@@ -24,7 +207,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     <div id="terrainControls">
     <h3 style="margin: 0 0 15px 0; color: #4CAF50;">Biome Terrain Controls</h3>
 
-    <div style="margin-bottom: 15px;">
+    <div id="islandModeContainer" style="margin-bottom: 15px;">
       <label>
         <input type="checkbox" id="useIslands" ${
           elevationConfig.useIslands ? "checked" : ""
@@ -33,7 +216,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       </label>
     </div>
 
-    <div style="margin-bottom: 15px;">
+    <div id="smoothColorsContainer" style="margin-bottom: 15px;">
       <label>
         <input type="checkbox" id="smoothColors" ${
           biomeConfig.smoothColors ? "checked" : ""
@@ -42,7 +225,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       </label>
     </div>
 
-    <div style="margin-bottom: 15px;">
+    <div id="mapSizeContainer" style="margin-bottom: 15px;">
       <label>Map Size:</label>
       <select id="mapSize" style="width: 100%; margin-top: 5px; background: #333; color: white; border: 1px solid #555; padding: 4px;">
         <option value="small">Small</option>
@@ -55,7 +238,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     <details style="margin-bottom: 15px;">
       <summary style="cursor: pointer; margin-bottom: 10px;">Biome Settings</summary>
 
-      <div style="margin-bottom: 10px;">
+      <div id="waterLevelContainer" style="margin-bottom: 10px;">
         <label>Water Level: <span id="waterLevelValue">${
           biomeConfig.waterLevel
         }</span></label>
@@ -64,7 +247,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         }" style="width: 100%; margin-top: 5px;">
       </div>
 
-      <div style="margin-bottom: 10px;">
+      <div id="moistureFrequencyContainer" style="margin-bottom: 10px;">
         <label>Moisture Frequency: <span id="moistureFrequencyValue">${
           biomeConfig.moistureFrequency
         }</span></label>
@@ -73,7 +256,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         }" style="width: 100%; margin-top: 5px;">
       </div>
 
-      <div style="margin-bottom: 10px;">
+      <div id="temperatureFrequencyContainer" style="margin-bottom: 10px;">
         <label>Temperature Frequency: <span id="temperatureFrequencyValue">${
           biomeConfig.temperatureFrequency
         }</span></label>
@@ -82,7 +265,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         }" style="width: 100%; margin-top: 5px;">
       </div>
 
-      <div style="margin-bottom: 10px;">
+      <div id="moistureOctavesContainer" style="margin-bottom: 10px;">
         <label>Moisture Octaves: <span id="moistureOctavesValue">${
           biomeConfig.moistureOctaves
         }</span></label>
@@ -91,7 +274,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         }" style="width: 100%; margin-top: 5px;">
       </div>
 
-      <div style="margin-bottom: 15px;">
+      <div id="temperatureOctavesContainer" style="margin-bottom: 15px;">
         <label>Temperature Octaves: <span id="temperatureOctavesValue">${
           biomeConfig.temperatureOctaves
         }</span></label>
@@ -102,7 +285,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       <hr></hr>
     </details>
 
-    <div style="margin-bottom: 10px;">
+    <div id="elevationShiftContainer" style="margin-bottom: 10px;">
       <label>Elevation Shift: <span id="elevationShiftValue">${
         elevationConfig.elevationShift
       }</span></label>
@@ -111,7 +294,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       }" style="width: 100%; margin-top: 5px;">
     </div>
 
-    <div style="margin-bottom: 10px;">
+    <div id="octavesContainer" style="margin-bottom: 10px;">
       <label>Octaves: <span id="octavesValue">${
         elevationConfig.octaves
       }</span></label>
@@ -120,7 +303,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       }" style="width: 100%; margin-top: 5px;">
     </div>
 
-    <div style="margin-bottom: 10px;">
+    <div id="redistributionContainer" style="margin-bottom: 10px;">
       <label>Redistribution:</label>
       <select id="redistribution" style="width: 100%; margin-top: 5px; background: #333; color: white; border: 1px solid #555; padding: 4px;">
         <option value="none">None</option>
@@ -138,9 +321,9 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       }" style="width: 100%; margin-top: 5px;">
     </div>
 
-    <div style="margin-bottom: 10px;">
+    <div id="seedContainer" style="margin-bottom: 10px;">
       <label>Seed:</label>
-      <div style="display: flex; gap: 5px; margin-top: 5px; align-items: center;">
+      <div id="seedInputGroup" style="display: flex; gap: 5px; margin-top: 5px; align-items: center;">
         <input type="number" id="seedInput" min="0" max="1" step="0.001" value="${elevationConfig.seed.toFixed(3)}" style="flex: 1; background: #333; color: white; border: 1px solid #555; padding: 4px; border-radius: 4px;">
         <button id="randomSeed" style="background: #666; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">Random</button>
       </div>
@@ -154,7 +337,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         ${elevationConfig.amplitudes
           .map(
             (amp, i) =>
-              `<div style="margin: 5px 0;">
+              `<div id="amplitudeControl-${i}" style="margin: 5px 0;">
             <label>Octave ${
               i + 1
             }: <span id="amp${i}Value">${amp}</span></label>
@@ -169,7 +352,7 @@ export function createUI(ctx: CanvasRenderingContext2D) {
         ${elevationConfig.frequencies
           .map(
             (freq, i) =>
-              `<div style="margin: 5px 0;">
+              `<div id="frequencyControl-${i}" style="margin: 5px 0;">
             <label>Octave ${
               i + 1
             }: <span id="freq${i}Value">${freq}</span></label>
@@ -180,17 +363,20 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       </div>
     </details>
 
-    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
+    <div id="terrainStatsSection" style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
       <div id="stats"></div>
       <div id="biomeStats" style="margin-top: 10px;"></div>
     </div>
 
-    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
-      <div style="margin-bottom: 10px;">
-        <label>Nation Count:</label>
-        <input type="number" id="nationCount" min="1" max="8" value="2" style="width: 100%; padding: 4px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
+    <div id="nationControlsSection" style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #555; font-size: 11px; color: #aaa;">
+      <div id="nationInputsContainer" style="margin-bottom: 10px; display: grid; gap: 6px;">
+        <label for="nationCount">Number of Nations (2–25):</label>
+        <input type="number" id="nationCount" min="2" max="25" value="3" style="width: 100%; padding: 4px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
+        <label for="nationSeed" style="margin-top: 6px;">Seed (optional for reproducibility):</label>
+        <input type="text" id="nationSeed" placeholder="Leave blank for random" style="width: 100%; padding: 4px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
       </div>
-      <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+      <div id="nationRows" style="margin-bottom: 10px;"></div>
+      <div id="gameActionButtons" style="display: flex; gap: 10px; margin-bottom: 10px;">
         <button id="createGame" style="flex: 1; background: #4CAF50; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer;">Create Game</button>
         <button id="joinGame" style="flex: 1; background: #2196F3; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer;">Join Game</button>
       </div>
@@ -201,6 +387,19 @@ export function createUI(ctx: CanvasRenderingContext2D) {
   `;
 
   document.body.appendChild(uiPanel);
+
+  const nationCountInput = document.getElementById("nationCount") as HTMLInputElement;
+  const nationSeedInput = document.getElementById("nationSeed") as HTMLInputElement;
+
+  const initialCount = Number(nationCountInput.value) || 3;
+  setNationCount(initialCount);
+  renderNationRows();
+
+  nationCountInput.addEventListener('change', () => {
+    const value = Number(nationCountInput.value) || initialCount;
+    setNationCount(value);
+    renderNationRows();
+  });
 
   // Map size selectors
   document.getElementById("mapSize")!.addEventListener("change", async (e) => {

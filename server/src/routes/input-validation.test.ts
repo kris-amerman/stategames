@@ -3,13 +3,15 @@ import { GameService } from '../game-state';
 import { submitPlan } from './submitPlan';
 import { advanceTurn } from './advanceTurn';
 import type { TurnPlan } from '../types';
+import { defaultNationInputs } from '../test-utils/nations';
 
 async function setupGame() {
   const cellCount = 833;
   const biomes = new Uint8Array(cellCount).fill(1);
   const gameId = 'g' + Math.random().toString(36).slice(2,8);
   const joinCode = 'J' + Math.random().toString(36).slice(2,7).toUpperCase();
-  await GameService.createGame(gameId, joinCode, 'small', cellCount, 2, biomes);
+  const nations = defaultNationInputs(2);
+  await GameService.createGame(gameId, joinCode, 'small', cellCount, nations, biomes);
   await GameService.joinGame(joinCode);
   await GameService.startGame(gameId);
   return { gameId };

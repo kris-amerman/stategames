@@ -13,6 +13,8 @@ import {
 import { addToRoom, removeFromRoom, sendGameAction } from './network';
 import { showGameNotification } from './notifications';
 import { updatePlannerSnapshot } from './planner';
+import { updateStatusBarFromGameState } from './statusBar';
+import { updateDebugSidebarFromGameState } from './debugSidebar';
 
 let canvas: HTMLCanvasElement;
 let ctx: CanvasRenderingContext2D;
@@ -77,6 +79,8 @@ export function handleGameUpdate(data: any): void {
 
     renderGameState();
     updatePlannerSnapshot(gameState);
+    updateStatusBarFromGameState(gameState, currentPlayerName);
+    updateDebugSidebarFromGameState(gameState, currentPlayerName);
   }
 }
 
@@ -154,10 +158,14 @@ export function processGameData(gameData: any): void {
       loadOrGetMesh(gameData.meta.mapSize as MapSize, ctx).then(() => {
         renderGameState();
         updatePlannerSnapshot(gameData.state);
+        updateStatusBarFromGameState(gameData.state, currentPlayerName);
+        updateDebugSidebarFromGameState(gameData.state, currentPlayerName);
       });
     } else {
       renderGameState();
       updatePlannerSnapshot(gameData.state);
+      updateStatusBarFromGameState(gameData.state, currentPlayerName);
+      updateDebugSidebarFromGameState(gameData.state, currentPlayerName);
     }
 
   } catch (error: any) {
@@ -325,7 +333,7 @@ export function updateTurnIndicator(currentPlayer: string, turnNumber: number): 
   if (isMyTurn) {
     turnIndicator.style.background = 'rgba(76, 175, 80, 0.9)';
     turnIndicator.innerHTML = `
-      <div>Your Turn - Turn ${turnNumber}</div>
+      <div id="turnStatus">Your Turn - Turn ${turnNumber}</div>
       <button id="endTurnButton" style="
         background: #4CAF50;
         color: white;
@@ -352,7 +360,7 @@ export function updateTurnIndicator(currentPlayer: string, turnNumber: number): 
   } else {
     turnIndicator.style.background = 'rgba(255, 193, 7, 0.9)';
     turnIndicator.innerHTML = `
-      <div>Waiting for ${currentPlayer} - Turn ${turnNumber}</div>
+      <div id="waitingStatus">Waiting for ${currentPlayer} - Turn ${turnNumber}</div>
     `;
   }
 }

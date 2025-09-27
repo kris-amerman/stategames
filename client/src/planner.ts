@@ -1,6 +1,8 @@
 import { SERVER_BASE_URL } from './config';
 import { deserializeTypedArrays } from './mesh';
 import { showGameNotification } from './notifications';
+import { updateStatusBarFromGameState } from './statusBar';
+import { updateDebugSidebarFromGameState } from './debugSidebar';
 
 type PlannerContext = () => {
   gameId: string | null;
@@ -8,7 +10,7 @@ type PlannerContext = () => {
   isMyTurn: boolean;
 };
 
-type SectorKey =
+export type SectorKey =
   | 'agriculture'
   | 'extraction'
   | 'manufacturing'
@@ -20,8 +22,14 @@ type SectorKey =
 
 interface SectorStats {
   capacity: number;
-  funded: number;
+  perSlotCost: number;
+  ceiling: number;
+  fundingGold: number;
+  attemptedSlots: number;
+  runningSlots: number;
   utilization: number;
+  idleCost: number;
+  outputs: Record<string, number>;
 }
 
 interface WelfareCosts {
@@ -65,6 +73,7 @@ interface PlannerState {
   basePlan: SerializedPlan | null;
   snapshot: any;
   economy: any;
+  nation: any;
 }
 
 interface SerializedPlan {
@@ -107,7 +116,7 @@ interface PlannerElements {
   cancelButton: HTMLButtonElement;
 }
 
-const SECTORS: SectorKey[] = [
+export const SECTORS: SectorKey[] = [
   'agriculture',
   'extraction',
   'manufacturing',
@@ -118,7 +127,7 @@ const SECTORS: SectorKey[] = [
   'logistics',
 ];
 
-const SECTOR_TITLES: Record<SectorKey, string> = {
+export const SECTOR_TITLES: Record<SectorKey, string> = {
   agriculture: 'Agriculture',
   extraction: 'Extraction',
   manufacturing: 'Manufacturing',
@@ -129,13 +138,22 @@ const SECTOR_TITLES: Record<SectorKey, string> = {
   logistics: 'Logistics',
 };
 
-const OM_COST_PER_SLOT = 1;
-const IDLE_TAX_RATE = 0.25;
+export const OM_COST_PER_SLOT: Record<SectorKey, number> = {
+  agriculture: 6,
+  extraction: 8,
+  manufacturing: 10,
+  defense: 12,
+  luxury: 9,
+  finance: 7,
+  research: 11,
+  logistics: 5,
+};
+export const IDLE_TAX_RATE = 0.25;
 
 export const EDUCATION_TIERS = [0, 0.25, 0.5, 0.75, 1];
 export const HEALTHCARE_TIERS = [0, 0.25, 0.5, 0.75, 1];
 
-const SECTOR_OUTPUTS: Record<SectorKey, Record<string, number>> = {
+export const SECTOR_OUTPUTS: Record<SectorKey, Record<string, number>> = {
   agriculture: { food: 1 },
   extraction: { materials: 1 },
   manufacturing: { production: 1 },
@@ -184,11 +202,45 @@ const state: PlannerState = {
   basePlan: null,
   snapshot: null,
   economy: null,
+  nation: null,
 };
 
-function formatGold(value: number): string {
+function formatGold(value: number, includeUnit = true): string {
   const rounded = Math.round((value + Number.EPSILON) * 100) / 100;
-  return `${rounded.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} gold`;
+  const formatted = rounded.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  return includeUnit ? `${formatted} g` : formatted;
+}
+
+export function computeLastRoundSpendFromSnapshot(
+  snapshot: any,
+  playerNation: any,
+  previous: number,
+): number {
+  const turnNumber = typeof snapshot?.turnNumber === 'number' ? snapshot.turnNumber : 0;
+  if (turnNumber <= 1) {
+    return 0;
+  }
+
+  const waterfall = playerNation?.finance?.waterfall;
+  if (waterfall) {
+    const total =
+      (waterfall.operations ?? 0) +
+      (waterfall.welfare ?? 0) +
+      (waterfall.military ?? 0) +
+      (waterfall.projects ?? 0) +
+      (waterfall.interest ?? 0);
+
+    if (Number.isFinite(total)) {
+      return total;
+    }
+  }
+
+  const expenditures = snapshot?.economy?.finance?.summary?.expenditures;
+  if (typeof expenditures === 'number' && Number.isFinite(expenditures)) {
+    return expenditures;
+  }
+
+  return previous ?? 0;
 }
 
 function getContext() {
@@ -277,50 +329,126 @@ function estimateMilitaryUpkeep(snapshot: any): number {
   return total;
 }
 
-function aggregateSectorStats(economy: any): Record<SectorKey, SectorStats> {
+function gateInstrumentationEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem('plannerGateDebug') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function aggregateSectorStats(
+  nation: any,
+  economy: any,
+  allocations: Record<SectorKey, number>,
+): Record<SectorKey, SectorStats> {
+  const empty: SectorStats = {
+    capacity: 0,
+    perSlotCost: 0,
+    ceiling: 0,
+    fundingGold: 0,
+    attemptedSlots: 0,
+    runningSlots: 0,
+    utilization: 0,
+    idleCost: 0,
+    outputs: {},
+  };
+
   const stats: Record<SectorKey, SectorStats> = Object.fromEntries(
-    SECTORS.map((sector) => [sector, { capacity: 0, funded: 0, utilization: 0 }]),
+    SECTORS.map((sector) => [sector, { ...empty }]),
   ) as Record<SectorKey, SectorStats>;
 
-  if (!economy || !economy.cantons) return stats;
+  if (!nation || !economy) {
+    return stats;
+  }
 
-  for (const canton of Object.values(economy.cantons) as any[]) {
-    if (!canton || !canton.sectors) continue;
-    for (const sectorKey of SECTORS) {
-      const sectorState = canton.sectors[sectorKey];
-      if (!sectorState) continue;
-      const stat = stats[sectorKey];
-      stat.capacity += sectorState.capacity || 0;
-      stat.funded += sectorState.funded || 0;
-      stat.utilization += sectorState.utilization || 0;
+  const cantonId = nation.canton;
+  const canton = cantonId ? economy.cantons?.[cantonId] : null;
+
+  for (const sectorKey of SECTORS) {
+    const costPer = OM_COST_PER_SLOT[sectorKey];
+    const stat = stats[sectorKey];
+    const cantonSector = canton?.sectors?.[sectorKey];
+    const capacity = cantonSector?.capacity ?? 0;
+    const planFunding = allocations[sectorKey] ?? 0;
+    const attempted = capacity > 0 && costPer > 0 ? Math.min(capacity, Math.floor(planFunding / costPer)) : 0;
+    const runningFromNation = cantonSector?.utilization ?? cantonSector?.funded ?? 0;
+    const runningSlots = Math.min(attempted, runningFromNation, capacity);
+    const utilization = capacity > 0 ? Math.round((runningSlots / capacity) * 100) : 0;
+    const idleSlots = Math.max(0, capacity - runningSlots);
+    const outputs: Record<string, number> = {};
+    const perSlotOutputs = SECTOR_OUTPUTS[sectorKey];
+    for (const [resource, amount] of Object.entries(perSlotOutputs)) {
+      outputs[resource] = runningSlots * amount;
     }
+
+    const sectorSnapshot: SectorStats = {
+      capacity,
+      perSlotCost: costPer,
+      ceiling: capacity * costPer,
+      fundingGold: planFunding,
+      attemptedSlots: attempted,
+      runningSlots,
+      utilization,
+      idleCost: idleSlots * costPer * IDLE_TAX_RATE,
+      outputs,
+    };
+
+    if (gateInstrumentationEnabled()) {
+      console.groupCollapsed(`Planner gate trace – ${sectorKey}`);
+      console.log('Capacity', capacity, 'perSlotCost', costPer, 'ceiling', sectorSnapshot.ceiling);
+      console.log('Funding (g)', planFunding, 'attempted slots', attempted);
+      console.log('Running (nation snapshot)', runningFromNation);
+      console.log('Idle slots', idleSlots, 'Idle tax', sectorSnapshot.idleCost);
+      console.log('Outputs', sectorSnapshot.outputs);
+      console.groupEnd();
+    }
+
+    stats[sectorKey] = sectorSnapshot;
   }
 
   return stats;
 }
 
-function computeIdleTax(economy: any): number {
-  if (!economy || !economy.cantons) return 0;
-  let total = 0;
-  for (const canton of Object.values(economy.cantons) as any[]) {
-    if (!canton || !canton.sectors) continue;
-    for (const sectorKey of SECTORS) {
-      const sectorState = canton.sectors[sectorKey];
-      if (!sectorState) continue;
-      const idle = sectorState.idle || 0;
-      total += idle * OM_COST_PER_SLOT * IDLE_TAX_RATE;
-    }
-  }
-  return total;
+function computeIdleTaxFromStats(stats: Record<SectorKey, SectorStats>): number {
+  return SECTORS.reduce((sum, sector) => sum + stats[sector].idleCost, 0);
 }
 
-function computeSectorOutputs(stats: SectorStats, sector: SectorKey): string {
-  const outputs = SECTOR_OUTPUTS[sector];
+function computeIdleTax(economy: any, nation: any = state.nation): number {
+  if (!economy || !nation?.canton) return 0;
+  const canton = economy.cantons?.[nation.canton];
+  if (!canton?.sectors) return 0;
+
+  return SECTORS.reduce((sum, sector) => {
+    const sectorState = canton.sectors?.[sector];
+    if (!sectorState) return sum;
+
+    const capacity = typeof sectorState.capacity === 'number' ? sectorState.capacity : 0;
+    const running =
+      typeof sectorState.utilization === 'number'
+        ? sectorState.utilization
+        : typeof sectorState.funded === 'number'
+        ? sectorState.funded
+        : 0;
+
+    if (capacity <= 0) return sum;
+
+    const idleSlots = Math.max(0, capacity - running);
+    if (idleSlots <= 0) return sum;
+
+    const costPer = OM_COST_PER_SLOT[sector];
+    if (costPer <= 0) return sum;
+
+    return sum + idleSlots * costPer * IDLE_TAX_RATE;
+  }, 0);
+}
+
+function computeSectorOutputs(stats: SectorStats): string {
   const parts: string[] = [];
-  for (const [resource, perSlot] of Object.entries(outputs)) {
-    const produced = stats.utilization * perSlot;
-    if (produced > 0) {
-      parts.push(`${resource}: ${produced.toFixed(0)}`);
+  for (const [resource, amount] of Object.entries(stats.outputs)) {
+    if (amount > 0) {
+      parts.push(`${resource}: ${amount.toFixed(0)}`);
     }
   }
   return parts.join(', ') || '—';
@@ -392,12 +520,29 @@ function applyBasePlan(plan: SerializedPlan) {
 
 function refreshTotals() {
   state.totalOmBudget = Object.values(state.sectorAllocations).reduce((sum, v) => sum + v, 0);
+  const stats = aggregateSectorStats(state.nation, state.snapshot?.economy, state.sectorAllocations);
+  state.idleTax = computeIdleTaxFromStats(stats);
+  const runningCost = SECTORS.reduce(
+    (sum, sector) => sum + stats[sector].runningSlots * stats[sector].perSlotCost,
+    0,
+  );
+  const plannedInterest = state.nation?.finance?.waterfall?.interest ?? 0;
+  const plannedProjects = state.nation?.finance?.waterfall?.projects ?? 0;
+  state.energySpend = Math.max(0, (state.nation?.omCost ?? runningCost + state.idleTax) - runningCost - state.idleTax);
   const welfareCosts = calculateWelfareCost(state.totalLabor, state.educationTier, state.healthcareTier);
   state.educationCost = welfareCosts.education;
   state.healthcareCost = welfareCosts.healthcare;
   state.welfareBudget = state.educationCost + state.healthcareCost;
   state.welfareAvailable = Math.max(0, state.availableGold - state.militaryAllocation - state.totalOmBudget);
-  state.projectedSpend = state.militaryAllocation + state.welfareBudget + state.totalOmBudget;
+  state.projectedSpend =
+    state.militaryAllocation +
+    state.welfareBudget +
+    state.totalOmBudget +
+    state.idleTax +
+    state.energySpend +
+    state.miscSpend +
+    plannedInterest +
+    plannedProjects;
   const affordable = predictAffordableWelfare(
     state.welfareAvailable,
     state.totalLabor,
@@ -418,7 +563,7 @@ function refreshTotals() {
 
 function renderSectorCards() {
   if (!elements) return;
-  const stats = aggregateSectorStats(state.economy || state.snapshot?.economy);
+  const stats = aggregateSectorStats(state.nation, state.snapshot?.economy, state.sectorAllocations);
   elements.sectorContainer.innerHTML = '';
 
   state.sectorOrder.forEach((sector) => {
@@ -428,6 +573,7 @@ function renderSectorCards() {
     card.draggable = isCustom;
     card.dataset.sector = sector;
     card.setAttribute('aria-disabled', String(!isCustom));
+    card.id = `plannerSectorCard-${sector}`;
     card.style.cssText = `
       display: grid;
       grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr;
@@ -444,9 +590,28 @@ function renderSectorCards() {
     `;
 
     const sectorStats = stats[sector];
-    const utilization = sectorStats.capacity > 0
-      ? Math.min(100, Math.round((sectorStats.utilization / sectorStats.capacity) * 100))
-      : 0;
+    const utilization = sectorStats.utilization;
+
+    const nameCell = document.createElement('div');
+    nameCell.id = `plannerSectorName-${sector}`;
+    nameCell.style.fontWeight = '600';
+    nameCell.style.color = '#fff';
+    nameCell.textContent = SECTOR_TITLES[sector];
+
+    const ceilingCell = document.createElement('div');
+    ceilingCell.id = `plannerSectorCeiling-${sector}`;
+    ceilingCell.style.color = '#bbb';
+    ceilingCell.textContent = formatGold(sectorStats.ceiling);
+
+    const utilizationCell = document.createElement('div');
+    utilizationCell.id = `plannerSectorUtilization-${sector}`;
+    utilizationCell.style.color = '#bbb';
+    utilizationCell.textContent = `${utilization}%`;
+
+    const outputCell = document.createElement('div');
+    outputCell.id = `plannerSectorOutput-${sector}`;
+    outputCell.style.color = '#bbb';
+    outputCell.textContent = computeSectorOutputs(sectorStats);
 
     const fundingInput = document.createElement('input');
     fundingInput.type = 'number';
@@ -454,6 +619,7 @@ function renderSectorCards() {
     fundingInput.step = '1';
     fundingInput.value = String(state.sectorAllocations[sector] ?? 0);
     fundingInput.disabled = !isCustom;
+    fundingInput.id = `plannerSectorFundingInput-${sector}`;
     fundingInput.style.cssText = `
       width: 100%;
       padding: 4px;
@@ -470,14 +636,13 @@ function renderSectorCards() {
       renderPlanner();
     });
 
-    card.innerHTML = `
-      <div style="font-weight: 600; color: #fff;">${SECTOR_TITLES[sector]}</div>
-      <div style="color: #bbb;">${sectorStats.capacity} (${formatGold(sectorStats.capacity * OM_COST_PER_SLOT)})</div>
-      <div style="color: #bbb;">${utilization}%</div>
-      <div style="color: #bbb;">${computeSectorOutputs(sectorStats, sector)}</div>
-    `;
+    card.appendChild(nameCell);
+    card.appendChild(ceilingCell);
+    card.appendChild(utilizationCell);
+    card.appendChild(outputCell);
 
     const fundingCell = document.createElement('div');
+    fundingCell.id = `plannerSectorFunding-${sector}`;
     fundingCell.appendChild(fundingInput);
     card.appendChild(fundingCell);
 
@@ -510,16 +675,21 @@ function renderWarnings() {
   if (!elements) return;
   elements.warningsList.innerHTML = '';
   if (state.warnings.length === 0) {
-    elements.warningsList.innerHTML = '<div style="color: #8BC34A;">All budgets within limits.</div>';
+    const empty = document.createElement('div');
+    empty.id = 'plannerWarningsEmpty';
+    empty.style.color = '#8BC34A';
+    empty.textContent = 'All budgets within limits.';
+    elements.warningsList.appendChild(empty);
     return;
   }
-  for (const warning of state.warnings) {
+  state.warnings.forEach((warning, index) => {
     const item = document.createElement('div');
+    item.id = `plannerWarning-${index}`;
     item.textContent = warning;
     item.style.color = '#FFC107';
     item.style.marginBottom = '4px';
     elements.warningsList.appendChild(item);
-  }
+  });
 }
 
 function renderPlanner() {
@@ -575,6 +745,13 @@ function renderPlanner() {
   elements.projectedLine.textContent = formatGold(state.projectedSpend);
   elements.projectedLine.style.color = state.projectedSpend > state.lastRoundSpend ? '#FF8A80' : '#8BC34A';
   elements.treasuryLine.textContent = formatGold(state.treasury);
+  if (state.treasury < 0) {
+    elements.treasuryLine.style.color = '#FF5252';
+  } else if (state.treasury <= state.nation?.finance?.waterfall?.operations * 0.1) {
+    elements.treasuryLine.style.color = '#FFC107';
+  } else {
+    elements.treasuryLine.style.color = '#8BC34A';
+  }
   elements.debtLine.textContent = formatGold(state.debt);
 
   const { playerId, isMyTurn } = getContext();
@@ -617,14 +794,20 @@ async function fetchPlannerData() {
     const json = await response.json();
     const fullState = deserializeTypedArrays(json);
     state.snapshot = fullState;
+    const { playerId } = getContext();
+    state.nation = playerId ? fullState.nations?.[playerId] ?? null : null;
+    updateStatusBarFromGameState(fullState, playerId);
+    updateDebugSidebarFromGameState(fullState, playerId);
     state.economy = fullState.economy;
-    state.availableGold = fullState.economy?.resources?.gold ?? 0;
-    state.lastRoundSpend = fullState.economy?.finance?.summary?.expenditures ?? 0;
-    state.energySpend = fullState.economy?.energy?.oAndMSpent ?? 0;
-    state.miscSpend = fullState.economy?.finance?.summary?.interest ?? 0;
-    state.treasury = fullState.economy?.resources?.gold ?? 0;
-    state.debt = fullState.economy?.finance?.debt ?? 0;
-    state.idleTax = computeIdleTax(fullState.economy);
+    state.availableGold = state.nation?.finance?.treasury ?? fullState.economy?.resources?.gold ?? 0;
+    state.lastRoundSpend = computeLastRoundSpendFromSnapshot(
+      fullState,
+      state.nation,
+      0,
+    );
+    state.miscSpend = 0;
+    state.treasury = state.nation?.finance?.treasury ?? fullState.economy?.resources?.gold ?? 0;
+    state.debt = state.nation?.finance?.debt ?? fullState.economy?.finance?.debt ?? 0;
     state.planSubmittedBy = fullState.planSubmittedBy ?? null;
     state.totalLabor = calculateTotalLabor(fullState.economy);
     state.militaryUpkeep = estimateMilitaryUpkeep(fullState);
@@ -650,6 +833,14 @@ async function fetchPlannerData() {
     state.educationMax = Math.min(4, (currentWelfare.education ?? 0) + 1);
     state.healthcareMin = Math.max(0, (currentWelfare.healthcare ?? 0) - 1);
     state.healthcareMax = Math.min(4, (currentWelfare.healthcare ?? 0) + 1);
+
+    const sectorStats = aggregateSectorStats(state.nation, fullState.economy, state.sectorAllocations);
+    state.idleTax = computeIdleTaxFromStats(sectorStats);
+    const runningCost = SECTORS.reduce(
+      (sum, sector) => sum + sectorStats[sector].runningSlots * sectorStats[sector].perSlotCost,
+      0,
+    );
+    state.energySpend = Math.max(0, (state.nation?.omCost ?? 0) - runningCost - state.idleTax);
 
     refreshTotals();
     state.basePlan = {
@@ -790,33 +981,33 @@ function attachEventListeners() {
 function buildPlannerMarkup(): string {
   return `
     <details id="nationPlanner" style="margin-top: 12px; background: rgba(0,0,0,0.25); border-radius: 8px; padding: 10px;">
-      <summary style="cursor: pointer; font-weight: 600; color: #4CAF50;">Nation Planner</summary>
+      <summary id="plannerSummary" style="cursor: pointer; font-weight: 600; color: #4CAF50;">Nation Planner</summary>
       <div id="plannerContent" style="margin-top: 10px; display: flex; flex-direction: column; gap: 14px;">
         <div id="plannerStatus" style="font-size: 12px; color: #fff;">Configure next turn budgets and save to queue the plan.</div>
 
-        <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <h5 style="margin: 0 0 10px 0; color: #fff;">Military Budget</h5>
-          <label style="display: block; color: #ccc; font-size: 12px; margin-bottom: 6px;">Gold Allocation</label>
+        <section id="plannerMilitarySection" style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
+          <h5 id="plannerMilitaryHeader" style="margin: 0 0 10px 0; color: #fff;">Military Budget</h5>
+          <label id="plannerMilitaryLabel" style="display: block; color: #ccc; font-size: 12px; margin-bottom: 6px;">Gold Allocation</label>
           <input id="plannerMilitary" type="number" min="0" step="1" style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;" />
-          <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px; color: #bbb; font-size: 12px;">
-            <div>Upkeep: <span id="plannerMilitaryUpkeep">0</span></div>
-            <div>Upkeep Gap: <span id="plannerMilitaryGap">None</span></div>
-            <div>Discretionary Remainder: <span id="plannerMilitaryRemainder">None</span></div>
+          <div id="plannerMilitaryStats" style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px; color: #bbb; font-size: 12px;">
+            <div id="plannerMilitaryUpkeepLine">Upkeep: <span id="plannerMilitaryUpkeep">0</span></div>
+            <div id="plannerMilitaryGapLine">Upkeep Gap: <span id="plannerMilitaryGap">None</span></div>
+            <div id="plannerMilitaryRemainderLine">Discretionary Remainder: <span id="plannerMilitaryRemainder">None</span></div>
           </div>
         </section>
 
-        <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <h5 style="margin: 0 0 10px 0; color: #fff;">Welfare</h5>
-          <div style="color: #bbb; font-size: 12px; margin-bottom: 10px;">
+        <section id="plannerWelfareSection" style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
+          <h5 id="plannerWelfareHeader" style="margin: 0 0 10px 0; color: #fff;">Welfare</h5>
+          <div id="plannerWelfareDescription" style="color: #bbb; font-size: 12px; margin-bottom: 10px;">
             Adjust Education and Healthcare tiers. You may shift at most one tier per turn; gold costs update automatically.
           </div>
-          <div style="display: grid; gap: 12px;">
-            <div>
-              <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 4px;">
-                <label for="plannerEducation" style="color: #fff; font-weight: 600;">Education Tier</label>
+          <div id="plannerWelfareControls" style="display: grid; gap: 12px;">
+            <div id="plannerEducationControl">
+              <div id="plannerEducationHeaderRow" style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 4px;">
+                <label id="plannerEducationLabel" for="plannerEducation" style="color: #fff; font-weight: 600;">Education Tier</label>
                 <span id="plannerEducationTierValue" style="color: #8BC34A; font-size: 12px;">Tier 0</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 12px;">
+              <div id="plannerEducationSliderRow" style="display: flex; align-items: center; gap: 12px;">
                 <input id="plannerEducation" type="range" min="0" max="4" step="1" list="plannerEducationMarks" style="flex: 1;" />
                 <datalist id="plannerEducationMarks">
                   <option value="0"></option>
@@ -825,18 +1016,18 @@ function buildPlannerMarkup(): string {
                   <option value="3"></option>
                   <option value="4"></option>
                 </datalist>
-                <div style="min-width: 120px; text-align: right;">
-                  <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
+                <div id="plannerEducationAllocation" style="min-width: 120px; text-align: right;">
+                  <div id="plannerEducationAllocationLabel" style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
                   <div id="plannerEducationCost" style="font-size: 12px; color: #fff; font-weight: 600;">0</div>
                 </div>
               </div>
             </div>
-            <div>
-              <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 4px;">
-                <label for="plannerHealthcare" style="color: #fff; font-weight: 600;">Healthcare Tier</label>
+            <div id="plannerHealthcareControl">
+              <div id="plannerHealthcareHeaderRow" style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 4px;">
+                <label id="plannerHealthcareLabel" for="plannerHealthcare" style="color: #fff; font-weight: 600;">Healthcare Tier</label>
                 <span id="plannerHealthcareTierValue" style="color: #8BC34A; font-size: 12px;">Tier 0</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 12px;">
+              <div id="plannerHealthcareSliderRow" style="display: flex; align-items: center; gap: 12px;">
                 <input id="plannerHealthcare" type="range" min="0" max="4" step="1" list="plannerHealthcareMarks" style="flex: 1;" />
                 <datalist id="plannerHealthcareMarks">
                   <option value="0"></option>
@@ -845,8 +1036,8 @@ function buildPlannerMarkup(): string {
                   <option value="3"></option>
                   <option value="4"></option>
                 </datalist>
-                <div style="min-width: 120px; text-align: right;">
-                  <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
+                <div id="plannerHealthcareAllocation" style="min-width: 120px; text-align: right;">
+                  <div id="plannerHealthcareAllocationLabel" style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
                   <div id="plannerHealthcareCost" style="font-size: 12px; color: #fff; font-weight: 600;">0</div>
                 </div>
               </div>
@@ -855,57 +1046,57 @@ function buildPlannerMarkup(): string {
           <div id="plannerWelfareDownshift" style="display:none; color: #FFC107; margin-top: 6px; font-size: 12px;"></div>
         </section>
 
-        <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 10px;">
-            <span>Total O&amp;M Allocation</span>
+        <section id="plannerOmSection" style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
+          <div id="plannerOmHeaderRow" style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 10px;">
+            <span id="plannerOmHeaderLabel">Total O&amp;M Allocation</span>
             <span id="plannerTotalOmValue" style="color: #fff; font-weight: 600;">0</span>
           </div>
-          <div style="display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr; gap: 8px; font-size: 12px; font-weight: 600; color: #ccc; margin-bottom: 6px;">
-            <div>Sector</div>
-            <div>Ceiling</div>
-            <div>Utilization</div>
-            <div>Output</div>
-            <div>Funding</div>
+          <div id="plannerOmColumnHeaders" style="display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr; gap: 8px; font-size: 12px; font-weight: 600; color: #ccc; margin-bottom: 6px;">
+            <div id="plannerOmColumnHeaderSector">Sector</div>
+            <div id="plannerOmColumnHeaderCeiling">Ceiling (g)</div>
+            <div id="plannerOmColumnHeaderUtilization">Utilization</div>
+            <div id="plannerOmColumnHeaderOutput">Output</div>
+            <div id="plannerOmColumnHeaderFunding">Funding (g)</div>
           </div>
           <div id="plannerSectors"></div>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
-            <h5 style="margin: 0; color: #fff;">Priority Mode</h5>
-            <div style="font-size: 12px; color: #ccc; display: flex; gap: 10px;">
-              <label><input type="radio" name="plannerMode" id="plannerModeCustom" value="custom" checked /> Custom</label>
-              <label><input type="radio" name="plannerMode" id="plannerModeProrata" value="pro-rata" /> Pro-rata</label>
+          <div id="plannerPriorityRow" style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
+            <h5 id="plannerPriorityHeader" style="margin: 0; color: #fff;">Priority Mode</h5>
+            <div id="plannerModeToggleGroup" style="font-size: 12px; color: #ccc; display: flex; gap: 10px;">
+              <label id="plannerModeCustomLabel"><input type="radio" name="plannerMode" id="plannerModeCustom" value="custom" checked /> Custom</label>
+              <label id="plannerModeProrataLabel"><input type="radio" name="plannerMode" id="plannerModeProrata" value="pro-rata" /> Pro-rata</label>
             </div>
           </div>
-          <div style="font-size: 11px; color: #888; margin-top: 6px;">
+          <div id="plannerModeDescription" style="font-size: 11px; color: #888; margin-top: 6px;">
             Custom mode enables dragging and editing sector funding. Pro-rata locks the cards and splits funding evenly.
           </div>
         </section>
 
-        <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <h5 style="margin: 0 0 8px 0; color: #fff;">Finance Summary</h5>
-          <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; color: #bbb; font-size: 12px; align-items: center;">
-            <div>Total Idle Tax</div>
+        <section id="plannerFinanceSection" style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
+          <h5 id="plannerFinanceHeader" style="margin: 0 0 8px 0; color: #fff;">Finance Summary</h5>
+          <div id="plannerFinanceGrid" style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; color: #bbb; font-size: 12px; align-items: center;">
+            <div id="plannerIdleTaxLabel">Total Idle Tax</div>
             <div id="plannerIdleTax" style="text-align: right; color: #fff;">0</div>
-            <div>Energy &amp; Infrastructure</div>
+            <div id="plannerEnergyLabel">Energy &amp; Infrastructure</div>
             <div id="plannerEnergy" style="text-align: right; color: #fff;">0</div>
-            <div>Miscellaneous Expenses</div>
+            <div id="plannerMiscLabel">Miscellaneous Expenses</div>
             <div id="plannerMisc" style="text-align: right; color: #fff;">0</div>
-            <div>Gold Spent Last Round</div>
+            <div id="plannerLastRoundLabel">Gold Spent Last Round</div>
             <div id="plannerLastRound" style="text-align: right; color: #fff;">0</div>
-            <div>Projected Gold This Round</div>
+            <div id="plannerProjectedLabel">Projected Gold This Round</div>
             <div id="plannerProjected" style="text-align: right; color: #fff;">0</div>
-            <div>Gold in Treasury</div>
+            <div id="plannerTreasuryLabel">Gold in Treasury</div>
             <div id="plannerTreasury" style="text-align: right; color: #fff;">0</div>
-            <div>National Debt</div>
+            <div id="plannerDebtLabel">National Debt</div>
             <div id="plannerDebt" style="text-align: right; color: #fff;">0</div>
           </div>
         </section>
 
-        <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <h5 style="margin: 0 0 8px 0; color: #fff;">Warnings &amp; Validation</h5>
+        <section id="plannerWarningsSection" style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
+          <h5 id="plannerWarningsHeader" style="margin: 0 0 8px 0; color: #fff;">Warnings &amp; Validation</h5>
           <div id="plannerWarnings" style="font-size: 12px;"></div>
         </section>
 
-        <div style="display: flex; gap: 10px;">
+        <div id="plannerActions" style="display: flex; gap: 10px;">
           <button id="plannerSave" style="flex: 1; padding: 10px; background: #4CAF50; border: none; border-radius: 6px; color: #fff; font-weight: 600; cursor: pointer;">Save</button>
           <button id="plannerCancel" style="flex: 1; padding: 10px; background: #666; border: none; border-radius: 6px; color: #fff; font-weight: 600; cursor: pointer;">Cancel</button>
         </div>
@@ -964,14 +1155,26 @@ export function setPlannerVisibility(visible: boolean) {
 
 export function updatePlannerSnapshot(snapshot: any) {
   state.snapshot = snapshot;
+  const { playerId } = getContext();
+  const playerNation = playerId ? snapshot?.nations?.[playerId] ?? null : null;
+  if (playerNation) {
+    state.nation = playerNation;
+  }
+  updateStatusBarFromGameState(snapshot, playerId);
+  updateDebugSidebarFromGameState(snapshot, playerId);
   if (snapshot?.economy) {
-    state.treasury = snapshot.economy.resources?.gold ?? state.treasury;
-    state.debt = snapshot.economy.finance?.debt ?? state.debt;
-    state.availableGold = snapshot.economy.resources?.gold ?? state.availableGold;
-    state.lastRoundSpend = snapshot.economy.finance?.summary?.expenditures ?? state.lastRoundSpend;
+    const financeWaterfall = playerNation?.finance?.waterfall;
+    state.treasury = playerNation?.finance?.treasury ?? snapshot.economy.resources?.gold ?? state.treasury;
+    state.debt = playerNation?.finance?.debt ?? snapshot.economy.finance?.debt ?? state.debt;
+    state.availableGold = playerNation?.finance?.treasury ?? snapshot.economy.resources?.gold ?? state.availableGold;
+    state.lastRoundSpend = computeLastRoundSpendFromSnapshot(
+      snapshot,
+      playerNation ?? state.nation,
+      state.lastRoundSpend,
+    );
     state.energySpend = snapshot.economy.energy?.oAndMSpent ?? state.energySpend;
-    state.miscSpend = snapshot.economy.finance?.summary?.interest ?? state.miscSpend;
-    state.idleTax = computeIdleTax(snapshot.economy);
+    state.miscSpend = financeWaterfall?.interest ?? snapshot.economy.finance?.summary?.interest ?? state.miscSpend;
+    state.idleTax = computeIdleTax(snapshot.economy, playerNation ?? state.nation);
     state.militaryUpkeep = estimateMilitaryUpkeep(snapshot);
     state.totalLabor = calculateTotalLabor(snapshot.economy);
     refreshTotals();
