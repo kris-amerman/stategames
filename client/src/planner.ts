@@ -428,6 +428,7 @@ function renderSectorCards() {
     card.draggable = isCustom;
     card.dataset.sector = sector;
     card.setAttribute('aria-disabled', String(!isCustom));
+    card.id = `plannerSectorCard-${sector}`;
     card.style.cssText = `
       display: grid;
       grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr;
@@ -448,12 +449,34 @@ function renderSectorCards() {
       ? Math.min(100, Math.round((sectorStats.utilization / sectorStats.capacity) * 100))
       : 0;
 
+    const nameCell = document.createElement('div');
+    nameCell.id = `plannerSectorName-${sector}`;
+    nameCell.style.fontWeight = '600';
+    nameCell.style.color = '#fff';
+    nameCell.textContent = SECTOR_TITLES[sector];
+
+    const ceilingCell = document.createElement('div');
+    ceilingCell.id = `plannerSectorCeiling-${sector}`;
+    ceilingCell.style.color = '#bbb';
+    ceilingCell.textContent = `${sectorStats.capacity} (${formatGold(sectorStats.capacity * OM_COST_PER_SLOT)})`;
+
+    const utilizationCell = document.createElement('div');
+    utilizationCell.id = `plannerSectorUtilization-${sector}`;
+    utilizationCell.style.color = '#bbb';
+    utilizationCell.textContent = `${utilization}%`;
+
+    const outputCell = document.createElement('div');
+    outputCell.id = `plannerSectorOutput-${sector}`;
+    outputCell.style.color = '#bbb';
+    outputCell.textContent = computeSectorOutputs(sectorStats, sector);
+
     const fundingInput = document.createElement('input');
     fundingInput.type = 'number';
     fundingInput.min = '0';
     fundingInput.step = '1';
     fundingInput.value = String(state.sectorAllocations[sector] ?? 0);
     fundingInput.disabled = !isCustom;
+    fundingInput.id = `plannerSectorFundingInput-${sector}`;
     fundingInput.style.cssText = `
       width: 100%;
       padding: 4px;
@@ -470,14 +493,13 @@ function renderSectorCards() {
       renderPlanner();
     });
 
-    card.innerHTML = `
-      <div style="font-weight: 600; color: #fff;">${SECTOR_TITLES[sector]}</div>
-      <div style="color: #bbb;">${sectorStats.capacity} (${formatGold(sectorStats.capacity * OM_COST_PER_SLOT)})</div>
-      <div style="color: #bbb;">${utilization}%</div>
-      <div style="color: #bbb;">${computeSectorOutputs(sectorStats, sector)}</div>
-    `;
+    card.appendChild(nameCell);
+    card.appendChild(ceilingCell);
+    card.appendChild(utilizationCell);
+    card.appendChild(outputCell);
 
     const fundingCell = document.createElement('div');
+    fundingCell.id = `plannerSectorFunding-${sector}`;
     fundingCell.appendChild(fundingInput);
     card.appendChild(fundingCell);
 
@@ -510,16 +532,21 @@ function renderWarnings() {
   if (!elements) return;
   elements.warningsList.innerHTML = '';
   if (state.warnings.length === 0) {
-    elements.warningsList.innerHTML = '<div style="color: #8BC34A;">All budgets within limits.</div>';
+    const empty = document.createElement('div');
+    empty.id = 'plannerWarningsEmpty';
+    empty.style.color = '#8BC34A';
+    empty.textContent = 'All budgets within limits.';
+    elements.warningsList.appendChild(empty);
     return;
   }
-  for (const warning of state.warnings) {
+  state.warnings.forEach((warning, index) => {
     const item = document.createElement('div');
+    item.id = `plannerWarning-${index}`;
     item.textContent = warning;
     item.style.color = '#FFC107';
     item.style.marginBottom = '4px';
     elements.warningsList.appendChild(item);
-  }
+  });
 }
 
 function renderPlanner() {
@@ -790,33 +817,33 @@ function attachEventListeners() {
 function buildPlannerMarkup(): string {
   return `
     <details id="nationPlanner" style="margin-top: 12px; background: rgba(0,0,0,0.25); border-radius: 8px; padding: 10px;">
-      <summary style="cursor: pointer; font-weight: 600; color: #4CAF50;">Nation Planner</summary>
+      <summary id="plannerSummary" style="cursor: pointer; font-weight: 600; color: #4CAF50;">Nation Planner</summary>
       <div id="plannerContent" style="margin-top: 10px; display: flex; flex-direction: column; gap: 14px;">
         <div id="plannerStatus" style="font-size: 12px; color: #fff;">Configure next turn budgets and save to queue the plan.</div>
 
-        <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <h5 style="margin: 0 0 10px 0; color: #fff;">Military Budget</h5>
-          <label style="display: block; color: #ccc; font-size: 12px; margin-bottom: 6px;">Gold Allocation</label>
+        <section id="plannerMilitarySection" style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
+          <h5 id="plannerMilitaryHeader" style="margin: 0 0 10px 0; color: #fff;">Military Budget</h5>
+          <label id="plannerMilitaryLabel" style="display: block; color: #ccc; font-size: 12px; margin-bottom: 6px;">Gold Allocation</label>
           <input id="plannerMilitary" type="number" min="0" step="1" style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;" />
-          <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px; color: #bbb; font-size: 12px;">
-            <div>Upkeep: <span id="plannerMilitaryUpkeep">0</span></div>
-            <div>Upkeep Gap: <span id="plannerMilitaryGap">None</span></div>
-            <div>Discretionary Remainder: <span id="plannerMilitaryRemainder">None</span></div>
+          <div id="plannerMilitaryStats" style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px; color: #bbb; font-size: 12px;">
+            <div id="plannerMilitaryUpkeepLine">Upkeep: <span id="plannerMilitaryUpkeep">0</span></div>
+            <div id="plannerMilitaryGapLine">Upkeep Gap: <span id="plannerMilitaryGap">None</span></div>
+            <div id="plannerMilitaryRemainderLine">Discretionary Remainder: <span id="plannerMilitaryRemainder">None</span></div>
           </div>
         </section>
 
-        <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <h5 style="margin: 0 0 10px 0; color: #fff;">Welfare</h5>
-          <div style="color: #bbb; font-size: 12px; margin-bottom: 10px;">
+        <section id="plannerWelfareSection" style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
+          <h5 id="plannerWelfareHeader" style="margin: 0 0 10px 0; color: #fff;">Welfare</h5>
+          <div id="plannerWelfareDescription" style="color: #bbb; font-size: 12px; margin-bottom: 10px;">
             Adjust Education and Healthcare tiers. You may shift at most one tier per turn; gold costs update automatically.
           </div>
-          <div style="display: grid; gap: 12px;">
-            <div>
-              <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 4px;">
-                <label for="plannerEducation" style="color: #fff; font-weight: 600;">Education Tier</label>
+          <div id="plannerWelfareControls" style="display: grid; gap: 12px;">
+            <div id="plannerEducationControl">
+              <div id="plannerEducationHeaderRow" style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 4px;">
+                <label id="plannerEducationLabel" for="plannerEducation" style="color: #fff; font-weight: 600;">Education Tier</label>
                 <span id="plannerEducationTierValue" style="color: #8BC34A; font-size: 12px;">Tier 0</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 12px;">
+              <div id="plannerEducationSliderRow" style="display: flex; align-items: center; gap: 12px;">
                 <input id="plannerEducation" type="range" min="0" max="4" step="1" list="plannerEducationMarks" style="flex: 1;" />
                 <datalist id="plannerEducationMarks">
                   <option value="0"></option>
@@ -825,18 +852,18 @@ function buildPlannerMarkup(): string {
                   <option value="3"></option>
                   <option value="4"></option>
                 </datalist>
-                <div style="min-width: 120px; text-align: right;">
-                  <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
+                <div id="plannerEducationAllocation" style="min-width: 120px; text-align: right;">
+                  <div id="plannerEducationAllocationLabel" style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
                   <div id="plannerEducationCost" style="font-size: 12px; color: #fff; font-weight: 600;">0</div>
                 </div>
               </div>
             </div>
-            <div>
-              <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 4px;">
-                <label for="plannerHealthcare" style="color: #fff; font-weight: 600;">Healthcare Tier</label>
+            <div id="plannerHealthcareControl">
+              <div id="plannerHealthcareHeaderRow" style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 4px;">
+                <label id="plannerHealthcareLabel" for="plannerHealthcare" style="color: #fff; font-weight: 600;">Healthcare Tier</label>
                 <span id="plannerHealthcareTierValue" style="color: #8BC34A; font-size: 12px;">Tier 0</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 12px;">
+              <div id="plannerHealthcareSliderRow" style="display: flex; align-items: center; gap: 12px;">
                 <input id="plannerHealthcare" type="range" min="0" max="4" step="1" list="plannerHealthcareMarks" style="flex: 1;" />
                 <datalist id="plannerHealthcareMarks">
                   <option value="0"></option>
@@ -845,8 +872,8 @@ function buildPlannerMarkup(): string {
                   <option value="3"></option>
                   <option value="4"></option>
                 </datalist>
-                <div style="min-width: 120px; text-align: right;">
-                  <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
+                <div id="plannerHealthcareAllocation" style="min-width: 120px; text-align: right;">
+                  <div id="plannerHealthcareAllocationLabel" style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Allocated Gold</div>
                   <div id="plannerHealthcareCost" style="font-size: 12px; color: #fff; font-weight: 600;">0</div>
                 </div>
               </div>
@@ -855,57 +882,57 @@ function buildPlannerMarkup(): string {
           <div id="plannerWelfareDownshift" style="display:none; color: #FFC107; margin-top: 6px; font-size: 12px;"></div>
         </section>
 
-        <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 10px;">
-            <span>Total O&amp;M Allocation</span>
+        <section id="plannerOmSection" style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
+          <div id="plannerOmHeaderRow" style="display: flex; justify-content: space-between; align-items: center; color: #ccc; font-size: 12px; margin-bottom: 10px;">
+            <span id="plannerOmHeaderLabel">Total O&amp;M Allocation</span>
             <span id="plannerTotalOmValue" style="color: #fff; font-weight: 600;">0</span>
           </div>
-          <div style="display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr; gap: 8px; font-size: 12px; font-weight: 600; color: #ccc; margin-bottom: 6px;">
-            <div>Sector</div>
-            <div>Ceiling</div>
-            <div>Utilization</div>
-            <div>Output</div>
-            <div>Funding</div>
+          <div id="plannerOmColumnHeaders" style="display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr; gap: 8px; font-size: 12px; font-weight: 600; color: #ccc; margin-bottom: 6px;">
+            <div id="plannerOmColumnHeaderSector">Sector</div>
+            <div id="plannerOmColumnHeaderCeiling">Ceiling</div>
+            <div id="plannerOmColumnHeaderUtilization">Utilization</div>
+            <div id="plannerOmColumnHeaderOutput">Output</div>
+            <div id="plannerOmColumnHeaderFunding">Funding</div>
           </div>
           <div id="plannerSectors"></div>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
-            <h5 style="margin: 0; color: #fff;">Priority Mode</h5>
-            <div style="font-size: 12px; color: #ccc; display: flex; gap: 10px;">
-              <label><input type="radio" name="plannerMode" id="plannerModeCustom" value="custom" checked /> Custom</label>
-              <label><input type="radio" name="plannerMode" id="plannerModeProrata" value="pro-rata" /> Pro-rata</label>
+          <div id="plannerPriorityRow" style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
+            <h5 id="plannerPriorityHeader" style="margin: 0; color: #fff;">Priority Mode</h5>
+            <div id="plannerModeToggleGroup" style="font-size: 12px; color: #ccc; display: flex; gap: 10px;">
+              <label id="plannerModeCustomLabel"><input type="radio" name="plannerMode" id="plannerModeCustom" value="custom" checked /> Custom</label>
+              <label id="plannerModeProrataLabel"><input type="radio" name="plannerMode" id="plannerModeProrata" value="pro-rata" /> Pro-rata</label>
             </div>
           </div>
-          <div style="font-size: 11px; color: #888; margin-top: 6px;">
+          <div id="plannerModeDescription" style="font-size: 11px; color: #888; margin-top: 6px;">
             Custom mode enables dragging and editing sector funding. Pro-rata locks the cards and splits funding evenly.
           </div>
         </section>
 
-        <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <h5 style="margin: 0 0 8px 0; color: #fff;">Finance Summary</h5>
-          <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; color: #bbb; font-size: 12px; align-items: center;">
-            <div>Total Idle Tax</div>
+        <section id="plannerFinanceSection" style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
+          <h5 id="plannerFinanceHeader" style="margin: 0 0 8px 0; color: #fff;">Finance Summary</h5>
+          <div id="plannerFinanceGrid" style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; color: #bbb; font-size: 12px; align-items: center;">
+            <div id="plannerIdleTaxLabel">Total Idle Tax</div>
             <div id="plannerIdleTax" style="text-align: right; color: #fff;">0</div>
-            <div>Energy &amp; Infrastructure</div>
+            <div id="plannerEnergyLabel">Energy &amp; Infrastructure</div>
             <div id="plannerEnergy" style="text-align: right; color: #fff;">0</div>
-            <div>Miscellaneous Expenses</div>
+            <div id="plannerMiscLabel">Miscellaneous Expenses</div>
             <div id="plannerMisc" style="text-align: right; color: #fff;">0</div>
-            <div>Gold Spent Last Round</div>
+            <div id="plannerLastRoundLabel">Gold Spent Last Round</div>
             <div id="plannerLastRound" style="text-align: right; color: #fff;">0</div>
-            <div>Projected Gold This Round</div>
+            <div id="plannerProjectedLabel">Projected Gold This Round</div>
             <div id="plannerProjected" style="text-align: right; color: #fff;">0</div>
-            <div>Gold in Treasury</div>
+            <div id="plannerTreasuryLabel">Gold in Treasury</div>
             <div id="plannerTreasury" style="text-align: right; color: #fff;">0</div>
-            <div>National Debt</div>
+            <div id="plannerDebtLabel">National Debt</div>
             <div id="plannerDebt" style="text-align: right; color: #fff;">0</div>
           </div>
         </section>
 
-        <section style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
-          <h5 style="margin: 0 0 8px 0; color: #fff;">Warnings &amp; Validation</h5>
+        <section id="plannerWarningsSection" style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;">
+          <h5 id="plannerWarningsHeader" style="margin: 0 0 8px 0; color: #fff;">Warnings &amp; Validation</h5>
           <div id="plannerWarnings" style="font-size: 12px;"></div>
         </section>
 
-        <div style="display: flex; gap: 10px;">
+        <div id="plannerActions" style="display: flex; gap: 10px;">
           <button id="plannerSave" style="flex: 1; padding: 10px; background: #4CAF50; border: none; border-radius: 6px; color: #fff; font-weight: 600; cursor: pointer;">Save</button>
           <button id="plannerCancel" style="flex: 1; padding: 10px; background: #666; border: none; border-radius: 6px; color: #fff; font-weight: 600; cursor: pointer;">Cancel</button>
         </div>
