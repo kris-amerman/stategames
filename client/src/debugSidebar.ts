@@ -11,6 +11,9 @@ import {
 
 const STORAGE_KEY = 'debugSidebarOpen';
 const CANTON_PAGE_SIZE = 5;
+const SIDEBAR_LEFT = 16;
+const SIDEBAR_TOP = 72;
+const SIDEBAR_WIDTH = 420;
 const STOCK_ORDER: Array<{ key: keyof StockpileMap; label: string }> = [
   { key: 'fx', label: 'FX' },
   { key: 'food', label: 'Food' },
@@ -261,6 +264,7 @@ export interface DebugSidebarData {
 }
 
 let initialized = false;
+let stylesInjected = false;
 let rootEl: HTMLDivElement | null = null;
 let contentEl: HTMLDivElement | null = null;
 let toggleButton: HTMLButtonElement | null = null;
@@ -268,6 +272,125 @@ let isOpen = false;
 let latestData: DebugSidebarData | null = null;
 let cantonPage = 0;
 const previousHappiness = new Map<string, number>();
+
+function injectStyles(): void {
+  if (stylesInjected) return;
+  const styleEl = document.createElement('style');
+  styleEl.id = 'debugSidebarStyles';
+  styleEl.textContent = `
+    #debugSidebarRoot {
+      line-height: 1.45;
+    }
+    #debugSidebarRoot .debug-section {
+      padding: 14px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #debugSidebarRoot .debug-section:first-of-type {
+      border-top: none;
+      padding-top: 4px;
+    }
+    #debugSidebarRoot .debug-section-header {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #cfd8dc;
+    }
+    #debugSidebarRoot .debug-subheader {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #90a4ae;
+    }
+    #debugSidebarRoot .debug-metric-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    #debugSidebarRoot .debug-grid-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    #debugSidebarRoot .debug-grid-row > span {
+      padding: 2px 0;
+    }
+    #debugSidebarRoot .debug-label {
+      color: #cfd8dc;
+    }
+    #debugSidebarRoot .debug-value {
+      color: #ffffff;
+      text-align: right;
+    }
+    #debugSidebarRoot .debug-table {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px 12px;
+      align-items: center;
+    }
+    #debugSidebarRoot .debug-table span {
+      white-space: nowrap;
+    }
+    #debugSidebarRoot .debug-card {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 10px;
+      background: rgba(18, 21, 27, 0.65);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    #debugSidebarRoot .debug-card + .debug-card {
+      margin-top: 8px;
+    }
+    #debugSidebarRoot .debug-card .debug-card {
+      margin-top: 6px;
+      background: rgba(30, 34, 42, 0.65);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+    #debugSidebarRoot .debug-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #debugSidebarRoot details.debug-card summary {
+      font-weight: 600;
+      cursor: pointer;
+      outline: none;
+    }
+    #debugSidebarRoot details.debug-card summary::-webkit-details-marker {
+      display: none;
+    }
+    #debugSidebarRoot details.debug-card[open] summary {
+      color: #ffffff;
+    }
+    #debugSidebarRoot button {
+      background: rgba(46, 125, 50, 0.18);
+      color: #e0f2f1;
+      border: 1px solid rgba(129, 199, 132, 0.4);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    #debugSidebarRoot button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    #debugSidebarRoot .debug-sector-body {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+  `;
+  document.head.appendChild(styleEl);
+  stylesInjected = true;
+}
 
 function formatNumber(value: number | null | undefined, fractionDigits = 1): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
@@ -278,13 +401,17 @@ function formatNumber(value: number | null | undefined, fractionDigits = 1): str
   return value.toFixed(fractionDigits);
 }
 
-function resolveNation(snapshot: GameSnapshot | null, playerId: string | null): { nation: NationSnapshot | null; nationId: string | null } {
-  if (!snapshot?.nations) return { nation: null, nationId: null };
-  if (playerId && snapshot.nations[playerId]) {
+function resolveNation(snapshot: GameSnapshot | null, playerId: string | null): {
+  nation: NationSnapshot | null;
+  nationId: string | null;
+} {
+  if (!snapshot?.nations || !playerId) {
+    return { nation: null, nationId: null };
+  }
+  if (snapshot.nations[playerId]) {
     return { nation: snapshot.nations[playerId], nationId: playerId };
   }
-  const [firstId, firstNation] = Object.entries(snapshot.nations)[0] ?? [null, null];
-  return { nation: firstNation ?? null, nationId: firstId };
+  return { nation: null, nationId: null };
 }
 
 function deriveGoldDisplay(nation: NationSnapshot | null): GoldDisplay {
@@ -465,10 +592,10 @@ function deriveSectorDebug(snapshot: GameSnapshot | null, nation: NationSnapshot
   });
 }
 
-function deriveEnergyDetails(snapshot: GameSnapshot | null, nation: NationSnapshot | null): EnergyDetails {
-  const supply = nation?.energy?.supply ?? snapshot?.economy?.energy?.state?.supply ?? null;
-  const demand = nation?.energy?.demand ?? snapshot?.economy?.energy?.state?.demand ?? null;
-  const ratio = nation?.energy?.ratio ?? snapshot?.economy?.energy?.state?.ratio ?? null;
+function deriveEnergyDetails(_snapshot: GameSnapshot | null, nation: NationSnapshot | null): EnergyDetails {
+  const supply = nation?.energy?.supply ?? null;
+  const demand = nation?.energy?.demand ?? null;
+  const ratio = nation?.energy?.ratio ?? null;
   const generationMap = new Map<PlantType, EnergyDetailEntry>();
   const fuelMap: Record<string, number> = {};
   for (const plant of nation?.energy?.plants ?? []) {
@@ -502,81 +629,106 @@ function deriveLogisticsDetails(nation: NationSnapshot | null): LogisticsDetails
   return { ratio, supply, demand };
 }
 
-function deriveGateways(economy: EconomySnapshot | undefined): GatewayDisplay[] {
-  if (!economy?.infrastructure) return [];
+function deriveGateways(economy: EconomySnapshot | undefined, nationId: string | null): GatewayDisplay[] {
+  if (!economy?.infrastructure || !nationId) return [];
   const result: GatewayDisplay[] = [];
   const { national, airports, ports, railHubs } = economy.infrastructure;
-  if (national?.airport && airports?.[national.airport]) {
-    result.push({ type: 'Airport', id: national.airport, status: airports[national.airport].status ?? 'unknown' });
-  }
-  if (national?.port && ports?.[national.port]) {
-    result.push({ type: 'Port', id: national.port, status: ports[national.port].status ?? 'unknown' });
-  }
-  if (national?.rail && railHubs?.[national.rail]) {
-    result.push({ type: 'Rail Hub', id: national.rail, status: railHubs[national.rail].status ?? 'unknown' });
-  }
+  const addGateway = (
+    type: GatewayDisplay['type'],
+    id: string | undefined,
+    registry: Record<string, any> | undefined,
+  ) => {
+    if (!id || !registry?.[id]) return;
+    const entry = registry[id];
+    const owner = entry?.owner;
+    if (owner && owner !== nationId) return;
+    result.push({ type, id, status: entry.status ?? 'unknown' });
+  };
+  addGateway('Airport', national?.airport, airports);
+  addGateway('Port', national?.port, ports);
+  addGateway('Rail Hub', national?.rail, railHubs);
   return result;
 }
 
-function deriveTradeDetails(snapshot: GameSnapshot | null): TradeDetails {
-  const gateways = deriveGateways(snapshot?.economy);
-  const imports = Object.entries(snapshot?.economy?.trade?.pendingImports ?? {}).map(([resource, amount]) => ({
-    resource,
-    amount,
-  }));
-  const exports = Object.entries(snapshot?.economy?.trade?.pendingExports ?? {}).map(([resource, amount]) => ({
-    resource,
-    amount,
-  }));
+function deriveTradeDetails(snapshot: GameSnapshot | null, nationId: string | null): TradeDetails {
+  if (!nationId) {
+    return { gateways: [], imports: [], exports: [], fxImpact: null, fxRunway: null };
+  }
+  const gateways = deriveGateways(snapshot?.economy, nationId);
+  const tradeState = snapshot?.economy?.trade ?? {};
+  const imports = Object.entries(tradeState.pendingImports ?? {})
+    .map(([resource, amount]) => ({ resource, amount }))
+    .filter((entry) => (entry as any).owner ? (entry as any).owner === nationId : true);
+  const exports = Object.entries(tradeState.pendingExports ?? {})
+    .map(([resource, amount]) => ({ resource, amount }))
+    .filter((entry) => (entry as any).owner ? (entry as any).owner === nationId : true);
   return { gateways, imports, exports, fxImpact: null, fxRunway: null };
 }
 
-function deriveCantons(snapshot: GameSnapshot | null, nation: NationSnapshot | null): CantonEntry[] {
-  if (!snapshot?.economy?.cantons || !nation?.canton) return [];
-  const id = nation.canton;
-  const canton = snapshot.economy.cantons[id];
-  if (!canton) return [];
-  const sectorMix = Object.entries(canton.sectors ?? {}).map(([sector, data]) => ({
-    sector,
-    capacity: data?.capacity ?? 0,
-    funded: data?.funded ?? 0,
-    idle: data?.idle ?? Math.max(0, (data?.capacity ?? 0) - (data?.funded ?? 0)),
-  }));
-  const suitability = Object.entries(canton.suitability ?? {}).map(([sector, percent]) => ({
-    sector,
-    percent: typeof percent === 'number' ? percent : null,
-  }));
-  const laborDemand = Object.values(canton.laborDemand ?? {}).reduce(
-    (sum, entry) => sum + Object.values(entry ?? {}).reduce((inner, value) => inner + (value ?? 0), 0),
-    0,
-  );
-  const laborAssigned = Object.values(canton.laborAssigned ?? {}).reduce(
-    (sum, entry) => sum + Object.values(entry ?? {}).reduce((inner, value) => inner + (value ?? 0), 0),
-    0,
-  );
-  const laborAvailable = Object.values(canton.labor ?? {}).reduce((sum, value) => sum + (value ?? 0), 0);
-  const consumption = canton.consumption ?? {};
-  return [
-    {
-      id,
-      urbanization: canton.urbanizationLevel ?? null,
-      development: canton.development ?? null,
-      happiness: canton.happiness ?? null,
-      laborDemand,
-      laborAssigned,
-      laborAvailable,
-      foodOk:
-        consumption.foodProvided !== undefined && consumption.foodRequired !== undefined
-          ? consumption.foodProvided >= consumption.foodRequired
-          : null,
-      luxuryOk:
-        consumption.luxuryProvided !== undefined && consumption.luxuryRequired !== undefined
-          ? consumption.luxuryProvided >= consumption.luxuryRequired
-          : null,
-      suitability,
-      sectorMix,
-    },
-  ];
+function deriveCantons(
+  snapshot: GameSnapshot | null,
+  nation: NationSnapshot | null,
+  nationId: string | null,
+): CantonEntry[] {
+  if (!snapshot?.economy?.cantons) return [];
+  const rawCantons = snapshot.economy.cantons;
+  const candidateIds = new Set<string>();
+  if (nation?.canton) {
+    candidateIds.add(nation.canton);
+  }
+  if (nationId) {
+    for (const [id, canton] of Object.entries(rawCantons)) {
+      if ((canton as any)?.owner === nationId) {
+        candidateIds.add(id);
+      }
+    }
+  }
+  const ids = Array.from(candidateIds);
+  return ids
+    .map((id) => {
+      const canton = rawCantons[id];
+      if (!canton) return null;
+      const sectorMix = Object.entries(canton.sectors ?? {}).map(([sector, data]) => ({
+        sector,
+        capacity: data?.capacity ?? 0,
+        funded: data?.funded ?? 0,
+        idle: data?.idle ?? Math.max(0, (data?.capacity ?? 0) - (data?.funded ?? 0)),
+      }));
+      const suitability = Object.entries(canton.suitability ?? {}).map(([sector, percent]) => ({
+        sector,
+        percent: typeof percent === 'number' ? percent : null,
+      }));
+      const laborDemand = Object.values(canton.laborDemand ?? {}).reduce(
+        (sum, entry) => sum + Object.values(entry ?? {}).reduce((inner, value) => inner + (value ?? 0), 0),
+        0,
+      );
+      const laborAssigned = Object.values(canton.laborAssigned ?? {}).reduce(
+        (sum, entry) => sum + Object.values(entry ?? {}).reduce((inner, value) => inner + (value ?? 0), 0),
+        0,
+      );
+      const laborAvailable = Object.values(canton.labor ?? {}).reduce((sum, value) => sum + (value ?? 0), 0);
+      const consumption = canton.consumption ?? {};
+      return {
+        id,
+        urbanization: canton.urbanizationLevel ?? null,
+        development: canton.development ?? null,
+        happiness: canton.happiness ?? null,
+        laborDemand,
+        laborAssigned,
+        laborAvailable,
+        foodOk:
+          consumption.foodProvided !== undefined && consumption.foodRequired !== undefined
+            ? consumption.foodProvided >= consumption.foodRequired
+            : null,
+        luxuryOk:
+          consumption.luxuryProvided !== undefined && consumption.luxuryRequired !== undefined
+            ? consumption.luxuryProvided >= consumption.luxuryRequired
+            : null,
+        suitability,
+        sectorMix,
+      };
+    })
+    .filter((entry): entry is CantonEntry => Boolean(entry));
 }
 
 function deriveProjects(nation: NationSnapshot | null): ProjectEntry[] {
@@ -652,8 +804,8 @@ export function buildDebugSidebarData(
   const sectors = deriveSectorDebug(snapshot, nation, nationId);
   const energy = deriveEnergyDetails(snapshot, nation);
   const logistics = deriveLogisticsDetails(nation);
-  const trade = deriveTradeDetails(snapshot);
-  const cantons = deriveCantons(snapshot, nation);
+  const trade = deriveTradeDetails(snapshot, nationId ?? null);
+  const cantons = deriveCantons(snapshot, nation, nationId ?? null);
   const projects = deriveProjects(nation);
   const research = deriveResearch(nation, snapshot);
   const diagnostics = deriveDiagnostics(
@@ -700,13 +852,13 @@ export function buildDebugSidebarData(
 
 function ensureInitialized(): void {
   if (!DEBUG_SIDEBAR_ENABLED || initialized) return;
+  injectStyles();
   toggleButton = document.createElement('button');
   toggleButton.id = 'debugSidebarToggleButton';
   toggleButton.textContent = 'Debug';
   toggleButton.style.cssText = `
     position: fixed;
-    top: 64px;
-    left: 12px;
+    top: ${SIDEBAR_TOP}px;
     z-index: 1400;
     padding: 6px 10px;
     background: rgba(0, 0, 0, 0.75);
@@ -718,20 +870,21 @@ function ensureInitialized(): void {
   `;
   toggleButton.setAttribute('aria-pressed', 'false');
   toggleButton.addEventListener('click', () => toggleSidebar(!isOpen));
+  toggleButton.style.left = `${SIDEBAR_LEFT}px`;
   document.body.appendChild(toggleButton);
 
   rootEl = document.createElement('div');
   rootEl.id = 'debugSidebarRoot';
   rootEl.style.cssText = `
     position: fixed;
-    top: 56px;
-    left: 10px;
-    width: 360px;
-    max-height: calc(100vh - 66px);
+    top: ${SIDEBAR_TOP - 8}px;
+    left: ${SIDEBAR_LEFT}px;
+    width: ${SIDEBAR_WIDTH}px;
+    max-height: calc(100vh - ${SIDEBAR_TOP + 24}px);
     background: rgba(0, 0, 0, 0.82);
     color: #f2f2f2;
     border-radius: 8px;
-    padding: 12px;
+    padding: 16px;
     font-family: 'Inter', Arial, sans-serif;
     font-size: 12px;
     overflow-y: auto;
@@ -742,7 +895,8 @@ function ensureInitialized(): void {
 
   const header = document.createElement('div');
   header.id = 'debugSidebarHeader';
-  header.style.cssText = 'font-weight: 600; margin-bottom: 10px; position: sticky; top: 0; background: rgba(0,0,0,0.82); padding-bottom: 6px;';
+  header.style.cssText =
+    'font-weight: 600; font-size: 15px; margin-bottom: 12px; position: sticky; top: 0; background: rgba(0,0,0,0.9); padding: 6px 0 8px; border-bottom: 1px solid rgba(255,255,255,0.08); z-index: 1;';
   header.textContent = 'Debug Sidebar';
   rootEl.appendChild(header);
 
@@ -770,37 +924,57 @@ function toggleSidebar(open: boolean): void {
   rootEl.style.display = open ? 'block' : 'none';
   toggleButton.textContent = open ? 'Hide Debug' : 'Debug';
   toggleButton.setAttribute('aria-pressed', open ? 'true' : 'false');
+  toggleButton.style.left = open
+    ? `${SIDEBAR_LEFT + SIDEBAR_WIDTH + 12}px`
+    : `${SIDEBAR_LEFT}px`;
 }
 
 function renderOverviewSection(data: DebugSidebarData): string {
   const stockRows = data.stockpiles
-    .map((item) => `<div id="debugStock-${item.key}" class="debug-stock-row" style="display:flex; justify-content: space-between;">
-      <span>${item.label}</span>
-      <span>${item.formatted}</span>
-    </div>`)
+    .map(
+      (item) => `
+        <div id="debugStock-${item.key}" class="debug-grid-row">
+          <span class="debug-label">${item.label}</span>
+          <span class="debug-value">${item.formatted}</span>
+        </div>
+      `,
+    )
     .join('');
   const laborRows = data.laborRows
     .map(
-      (row) => `<div id="debugLabor-${row.type.replace(/\s+/g, '')}" style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:4px;">
-        <span>${row.type}</span>
-        <span>${formatNumber(row.available, 1)}</span>
-        <span>${formatNumber(row.required, 1)} (${row.gap >= 0 ? '+' : ''}${formatNumber(row.gap, 1)})</span>
-      </div>`,
+      (row) => `
+        <span class="debug-label">${row.type}</span>
+        <span class="debug-value">${formatNumber(row.available, 1)}</span>
+        <span class="debug-value">${formatNumber(row.required, 1)} (${row.gap >= 0 ? '+' : ''}${formatNumber(row.gap, 1)})</span>
+      `,
     )
     .join('');
   return `
     <section id="debugSection-overview" class="debug-section">
       <div id="debugSectionHeader-overview" class="debug-section-header">Nation Overview</div>
-      <div id="debugGold" style="color:${data.gold.color}; font-weight:600; margin-bottom:6px;">${data.gold.formatted}</div>
-      <div id="debugStockpileContainer" style="display:flex; flex-direction:column; gap:4px;">${stockRows}</div>
-      <div id="debugFlowContainer" style="margin-top:8px; display:flex; flex-direction:column; gap:4px;">
-        <div id="debugFlow-energy">Energy Ratio: ${formatNumber(data.flows.energyRatio, 2)}</div>
-        <div id="debugFlow-logistics">Logistics Ratio: ${formatNumber(data.flows.logisticsRatio, 2)}</div>
-        <div id="debugFlow-research">Research: ${formatNumber(data.flows.research, 1)}/turn</div>
+      <div id="debugGold" style="color:${data.gold.color}; font-weight:600; font-size:14px;">${data.gold.formatted}</div>
+      <div id="debugStockpileContainer" class="debug-metric-grid">${stockRows}</div>
+      <div id="debugFlowContainer" class="debug-card">
+        <div class="debug-subheader">Flows</div>
+        <div id="debugFlow-energy" class="debug-grid-row">
+          <span class="debug-label">Energy Ratio</span>
+          <span class="debug-value">${formatNumber(data.flows.energyRatio, 2)}</span>
+        </div>
+        <div id="debugFlow-logistics" class="debug-grid-row">
+          <span class="debug-label">Logistics Ratio</span>
+          <span class="debug-value">${formatNumber(data.flows.logisticsRatio, 2)}</span>
+        </div>
+        <div id="debugFlow-research" class="debug-grid-row">
+          <span class="debug-label">Research</span>
+          <span class="debug-value">${formatNumber(data.flows.research, 1)}/turn</span>
+        </div>
       </div>
-      <div id="debugLaborHeader" style="margin-top:8px; font-weight:600;">Labor (Avail / Required / Gap)</div>
-      <div id="debugLaborContainer" style="display:flex; flex-direction:column; gap:4px;">${laborRows}</div>
-      <div id="debugHappiness" style="margin-top:8px;">Happiness: ${data.happiness.emoji} ${data.happiness.value} (${data.happiness.trend})</div>
+      <div id="debugLaborHeader" class="debug-subheader">Labor (Avail / Required / Gap)</div>
+      <div id="debugLaborContainer" class="debug-table">${laborRows}</div>
+      <div id="debugHappiness" class="debug-card">
+        <div class="debug-subheader">Happiness</div>
+        <div>${data.happiness.emoji} ${data.happiness.value} (${data.happiness.trend})</div>
+      </div>
     </section>
   `;
 }
@@ -810,12 +984,32 @@ function renderFinanceSection(data: DebugSidebarData): string {
   return `
     <section id="debugSection-finance" class="debug-section">
       <div id="debugSectionHeader-finance" class="debug-section-header">Finance Summary</div>
-      <div id="debugFinance-idleTax">Idle Tax: ${formatNumber(finance.idleTax, 2)} g</div>
-      <div id="debugFinance-energy">Energy/Infrastructure: ${formatNumber(finance.energySpend, 2)} g</div>
-      <div id="debugFinance-misc">Misc Spend: ${formatNumber(finance.miscSpend, 2)} g</div>
-      <div id="debugFinance-lastRound">Gold Spent Last Round: ${formatNumber(finance.lastRound, 2)} g</div>
-      <div id="debugFinance-treasury" style="color:${finance.gold.color};">Treasury: ${formatNumber(finance.treasury, 2)} g</div>
-      <div id="debugFinance-projected">Projected Costs: ${formatNumber(finance.projected, 2)} g</div>
+      <div class="debug-card">
+        <div id="debugFinance-idleTax" class="debug-grid-row">
+          <span class="debug-label">Idle Tax</span>
+          <span class="debug-value">${formatNumber(finance.idleTax, 2)} g</span>
+        </div>
+        <div id="debugFinance-energy" class="debug-grid-row">
+          <span class="debug-label">Energy / Infrastructure</span>
+          <span class="debug-value">${formatNumber(finance.energySpend, 2)} g</span>
+        </div>
+        <div id="debugFinance-misc" class="debug-grid-row">
+          <span class="debug-label">Misc Spend</span>
+          <span class="debug-value">${formatNumber(finance.miscSpend, 2)} g</span>
+        </div>
+        <div id="debugFinance-lastRound" class="debug-grid-row">
+          <span class="debug-label">Gold Spent Last Round</span>
+          <span class="debug-value">${formatNumber(finance.lastRound, 2)} g</span>
+        </div>
+        <div id="debugFinance-treasury" class="debug-grid-row" style="color:${finance.gold.color};">
+          <span class="debug-label">Treasury</span>
+          <span class="debug-value">${formatNumber(finance.treasury, 2)} g</span>
+        </div>
+        <div id="debugFinance-projected" class="debug-grid-row">
+          <span class="debug-label">Projected Costs</span>
+          <span class="debug-value">${formatNumber(finance.projected, 2)} g</span>
+        </div>
+      </div>
     </section>
   `;
 }
@@ -823,25 +1017,59 @@ function renderFinanceSection(data: DebugSidebarData): string {
 function renderSectorsSection(data: DebugSidebarData): string {
   const sectorCards = data.sectors
     .map((sector) => {
-      const gateRows = GATE_SEQUENCE.map((gate) => `<div id="debugGate-${sector.key}-${gate}" style="display:flex; justify-content:space-between;">
-          <span>${gate}</span>
-          <span>${formatNumber(sector.gateTrace[gate], 0)} slots</span>
-        </div>`).join('');
+      const gateRows = GATE_SEQUENCE.map(
+        (gate) => `
+          <div id="debugGate-${sector.key}-${gate}" class="debug-grid-row">
+            <span class="debug-label">${gate}</span>
+            <span class="debug-value">${formatNumber(sector.gateTrace[gate], 0)} slots</span>
+          </div>
+        `,
+      ).join('');
       const bottlenecks = sector.bottlenecks.length > 0 ? sector.bottlenecks.join('; ') : 'None';
       return `
-        <details id="debugSector-${sector.key}" class="debug-sector-card" open>
-          <summary id="debugSectorHeader-${sector.key}" style="cursor:pointer; font-weight:600;">${sector.title}</summary>
-          <div id="debugSectorBody-${sector.key}" style="display:flex; flex-direction:column; gap:4px; margin-top:4px;">
-            <div id="debugSectorCapacity-${sector.key}">Capacity: ${formatNumber(sector.capacity, 0)} slots</div>
-            <div id="debugSectorPerSlot-${sector.key}">Per-slot O&M: ${formatNumber(sector.perSlotCost, 2)} g</div>
-            <div id="debugSectorCeiling-${sector.key}">Ceiling: ${formatNumber(sector.ceiling, 2)} g</div>
-            <div id="debugSectorFunding-${sector.key}">Funding: ${formatNumber(sector.funding, 2)} g</div>
-            <div id="debugSectorAttempted-${sector.key}">Attempted Slots: ${formatNumber(sector.attemptedSlots, 0)}</div>
-            <div id="debugSectorGate-${sector.key}" style="display:flex; flex-direction:column; gap:2px; padding-left:4px; border-left:1px solid #333;">${gateRows}</div>
-            <div id="debugSectorUtilization-${sector.key}">Utilization: ${formatNumber(sector.utilizationPercent, 0)}%</div>
-            <div id="debugSectorOutput-${sector.key}">Output: ${sector.outputSummary}</div>
-            <div id="debugSectorIdle-${sector.key}">Idle Slots: ${formatNumber(sector.idleSlots, 0)} (Idle Cost: ${formatNumber(sector.idleCost, 2)} g)</div>
-            <div id="debugSectorBottlenecks-${sector.key}">Bottlenecks: ${bottlenecks}</div>
+        <details id="debugSector-${sector.key}" class="debug-card debug-sector-card" open>
+          <summary id="debugSectorHeader-${sector.key}">${sector.title}</summary>
+          <div id="debugSectorBody-${sector.key}" class="debug-sector-body">
+            <div class="debug-grid-row" id="debugSectorCapacity-${sector.key}">
+              <span class="debug-label">Capacity</span>
+              <span class="debug-value">${formatNumber(sector.capacity, 0)} slots</span>
+            </div>
+            <div class="debug-grid-row" id="debugSectorPerSlot-${sector.key}">
+              <span class="debug-label">Per-slot O&M</span>
+              <span class="debug-value">${formatNumber(sector.perSlotCost, 2)} g</span>
+            </div>
+            <div class="debug-grid-row" id="debugSectorCeiling-${sector.key}">
+              <span class="debug-label">Ceiling</span>
+              <span class="debug-value">${formatNumber(sector.ceiling, 2)} g</span>
+            </div>
+            <div class="debug-grid-row" id="debugSectorFunding-${sector.key}">
+              <span class="debug-label">Funding</span>
+              <span class="debug-value">${formatNumber(sector.funding, 2)} g</span>
+            </div>
+            <div class="debug-grid-row" id="debugSectorAttempted-${sector.key}">
+              <span class="debug-label">Attempted Slots</span>
+              <span class="debug-value">${formatNumber(sector.attemptedSlots, 0)}</span>
+            </div>
+            <div id="debugSectorGate-${sector.key}" class="debug-card">
+              <div class="debug-subheader">Gate Trace</div>
+              ${gateRows}
+            </div>
+            <div class="debug-grid-row" id="debugSectorUtilization-${sector.key}">
+              <span class="debug-label">Utilization</span>
+              <span class="debug-value">${formatNumber(sector.utilizationPercent, 0)}%</span>
+            </div>
+            <div class="debug-grid-row" id="debugSectorOutput-${sector.key}">
+              <span class="debug-label">Output</span>
+              <span class="debug-value">${sector.outputSummary}</span>
+            </div>
+            <div class="debug-grid-row" id="debugSectorIdle-${sector.key}">
+              <span class="debug-label">Idle Slots</span>
+              <span class="debug-value">${formatNumber(sector.idleSlots, 0)} (Idle Cost: ${formatNumber(sector.idleCost, 2)} g)</span>
+            </div>
+            <div class="debug-grid-row" id="debugSectorBottlenecks-${sector.key}">
+              <span class="debug-label">Bottlenecks</span>
+              <span class="debug-value">${bottlenecks}</span>
+            </div>
           </div>
         </details>
       `;
@@ -858,58 +1086,100 @@ function renderSectorsSection(data: DebugSidebarData): string {
 function renderEnergySection(data: DebugSidebarData): string {
   const rows = data.energy.generation
     .map(
-      (entry) => `<div id="debugEnergyRow-${entry.type}" style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:4px;">
-        <span>${entry.type}</span>
-        <span>${formatNumber(entry.output, 1)} MW</span>
-        <span>${formatNumber(entry.oAndM, 1)} g</span>
-      </div>`,
+      (entry) => `
+        <div id="debugEnergyRow-${entry.type}" class="debug-grid-row">
+          <span class="debug-label">${entry.type}</span>
+          <span class="debug-value">${formatNumber(entry.output, 1)} MW • ${formatNumber(entry.oAndM, 1)} g</span>
+        </div>
+      `,
     )
     .join('');
   const fuelRows = data.energy.fuel
-    .map((fuel) => `<div id="debugEnergyFuel-${fuel.resource}">${fuel.resource}: ${formatNumber(fuel.amount, 1)}</div>`)
+    .map(
+      (fuel) => `
+        <div id="debugEnergyFuel-${fuel.resource}" class="debug-grid-row">
+          <span class="debug-label">${fuel.resource}</span>
+          <span class="debug-value">${formatNumber(fuel.amount, 1)}</span>
+        </div>
+      `,
+    )
     .join('');
   return `
     <section id="debugSection-energy" class="debug-section">
       <div id="debugSectionHeader-energy" class="debug-section-header">Energy & Logistics</div>
-      <div id="debugEnergyRatio">Energy Ratio: ${formatNumber(data.energy.ratio, 2)} (Target 0.95–1.05)</div>
-      <div id="debugEnergySupply">Supply: ${formatNumber(data.energy.supply, 1)} | Demand: ${formatNumber(data.energy.demand, 1)}</div>
-      <div id="debugEnergyGeneration" style="margin-top:6px; display:flex; flex-direction:column; gap:2px;">
-        <div style="font-weight:600;">Generation by Plant</div>
+      <div class="debug-card">
+        <div id="debugEnergyRatio" class="debug-grid-row">
+          <span class="debug-label">Energy Ratio</span>
+          <span class="debug-value">${formatNumber(data.energy.ratio, 2)} (Target 0.95–1.05)</span>
+        </div>
+        <div id="debugEnergySupply" class="debug-grid-row">
+          <span class="debug-label">Supply vs Demand</span>
+          <span class="debug-value">${formatNumber(data.energy.supply, 1)} / ${formatNumber(data.energy.demand, 1)}</span>
+        </div>
+      </div>
+      <div id="debugEnergyGeneration" class="debug-card">
+        <div class="debug-subheader">Generation by Plant</div>
         ${rows || '<div id="debugEnergyGeneration-empty">No active plants</div>'}
       </div>
-      <div id="debugEnergyFuel" style="margin-top:6px; display:flex; flex-direction:column; gap:2px;">
-        <div style="font-weight:600;">Fuel Needs</div>
+      <div id="debugEnergyFuel" class="debug-card">
+        <div class="debug-subheader">Fuel Needs</div>
         ${fuelRows || '<div id="debugEnergyFuel-empty">No fuel consumption</div>'}
       </div>
-      <div id="debugLogisticsRatio" style="margin-top:8px;">Logistics Ratio: ${formatNumber(data.logistics.ratio, 2)}</div>
-      <div id="debugLogisticsSupply">Supply: ${formatNumber(data.logistics.supply, 1)} | Demand: ${formatNumber(data.logistics.demand, 1)}</div>
+      <div class="debug-card">
+        <div id="debugLogisticsRatio" class="debug-grid-row">
+          <span class="debug-label">Logistics Ratio</span>
+          <span class="debug-value">${formatNumber(data.logistics.ratio, 2)}</span>
+        </div>
+        <div id="debugLogisticsSupply" class="debug-grid-row">
+          <span class="debug-label">Supply vs Demand</span>
+          <span class="debug-value">${formatNumber(data.logistics.supply, 1)} / ${formatNumber(data.logistics.demand, 1)}</span>
+        </div>
+      </div>
     </section>
   `;
 }
 
 function renderTradeSection(data: DebugSidebarData): string {
   const gatewayRows = data.trade.gateways
-    .map((gateway) => `<div id="debugGateway-${gateway.type}" style="display:flex; justify-content:space-between;">
-        <span>${gateway.type}</span>
-        <span>${gateway.id} (${gateway.status})</span>
-      </div>`)
+    .map(
+      (gateway) => `
+        <div id="debugGateway-${gateway.type}" class="debug-grid-row">
+          <span class="debug-label">${gateway.type}</span>
+          <span class="debug-value">${gateway.id} (${gateway.status})</span>
+        </div>
+      `,
+    )
     .join('');
   const imports = data.trade.imports
-    .map((entry) => `<div id="debugImport-${entry.resource}">${entry.resource}: ${formatNumber(entry.amount, 1)}</div>`)
+    .map(
+      (entry) => `
+        <div id="debugImport-${entry.resource}" class="debug-grid-row">
+          <span class="debug-label">${entry.resource}</span>
+          <span class="debug-value">${formatNumber(entry.amount, 1)}</span>
+        </div>
+      `,
+    )
     .join('');
   const exports = data.trade.exports
-    .map((entry) => `<div id="debugExport-${entry.resource}">${entry.resource}: ${formatNumber(entry.amount, 1)}</div>`)
+    .map(
+      (entry) => `
+        <div id="debugExport-${entry.resource}" class="debug-grid-row">
+          <span class="debug-label">${entry.resource}</span>
+          <span class="debug-value">${formatNumber(entry.amount, 1)}</span>
+        </div>
+      `,
+    )
     .join('');
   return `
     <section id="debugSection-trade" class="debug-section">
       <div id="debugSectionHeader-trade" class="debug-section-header">Trade & Gateways</div>
-      <div id="debugGateways" style="display:flex; flex-direction:column; gap:2px;">${gatewayRows || '<div id="debugGateways-empty">No gateway data</div>'}</div>
-      <div id="debugImports" style="margin-top:6px;">
-        <div style="font-weight:600;">Top Imports</div>
+      <div id="debugGateways" class="debug-card">${gatewayRows || '<div id="debugGateways-empty">No gateway data</div>'}</div>
+      <div id="debugImports" class="debug-card">
+        <div class="debug-subheader">Top Imports</div>
         ${imports || '<div id="debugImports-empty">No imports pending</div>'}
       </div>
-      <div id="debugExports" style="margin-top:6px;">
-        <div style="font-weight:600;">Top Exports</div>
+      <div id="debugExports" class="debug-card">
+        <div class="debug-subheader">Top Exports</div>
         ${exports || '<div id="debugExports-empty">No exports pending</div>'}
       </div>
     </section>
@@ -920,9 +1190,10 @@ function renderCantonsSection(data: DebugSidebarData): string {
   const entries = data.cantons;
   const totalPages = Math.max(1, Math.ceil(entries.length / CANTON_PAGE_SIZE));
   if (cantonPage >= totalPages) cantonPage = totalPages - 1;
-  const slice = entries.slice(cantonPage * CANTON_PAGE_SIZE, cantonPage * CANTON_PAGE_SIZE + CANTON_PAGE_SIZE);
+  const startIndex = cantonPage * CANTON_PAGE_SIZE;
+  const slice = entries.slice(startIndex, startIndex + CANTON_PAGE_SIZE);
   const rows = slice
-    .map((entry) => {
+    .map((entry, index) => {
       const suitability = entry.suitability
         .map((s) => `${s.sector}: ${formatNumber(s.percent, 0)}%`)
         .join(', ');
@@ -930,14 +1201,15 @@ function renderCantonsSection(data: DebugSidebarData): string {
         .map((s) => `${s.sector} ${formatNumber(s.funded, 0)}/${formatNumber(s.capacity, 0)}`)
         .join(', ');
       return `
-        <div id="debugCanton-${entry.id}" class="debug-canton-card" style="border:1px solid #333; padding:6px; border-radius:4px; margin-bottom:6px;">
-          <div id="debugCantonHeader-${entry.id}" style="font-weight:600;">${entry.id}</div>
-          <div id="debugCantonUrban-${entry.id}">Urbanization: ${formatNumber(entry.urbanization, 0)} (Dev ${formatNumber(entry.development, 1)})</div>
-          <div id="debugCantonHappiness-${entry.id}">Happiness: ${formatNumber(entry.happiness, 1)}</div>
-          <div id="debugCantonLabor-${entry.id}">Labor Avail ${formatNumber(entry.laborAvailable, 1)} | Assigned ${formatNumber(entry.laborAssigned, 1)} | Demand ${formatNumber(entry.laborDemand, 1)}</div>
-          <div id="debugCantonConsumption-${entry.id}">Food: ${entry.foodOk === null ? '—' : entry.foodOk ? 'OK' : 'Short'} | Luxury: ${entry.luxuryOk === null ? '—' : entry.luxuryOk ? 'OK' : 'Short'}</div>
-          <div id="debugCantonSuitability-${entry.id}">Suitability: ${suitability || '—'}</div>
-          <div id="debugCantonMix-${entry.id}">Sector Mix: ${mix || '—'}</div>
+        <div id="debugCanton-${entry.id}" class="debug-card debug-canton-card">
+          <div id="debugCantonHeader-${entry.id}" class="debug-subheader">Canton ${startIndex + index + 1} of ${entries.length}</div>
+          <div class="debug-grid-row"><span class="debug-label">Canton ID</span><span class="debug-value">${entry.id}</span></div>
+          <div id="debugCantonUrban-${entry.id}" class="debug-grid-row"><span class="debug-label">Urbanization</span><span class="debug-value">${formatNumber(entry.urbanization, 0)} (Dev ${formatNumber(entry.development, 1)})</span></div>
+          <div id="debugCantonHappiness-${entry.id}" class="debug-grid-row"><span class="debug-label">Happiness</span><span class="debug-value">${formatNumber(entry.happiness, 1)}</span></div>
+          <div id="debugCantonLabor-${entry.id}" class="debug-grid-row"><span class="debug-label">Labor</span><span class="debug-value">Avail ${formatNumber(entry.laborAvailable, 1)} • Assigned ${formatNumber(entry.laborAssigned, 1)} • Demand ${formatNumber(entry.laborDemand, 1)}</span></div>
+          <div id="debugCantonConsumption-${entry.id}" class="debug-grid-row"><span class="debug-label">Consumption</span><span class="debug-value">Food: ${entry.foodOk === null ? '—' : entry.foodOk ? 'OK' : 'Short'} • Luxury: ${entry.luxuryOk === null ? '—' : entry.luxuryOk ? 'OK' : 'Short'}</span></div>
+          <div id="debugCantonSuitability-${entry.id}" class="debug-grid-row"><span class="debug-label">Suitability</span><span class="debug-value">${suitability || '—'}</span></div>
+          <div id="debugCantonMix-${entry.id}" class="debug-grid-row"><span class="debug-label">Sector Mix</span><span class="debug-value">${mix || '—'}</span></div>
         </div>
       `;
     })
@@ -945,8 +1217,12 @@ function renderCantonsSection(data: DebugSidebarData): string {
   return `
     <section id="debugSection-cantons" class="debug-section">
       <div id="debugSectionHeader-cantons" class="debug-section-header">Labor & Cantons</div>
-      <div id="debugCantonsContainer">${rows || '<div id="debugCantons-empty">No canton data</div>'}</div>
-      <div id="debugCantonsPagination" style="display:flex; justify-content:space-between; margin-top:6px;">
+      <div id="debugCantonsSummary" class="debug-grid-row">
+        <span class="debug-label">Total Cantons</span>
+        <span class="debug-value">${entries.length}</span>
+      </div>
+      <div id="debugCantonsContainer" class="debug-stack">${rows || '<div id="debugCantons-empty">No canton data</div>'}</div>
+      <div id="debugCantonsPagination" class="debug-grid-row" style="justify-content:space-between;">
         <button id="debugCantonsPrev" ${cantonPage === 0 ? 'disabled' : ''}>Prev</button>
         <span id="debugCantonsPage">Page ${entries.length === 0 ? 0 : cantonPage + 1} / ${totalPages}</span>
         <button id="debugCantonsNext" ${cantonPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
@@ -958,29 +1234,43 @@ function renderCantonsSection(data: DebugSidebarData): string {
 function renderProjectsSection(data: DebugSidebarData): string {
   const rows = data.projects
     .map(
-      (project) => `<div id="debugProject-${project.id}" style="display:flex; justify-content:space-between;">
-        <span>${project.sector} (${project.tier})</span>
-        <span>${project.turnsRemaining} turns${project.delayed ? ' • delayed' : ''}</span>
-      </div>`,
+      (project) => `
+        <div id="debugProject-${project.id}" class="debug-grid-row">
+          <span class="debug-label">${project.sector} (${project.tier})</span>
+          <span class="debug-value">${project.turnsRemaining} turns${project.delayed ? ' • delayed' : ''}</span>
+        </div>
+      `,
     )
     .join('');
   return `
     <section id="debugSection-projects" class="debug-section">
       <div id="debugSectionHeader-projects" class="debug-section-header">Projects & Construction</div>
-      ${rows || '<div id="debugProjects-empty">No active projects</div>'}
+      <div class="debug-card">${rows || '<div id="debugProjects-empty">No active projects</div>'}</div>
     </section>
   `;
 }
 
 function renderResearchSection(data: DebugSidebarData): string {
   const policyRows = data.research.policies
-    .map((policy) => `<div id="debugPolicy-${policy.name.replace(/\s+/g, '')}">${policy.name}: ${policy.value}</div>`)
+    .map(
+      (policy) => `
+        <div id="debugPolicy-${policy.name.replace(/\s+/g, '')}" class="debug-grid-row">
+          <span class="debug-label">${policy.name}</span>
+          <span class="debug-value">${policy.value}</span>
+        </div>
+      `,
+    )
     .join('');
   return `
     <section id="debugSection-research" class="debug-section">
       <div id="debugSectionHeader-research" class="debug-section-header">Research & Policy</div>
-      <div id="debugResearchRate">Research/turn: ${formatNumber(data.research.perTurn, 1)}</div>
-      <div id="debugPolicies" style="margin-top:4px; display:flex; flex-direction:column; gap:2px;">${policyRows || '<div id="debugPolicies-empty">No active policies tracked</div>'}</div>
+      <div class="debug-card">
+        <div id="debugResearchRate" class="debug-grid-row">
+          <span class="debug-label">Research / turn</span>
+          <span class="debug-value">${formatNumber(data.research.perTurn, 1)}</span>
+        </div>
+        <div id="debugPolicies" class="debug-metric-grid">${policyRows || '<div id="debugPolicies-empty">No active policies tracked</div>'}</div>
+      </div>
     </section>
   `;
 }
@@ -988,21 +1278,23 @@ function renderResearchSection(data: DebugSidebarData): string {
 function renderDiagnosticsSection(data: DebugSidebarData): string {
   const rows = data.diagnostics
     .map(
-      (entry) => `<div id="debugDiag-${entry.id}" style="display:flex; flex-direction:column; border:1px solid #333; padding:6px; border-radius:4px; gap:2px;">
-        <div style="display:flex; justify-content:space-between;">
-          <span>${entry.label}</span>
-          <span style="color:${entry.passed ? '#8BC34A' : '#FF6B6B'};">${entry.passed ? 'Pass' : 'Fail'}</span>
+      (entry) => `
+        <div id="debugDiag-${entry.id}" class="debug-card">
+          <div class="debug-grid-row">
+            <span class="debug-label">${entry.label}</span>
+            <span class="debug-value" style="color:${entry.passed ? '#8BC34A' : '#FF6B6B'};">${entry.passed ? 'Pass' : 'Fail'}</span>
+          </div>
+          ${entry.message ? `<div>${entry.message}</div>` : ''}
         </div>
-        ${entry.message ? `<div>${entry.message}</div>` : ''}
-      </div>`,
+      `,
     )
     .join('');
   return `
     <section id="debugSection-diagnostics" class="debug-section">
       <div id="debugSectionHeader-diagnostics" class="debug-section-header">Diagnostics</div>
-      <div id="debugDiagContainer" style="display:flex; flex-direction:column; gap:6px;">${rows || '<div id="debugDiag-empty">No assertions evaluated</div>'}</div>
-      <div id="debugSeed" style="margin-top:6px;">Seed: ${data.seed ?? '—'}</div>
-      <div id="debugExportButtons" style="margin-top:6px; display:flex; gap:6px;">
+      <div id="debugDiagContainer" class="debug-stack">${rows || '<div id="debugDiag-empty">No assertions evaluated</div>'}</div>
+      <div id="debugSeed" class="debug-grid-row"><span class="debug-label">Seed</span><span class="debug-value">${data.seed ?? '—'}</span></div>
+      <div id="debugExportButtons" class="debug-grid-row" style="justify-content:flex-start; gap:8px;">
         <button id="debugExportJson">Export JSON</button>
         <button id="debugExportCsv">Export CSV</button>
       </div>

@@ -113,5 +113,18 @@ describe('buildDebugSidebarData', () => {
     const agriculture = data.sectors.find((sector) => sector.key === 'agriculture');
     expect(agriculture?.bottlenecks.some((item) => item.toLowerCase().includes('energy'))).toBe(true);
   });
+
+  it('does not leak other nations when player id is missing', () => {
+    const snapshot = cloneSnapshot();
+    snapshot.nations.beta = {
+      canton: 'c2',
+      finance: { treasury: 90, debt: 0 },
+      status: { stockpiles: { fx: { current: 99, delta: 0 } } },
+    };
+    const data = buildDebugSidebarData(snapshot, null);
+    expect(data.nationId).toBeNull();
+    expect(data.gold.numeric).toBe(0);
+    expect(data.stockpiles.every((entry) => entry.formatted.startsWith('0'))).toBe(true);
+  });
 });
 
