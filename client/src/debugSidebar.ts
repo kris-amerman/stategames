@@ -893,15 +893,29 @@ function ensureInitialized(): void {
     display: none;
   `;
 
-  const header = document.createElement('div');
-  header.id = 'debugSidebarHeader';
-  header.style.cssText =
-    'font-weight: 600; font-size: 15px; margin-bottom: 12px; position: sticky; top: 0; background: rgba(0,0,0,0.9); padding: 6px 0 8px; border-bottom: 1px solid rgba(255,255,255,0.08); z-index: 1;';
-  header.textContent = 'Debug Sidebar';
-  rootEl.appendChild(header);
+  const closeButton = document.createElement('button');
+  closeButton.id = 'debugSidebarCloseButton';
+  closeButton.type = 'button';
+  closeButton.setAttribute('aria-label', 'Close debug sidebar');
+  closeButton.innerHTML = '&times;';
+  closeButton.style.cssText = `
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    border: none;
+    background: transparent;
+    color: #f2f2f2;
+    font-size: 18px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+  `;
+  closeButton.addEventListener('click', () => toggleSidebar(false));
+  rootEl.appendChild(closeButton);
 
   contentEl = document.createElement('div');
   contentEl.id = 'debugSidebarContent';
+  contentEl.style.marginTop = '12px';
   rootEl.appendChild(contentEl);
   document.body.appendChild(rootEl);
 
@@ -922,7 +936,7 @@ function toggleSidebar(open: boolean): void {
   isOpen = open;
   sessionStorage.setItem(STORAGE_KEY, open ? 'open' : 'closed');
   rootEl.style.display = open ? 'block' : 'none';
-  toggleButton.textContent = open ? 'Hide Debug' : 'Debug';
+  toggleButton.textContent = 'Debug';
   toggleButton.setAttribute('aria-pressed', open ? 'true' : 'false');
   toggleButton.style.left = open
     ? `${SIDEBAR_LEFT + SIDEBAR_WIDTH + 12}px`
