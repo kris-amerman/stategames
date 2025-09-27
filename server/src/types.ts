@@ -219,6 +219,11 @@ export interface NationLaborSnapshot {
   consumption: LaborConsumption;
 }
 
+export interface ResourceDeltaSnapshot {
+  current: number;
+  delta: number;
+}
+
 export interface NationStockpileSnapshot {
   food: number;
   fuel: number;
@@ -227,6 +232,25 @@ export interface NationStockpileSnapshot {
   luxury: number;
   ordnance: number;
   production: number;
+}
+
+export interface NationStatusSummary {
+  gold: { value: number; isDebt: boolean };
+  stockpiles: {
+    fx: ResourceDeltaSnapshot;
+    food: ResourceDeltaSnapshot;
+    ordnance: ResourceDeltaSnapshot;
+    production: ResourceDeltaSnapshot;
+    luxury: ResourceDeltaSnapshot;
+    materials: ResourceDeltaSnapshot;
+  };
+  flows: {
+    energy: number;
+    logistics: number;
+    research: number;
+  };
+  labor: LaborPool;
+  happiness: { value: number; emoji: string };
 }
 
 export interface NationMilitarySnapshot {
@@ -261,6 +285,7 @@ export interface NationState {
   projects: NationProjectSnapshot[];
   idleCost: number;
   omCost: number;
+  status: NationStatusSummary;
 }
 
 // === Energy System Types ===

@@ -25,6 +25,7 @@ import {
 import { SECTOR_LABOR_TYPES } from '../labor/manager';
 import { DEBT_STRESS_TIERS } from '../finance/manager';
 import { SeededRandom } from '../utils/random';
+import { createEmptyStatusSummary, updateNationStatus } from '../status';
 
 interface StockpileBands {
   food: [number, number];
@@ -810,7 +811,10 @@ export class InMediaResInitializer {
         ],
         idleCost: Math.round(idleCost * 100) / 100,
         omCost: Math.round(totalOps * 100) / 100,
+        status: createEmptyStatusSummary(),
       };
+
+      updateNationStatus(nationState);
 
       nationStates[playerId] = nationState;
       metas.push({ id: playerId, name: input.name, preset: input.preset });

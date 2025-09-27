@@ -1,6 +1,7 @@
 import { SERVER_BASE_URL } from './config';
 import { deserializeTypedArrays } from './mesh';
 import { showGameNotification } from './notifications';
+import { updateStatusBarFromGameState } from './statusBar';
 
 type PlannerContext = () => {
   gameId: string | null;
@@ -644,6 +645,7 @@ async function fetchPlannerData() {
     const json = await response.json();
     const fullState = deserializeTypedArrays(json);
     state.snapshot = fullState;
+    updateStatusBarFromGameState(fullState, getContext().playerId);
     state.economy = fullState.economy;
     state.availableGold = fullState.economy?.resources?.gold ?? 0;
     state.lastRoundSpend = fullState.economy?.finance?.summary?.expenditures ?? 0;
@@ -991,6 +993,8 @@ export function setPlannerVisibility(visible: boolean) {
 
 export function updatePlannerSnapshot(snapshot: any) {
   state.snapshot = snapshot;
+  const { playerId } = getContext();
+  updateStatusBarFromGameState(snapshot, playerId);
   if (snapshot?.economy) {
     state.treasury = snapshot.economy.resources?.gold ?? state.treasury;
     state.debt = snapshot.economy.finance?.debt ?? state.debt;

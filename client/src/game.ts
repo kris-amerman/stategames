@@ -13,6 +13,7 @@ import {
 import { addToRoom, removeFromRoom, sendGameAction } from './network';
 import { showGameNotification } from './notifications';
 import { updatePlannerSnapshot } from './planner';
+import { updateStatusBarFromGameState } from './statusBar';
 
 let canvas: HTMLCanvasElement;
 let ctx: CanvasRenderingContext2D;
@@ -77,6 +78,7 @@ export function handleGameUpdate(data: any): void {
 
     renderGameState();
     updatePlannerSnapshot(gameState);
+    updateStatusBarFromGameState(gameState, currentPlayerName);
   }
 }
 
@@ -154,10 +156,12 @@ export function processGameData(gameData: any): void {
       loadOrGetMesh(gameData.meta.mapSize as MapSize, ctx).then(() => {
         renderGameState();
         updatePlannerSnapshot(gameData.state);
+        updateStatusBarFromGameState(gameData.state, currentPlayerName);
       });
     } else {
       renderGameState();
       updatePlannerSnapshot(gameData.state);
+      updateStatusBarFromGameState(gameData.state, currentPlayerName);
     }
 
   } catch (error: any) {
