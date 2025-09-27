@@ -938,9 +938,13 @@ function toggleSidebar(open: boolean): void {
   rootEl.style.display = open ? 'block' : 'none';
   toggleButton.textContent = 'Debug';
   toggleButton.setAttribute('aria-pressed', open ? 'true' : 'false');
-  toggleButton.style.left = open
-    ? `${SIDEBAR_LEFT + SIDEBAR_WIDTH + 12}px`
-    : `${SIDEBAR_LEFT}px`;
+  toggleButton.setAttribute('aria-hidden', open ? 'true' : 'false');
+  if (open) {
+    toggleButton.style.display = 'none';
+  } else {
+    toggleButton.style.display = 'block';
+    toggleButton.style.left = `${SIDEBAR_LEFT}px`;
+  }
 }
 
 function renderOverviewSection(data: DebugSidebarData): string {
