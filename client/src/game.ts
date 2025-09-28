@@ -49,6 +49,30 @@ let cantonTooltip: HTMLDivElement | null = null;
 
 export type HSLColor = { h: number; s: number; l: number };
 
+type CantonShadeCandidate = {
+  index: number;
+  h: number;
+  s: number;
+  l: number;
+  alpha: number;
+  color: string;
+};
+
+type PaletteClampMeta = {
+  lightFloorHits: number;
+  lightCeilHits: number;
+  saturationFloorHits: number;
+  saturationCeilHits: number;
+};
+
+type ShadeAssignmentResult = {
+  palette: CantonShadeCandidate[];
+  clampMeta: PaletteClampMeta;
+  fillByCanton: Record<string, string>;
+  adjacencyPermutation: boolean;
+  assignedIndices: Record<string, number>;
+};
+
 const NATION_BASE_COLORS: Record<string, HSLColor> = {
   player1: { h: 2, s: 78, l: 52 },
   player2: { h: 218, s: 72, l: 48 },
@@ -64,6 +88,11 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function normalizeHue(value: number): number {
+  const mod = value % 360;
+  return mod < 0 ? mod + 360 : mod;
+}
+
 function formatHsl(color: HSLColor, alpha: number): string {
   return `hsla(${Math.round(color.h)}, ${Math.round(color.s)}%, ${Math.round(color.l)}%, ${alpha})`;
 }
@@ -72,24 +101,189 @@ function getNationBaseColor(nationId: string): HSLColor {
   return NATION_BASE_COLORS[nationId] ?? DEFAULT_BASE_COLOR;
 }
 
-export function generateCantonShades(base: HSLColor, count: number): string[] {
-  if (count <= 0) return [];
-  const shades: string[] = [];
-  const saturation = clamp(base.s, 35, 88);
-  const lightness = clamp(base.l, 34, 64);
-  const lightRange = Math.min(28, Math.max(10, 60 / Math.max(1, count - 1)));
-  const satRange = Math.min(18, Math.max(6, 40 / Math.max(1, count)));
-  const lightStart = lightness - lightRange / 2;
+function createClampMeta(): PaletteClampMeta {
+  return {
+    lightFloorHits: 0,
+    lightCeilHits: 0,
+    saturationFloorHits: 0,
+    saturationCeilHits: 0,
+  };
+}
+
+function clampWithMeta(
+  value: number,
+  min: number,
+  max: number,
+  meta: PaletteClampMeta,
+  lowKey: keyof PaletteClampMeta,
+  highKey: keyof PaletteClampMeta,
+): number {
+  if (value < min) {
+    meta[lowKey] += 1;
+  }
+  if (value > max) {
+    meta[highKey] += 1;
+  }
+  return clamp(value, min, max);
+}
+
+function hslaToHex(h: number, s: number, l: number): string {
+  const hue = normalizeHue(h);
+  const saturation = clamp(s, 0, 100) / 100;
+  const light = clamp(l, 0, 100) / 100;
+  const chroma = (1 - Math.abs(2 * light - 1)) * saturation;
+  const huePrime = hue / 60;
+  const x = chroma * (1 - Math.abs((huePrime % 2) - 1));
+  let r1 = 0;
+  let g1 = 0;
+  let b1 = 0;
+
+  if (huePrime >= 0 && huePrime < 1) {
+    r1 = chroma;
+    g1 = x;
+  } else if (huePrime >= 1 && huePrime < 2) {
+    r1 = x;
+    g1 = chroma;
+  } else if (huePrime >= 2 && huePrime < 3) {
+    g1 = chroma;
+    b1 = x;
+  } else if (huePrime >= 3 && huePrime < 4) {
+    g1 = x;
+    b1 = chroma;
+  } else if (huePrime >= 4 && huePrime < 5) {
+    r1 = x;
+    b1 = chroma;
+  } else {
+    r1 = chroma;
+    b1 = x;
+  }
+
+  const m = light - chroma / 2;
+  const r = Math.round((r1 + m) * 255);
+  const g = Math.round((g1 + m) * 255);
+  const b = Math.round((b1 + m) * 255);
+
+  const toHex = (component: number) => component.toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+}
+
+function buildCantonShadePalette(base: HSLColor, count: number): { palette: CantonShadeCandidate[]; clampMeta: PaletteClampMeta } {
+  const palette: CantonShadeCandidate[] = [];
+  const clampMeta = createClampMeta();
+  if (count <= 0) {
+    return { palette, clampMeta };
+  }
+
+  const hue = normalizeHue(base.h);
+  const baseSaturation = clamp(base.s, 35, 90);
+  const baseLightness = clamp(base.l, 30, 65);
+
+  const lightSpread = clamp(22 + count * 2.5, 26, 48);
+  let lightMin = baseLightness - lightSpread / 2;
+  let lightMax = baseLightness + lightSpread / 2;
+  if (lightMin < 22) lightMin = 22;
+  if (lightMax > 82) lightMax = 82;
+  if (lightMin >= lightMax) {
+    lightMin = clamp(baseLightness - 12, 20, 74);
+    lightMax = clamp(baseLightness + 12, 32, 82);
+  }
+
+  const satSpread = clamp(18 + count * 1.2, 22, 38);
+  let satMin = baseSaturation - satSpread / 2;
+  let satMax = baseSaturation + satSpread / 2;
+  if (satMin < 32) satMin = 32;
+  if (satMax > 94) satMax = 94;
+  if (satMin >= satMax) {
+    satMin = clamp(baseSaturation - 10, 32, 80);
+    satMax = clamp(baseSaturation + 10, 40, 94);
+  }
+
+  const alpha = 0.68;
 
   for (let index = 0; index < count; index++) {
     const t = count === 1 ? 0.5 : index / (count - 1);
-    const light = clamp(lightStart + lightRange * t + index / (count * 2), 25, 78);
-    const satOffset = (0.5 - Math.abs(t - 0.5)) * satRange;
-    const sat = clamp(saturation + satOffset, 35, 92);
-    shades.push(`hsla(${Math.round(base.h)}, ${Math.round(sat)}%, ${Math.round(light)}%, 0.6)`);
+    const oscillation = Math.sin((t - 0.5) * Math.PI);
+    const targetLight = lightMin + (lightMax - lightMin) * t;
+    const targetSat = satMin + (satMax - satMin) * (0.5 + oscillation * 0.5);
+    const light = clampWithMeta(targetLight, 20, 85, clampMeta, 'lightFloorHits', 'lightCeilHits');
+    const saturation = clampWithMeta(targetSat, 30, 96, clampMeta, 'saturationFloorHits', 'saturationCeilHits');
+    palette.push({
+      index,
+      h: hue,
+      s: saturation,
+      l: light,
+      alpha,
+      color: `hsla(${Math.round(hue)}, ${Math.round(saturation)}%, ${Math.round(light)}%, ${alpha})`,
+    });
   }
 
-  return shades;
+  return { palette, clampMeta };
+}
+
+function colorDistance(a: CantonShadeCandidate, b: CantonShadeCandidate): number {
+  const ds = (a.s - b.s) / 100;
+  const dl = (a.l - b.l) / 100;
+  return Math.sqrt(ds * ds + dl * dl);
+}
+
+function assignCantonShades(
+  cantonIds: string[],
+  adjacency: Record<string, string[]>,
+  palette: CantonShadeCandidate[],
+): { fillByCanton: Record<string, string>; adjacencyPermutation: boolean; assignedIndices: Record<string, number> } {
+  const fillByCanton: Record<string, string> = {};
+  const assignedIndex: Record<string, number> = {};
+  const available = palette.map((shade) => shade.index);
+
+  for (const cantonId of cantonIds) {
+    let bestIndex = -1;
+    let bestScore = -1;
+    for (const candidateIndex of available) {
+      const candidate = palette[candidateIndex];
+      const neighbors = adjacency[cantonId] ?? [];
+      const neighborScores = neighbors
+        .map((neighborId) => assignedIndex[neighborId])
+        .filter((value) => value !== undefined)
+        .map((neighborIndex) => colorDistance(candidate, palette[neighborIndex]));
+      const minDistance = neighborScores.length === 0
+        ? Number.POSITIVE_INFINITY
+        : Math.min(...neighborScores);
+      const score = Number.isFinite(minDistance) ? minDistance : 0;
+      if (score > bestScore + 1e-6 || (Math.abs(score - bestScore) <= 1e-6 && candidateIndex < bestIndex)) {
+        bestScore = score;
+        bestIndex = candidateIndex;
+      }
+    }
+
+    if (bestIndex === -1) {
+      bestIndex = available[0];
+    }
+
+    assignedIndex[cantonId] = bestIndex;
+    fillByCanton[cantonId] = palette[bestIndex].color;
+    const removeAt = available.indexOf(bestIndex);
+    if (removeAt >= 0) {
+      available.splice(removeAt, 1);
+    }
+  }
+
+  const adjacencyPermutation = cantonIds.some((id, idx) => assignedIndex[id] !== idx);
+  return { fillByCanton, adjacencyPermutation, assignedIndices: assignedIndex };
+}
+
+export function generateCantonShades(base: HSLColor, count: number): string[] {
+  const { palette } = buildCantonShadePalette(base, count);
+  return palette.map((shade) => shade.color);
+}
+
+export function assignCantonFillColors(
+  cantonIds: string[],
+  base: HSLColor,
+  adjacency: Record<string, string[]>,
+): ShadeAssignmentResult {
+  const { palette, clampMeta } = buildCantonShadePalette(base, cantonIds.length);
+  const { fillByCanton, adjacencyPermutation, assignedIndices } = assignCantonShades(cantonIds, adjacency, palette);
+  return { palette, clampMeta, fillByCanton, adjacencyPermutation, assignedIndices };
 }
 
 export let currentGameId: string | null = null;
@@ -273,6 +467,7 @@ function ingestCantonData(gameState: any): void {
   const territories: Record<string, number[]> = economy.cantonTerritories ?? {};
   const cantonStates: Record<string, any> = economy.cantons ?? {};
   const owners: Record<string, string | null> = economy.cantonOwners ?? {};
+  const adjacency: Record<string, string[]> = economy.cantonAdjacency ?? {};
   const nations: Record<string, any> = gameState?.nations ?? {};
 
   const nationIds = Object.keys(nations).sort();
@@ -294,7 +489,25 @@ function ingestCantonData(gameState: any): void {
       }
     }
     const baseColor = getNationBaseColor(nationId);
-    const shades = generateCantonShades(baseColor, cantonIds.length);
+    const shadeAssignment = assignCantonFillColors(cantonIds, baseColor, adjacency);
+    const paletteHex = cantonIds.map((cantonId) => {
+      const assignedIndex = shadeAssignment.assignedIndices[cantonId];
+      if (assignedIndex === undefined) {
+        return '#000000';
+      }
+      const candidate = shadeAssignment.palette[assignedIndex];
+      return hslaToHex(candidate.h, candidate.s, candidate.l);
+    });
+
+    console.log('[CantonPalette]', {
+      nationId,
+      nationName: nation.name,
+      baseColor,
+      cantonCount: cantonIds.length,
+      shades: paletteHex,
+      clampHits: shadeAssignment.clampMeta,
+      adjacencyPermutation: shadeAssignment.adjacencyPermutation,
+    });
     let satelliteOrdinal = 1;
 
     cantonIds.forEach((cantonId, cantonIndex) => {
@@ -303,7 +516,13 @@ function ingestCantonData(gameState: any): void {
         ? [...territories[cantonId]]
         : [];
       const isCapital = capitalId === cantonId;
-      const fillColor = shades[cantonIndex] ?? formatHsl(baseColor, 0.6);
+      const fillColor = shadeAssignment.fillByCanton[cantonId];
+      if (!fillColor) {
+        console.warn('Missing canton shade assignment, falling back to base color', {
+          nationId,
+          cantonId,
+        });
+      }
       const capacity = Object.values(cantonState?.sectors ?? {}).reduce(
         (sum: number, sector: any) => sum + (sector?.capacity ?? 0),
         0,
@@ -323,7 +542,7 @@ function ingestCantonData(gameState: any): void {
         nationId,
         nationName: nation.name,
         name,
-        fillColor,
+        fillColor: fillColor ?? formatHsl(baseColor, 0.6),
         capital: isCapital,
         urbanization,
         capacity,
