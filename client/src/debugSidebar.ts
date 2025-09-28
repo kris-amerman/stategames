@@ -92,6 +92,7 @@ interface HappinessSummary {
 
 interface NationSnapshot {
   id?: string;
+  name?: string;
   finance?: { treasury?: number; debt?: number; waterfall?: Record<string, number> };
   status?: { stockpiles?: StockpileMap; flows?: { energy?: number; logistics?: number; research?: number }; labor?: LaborPool; happiness?: HappinessSummary };
   stockpiles?: Partial<Record<keyof StockpileMap, number>>;
@@ -121,7 +122,9 @@ interface GameSnapshot {
   nations?: Record<string, NationSnapshot>;
   economy?: EconomySnapshot;
   turnNumber?: number;
-  meta?: { seed?: string };
+  nationCantons?: Record<string, string[]>;
+  cantonMeta?: Record<string, { owner?: string }>;
+  meta?: { seed?: string; nations?: Array<{ id: string; name?: string }> };
 }
 
 interface GoldDisplay {
@@ -244,8 +247,29 @@ interface DiagnosticEntry {
   message?: string;
 }
 
-export interface DebugSidebarData {
-  nationId: string | null;
+interface LaborTotals {
+  available: number;
+  assigned: number;
+  demand: number | null;
+}
+
+interface SectorTotals {
+  capacity: number;
+  funded: number;
+  utilization: number;
+  idle: number;
+}
+
+interface ReconciliationData {
+  cantonLabor: LaborTotals;
+  nationLabor: LaborTotals;
+  cantonSectors: Record<string, SectorTotals>;
+  nationSectors: Record<string, SectorTotals>;
+}
+
+export interface NationDebugSidebarData {
+  nationId: string;
+  label: string;
   gold: GoldDisplay;
   stockpiles: StockpileDisplay[];
   flows: { energyRatio: number | null; logisticsRatio: number | null; research: number | null };
@@ -260,6 +284,13 @@ export interface DebugSidebarData {
   projects: ProjectEntry[];
   research: ResearchDetails;
   diagnostics: DiagnosticEntry[];
+  reconciliation: ReconciliationData;
+}
+
+export interface DebugSidebarData {
+  nationOrder: string[];
+  nations: Record<string, NationDebugSidebarData>;
+  activeNationId: string | null;
   seed: string | null;
 }
 
@@ -270,8 +301,64 @@ let contentEl: HTMLDivElement | null = null;
 let toggleButton: HTMLButtonElement | null = null;
 let isOpen = false;
 let latestData: DebugSidebarData | null = null;
-let cantonPage = 0;
+let activeNationId: string | null = null;
+const cantonPageByNation = new Map<string, number>();
 const previousHappiness = new Map<string, number>();
+
+function getCantonPage(nationId: string | null): number {
+  if (!nationId) return 0;
+  return cantonPageByNation.get(nationId) ?? 0;
+}
+
+function setCantonPage(nationId: string, page: number): void {
+  cantonPageByNation.set(nationId, Math.max(0, page));
+}
+
+function resetMissingNationPages(validNationIds: string[]): void {
+  const valid = new Set(validNationIds);
+  for (const key of Array.from(cantonPageByNation.keys())) {
+    if (!valid.has(key)) {
+      cantonPageByNation.delete(key);
+    }
+  }
+}
+
+function withinTolerance(a: number, b: number, tolerance = 1e-3): boolean {
+  const scale = Math.max(1, Math.abs(a), Math.abs(b));
+  return Math.abs(a - b) <= scale * tolerance;
+}
+
+function resolveActiveNationId(data: DebugSidebarData): string | null {
+  if (activeNationId && data.nations[activeNationId]) {
+    return activeNationId;
+  }
+  if (data.activeNationId && data.nations[data.activeNationId]) {
+    return data.activeNationId;
+  }
+  for (const id of data.nationOrder) {
+    if (data.nations[id]) return id;
+  }
+  return null;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      case "'":
+        return '&#39;';
+      default:
+        return char;
+    }
+  });
+}
 
 function injectStyles(): void {
   if (stylesInjected) return;
@@ -401,17 +488,91 @@ function formatNumber(value: number | null | undefined, fractionDigits = 1): str
   return value.toFixed(fractionDigits);
 }
 
-function resolveNation(snapshot: GameSnapshot | null, playerId: string | null): {
-  nation: NationSnapshot | null;
-  nationId: string | null;
-} {
-  if (!snapshot?.nations || !playerId) {
-    return { nation: null, nationId: null };
+function listCantonIdsForNation(
+  snapshot: GameSnapshot | null,
+  nation: NationSnapshot | null,
+  nationId: string | null,
+): string[] {
+  if (!snapshot?.economy?.cantons) return [];
+  const ids = new Set<string>();
+  if (nation?.canton && snapshot.economy.cantons[nation.canton]) {
+    ids.add(nation.canton);
   }
-  if (snapshot.nations[playerId]) {
-    return { nation: snapshot.nations[playerId], nationId: playerId };
+  if (nationId && snapshot.nationCantons?.[nationId]) {
+    for (const id of snapshot.nationCantons[nationId]) {
+      if (snapshot.economy.cantons[id]) {
+        ids.add(id);
+      }
+    }
   }
-  return { nation: null, nationId: null };
+  if (nationId && snapshot.cantonMeta) {
+    for (const [id, meta] of Object.entries(snapshot.cantonMeta)) {
+      if (meta?.owner === nationId && snapshot.economy.cantons[id]) {
+        ids.add(id);
+      }
+    }
+  }
+  if (nationId && ids.size === 0) {
+    for (const [id, canton] of Object.entries(snapshot.economy.cantons)) {
+      const owner = (canton as any)?.owner ?? snapshot.cantonMeta?.[id]?.owner;
+      if (owner === nationId) {
+        ids.add(id);
+      }
+    }
+  }
+  return Array.from(ids);
+}
+
+function computeNationLaborTotals(nation: NationSnapshot | null): LaborTotals {
+  const available = LABOR_TYPES.reduce((sum, { key }) => {
+    const pool = nation?.labor?.available as any;
+    return sum + (pool?.[key] ?? 0);
+  }, 0);
+  const assigned = LABOR_TYPES.reduce((sum, { key }) => {
+    const pool = nation?.labor?.assigned as any;
+    return sum + (pool?.[key] ?? 0);
+  }, 0);
+  return { available, assigned, demand: null };
+}
+
+function aggregateNationSectorTotals(nation: NationSnapshot | null): Record<string, SectorTotals> {
+  const totals: Record<string, SectorTotals> = {};
+  if (!nation?.sectors) return totals;
+  for (const [sector, details] of Object.entries(nation.sectors)) {
+    const capacity = details?.capacity ?? 0;
+    const funded = details?.funded ?? 0;
+    const utilization = details?.utilization ?? funded;
+    const idle = details?.idle ?? Math.max(0, capacity - utilization);
+    totals[sector] = { capacity, funded, utilization, idle };
+  }
+  return totals;
+}
+
+function aggregateCantonSectorTotals(
+  snapshot: GameSnapshot | null,
+  cantonIds: string[],
+): Record<string, SectorTotals> {
+  const totals: Record<string, SectorTotals> = {};
+  if (!snapshot?.economy?.cantons) return totals;
+  for (const id of cantonIds) {
+    const canton = snapshot.economy.cantons[id];
+    if (!canton?.sectors) continue;
+    for (const [sector, details] of Object.entries(canton.sectors)) {
+      const existing = totals[sector] ?? { capacity: 0, funded: 0, utilization: 0, idle: 0 };
+      const capacity = details?.capacity ?? 0;
+      const funded = details?.funded ?? 0;
+      const utilization = details?.utilization ?? funded;
+      const idle =
+        details?.idle ?? (capacity > 0 ? Math.max(0, capacity - utilization) : existing.idle);
+      totals[sector] = {
+        capacity: existing.capacity + capacity,
+        funded: existing.funded + funded,
+        utilization: existing.utilization + utilization,
+        idle: existing.idle + idle,
+      };
+    }
+  }
+  return totals;
 }
 
 function deriveGoldDisplay(nation: NationSnapshot | null): GoldDisplay {
@@ -475,10 +636,11 @@ function deriveFinance(
   snapshot: GameSnapshot | null,
   nation: NationSnapshot | null,
   nationId: string | null,
+  cantonIds: string[],
   previousLastRound: number = 0,
 ): FinanceDisplay {
   const idleTax = nation?.idleCost ?? null;
-  const runningCost = computeRunningCost(nation, snapshot);
+  const runningCost = computeRunningCost(nation, snapshot, cantonIds);
   const omTotal = nation?.omCost ?? (runningCost !== null && idleTax !== null ? runningCost + idleTax : null);
   const energySpend =
     runningCost !== null && omTotal !== null && idleTax !== null
@@ -507,17 +669,26 @@ function deriveFinance(
   };
 }
 
-function computeRunningCost(nation: NationSnapshot | null, snapshot: GameSnapshot | null): number | null {
+function computeRunningCost(
+  nation: NationSnapshot | null,
+  snapshot: GameSnapshot | null,
+  cantonIds: string[],
+): number | null {
   if (!nation) return null;
-  const cantonId = nation.canton;
-  const canton = cantonId ? snapshot?.economy?.cantons?.[cantonId] : undefined;
+  const cantonTotals = aggregateCantonSectorTotals(snapshot, cantonIds);
   let total = 0;
   let any = false;
   for (const sector of SECTORS) {
-    const state = (canton?.sectors ?? nation.sectors)?.[sector];
-    const running = state?.utilization ?? state?.funded ?? 0;
     const cost = OM_COST_PER_SLOT[sector] ?? 0;
-    if (cost > 0 && running > 0) {
+    if (cost <= 0) continue;
+    const cantonState = cantonTotals[sector];
+    const nationState = nation.sectors?.[sector];
+    const running =
+      (cantonState?.utilization ?? 0) ||
+      nationState?.utilization ||
+      nationState?.funded ||
+      0;
+    if (running > 0) {
       total += running * cost;
       any = true;
     }
@@ -525,18 +696,22 @@ function computeRunningCost(nation: NationSnapshot | null, snapshot: GameSnapsho
   return any ? total : null;
 }
 
-function deriveSectorDebug(snapshot: GameSnapshot | null, nation: NationSnapshot | null, nationId: string | null): SectorDebugEntry[] {
-  const cantonId = nation?.canton;
-  const canton = cantonId ? snapshot?.economy?.cantons?.[cantonId] : undefined;
+function deriveSectorDebug(
+  snapshot: GameSnapshot | null,
+  nation: NationSnapshot | null,
+  nationId: string | null,
+  cantonIds: string[],
+): SectorDebugEntry[] {
+  const cantonTotals = aggregateCantonSectorTotals(snapshot, cantonIds);
   return SECTORS.map((sector) => {
     const title = SECTOR_TITLES[sector];
     const perSlot = OM_COST_PER_SLOT[sector] ?? 0;
-    const cantonState = canton?.sectors?.[sector];
+    const cantonState = cantonTotals[sector];
     const nationState = nation?.sectors?.[sector];
-    const state = cantonState ?? nationState ?? {};
-    const capacity = state.capacity ?? 0;
-    const fundedSlots = state.funded ?? 0;
-    const runningSlots = state.utilization ?? fundedSlots;
+    const capacity = (cantonState?.capacity ?? 0) || nationState?.capacity || 0;
+    const fundedSlots = (cantonState?.funded ?? 0) || nationState?.funded || 0;
+    const runningSlots =
+      (cantonState?.utilization ?? 0) || nationState?.utilization || nationState?.funded || 0;
     const attempted = Math.min(capacity, fundedSlots);
     const funding = attempted * perSlot;
     const energyThrottle = nation?.energy?.throttledSectors?.[sector] ?? 0;
@@ -544,8 +719,22 @@ function deriveSectorDebug(snapshot: GameSnapshot | null, nation: NationSnapshot
     const afterBudget = attempted;
     const afterInputs = Math.max(0, afterBudget - energyThrottle);
     const afterLogistics = Math.max(0, afterInputs - logisticsThrottle);
-    const laborAssigned = canton?.laborAssigned?.[sector];
-    const laborDemand = canton?.laborDemand?.[sector];
+
+    let demandTotal = 0;
+    let assignedTotal = 0;
+    if (snapshot?.economy?.cantons) {
+      for (const id of cantonIds) {
+        const canton = snapshot.economy.cantons[id];
+        const laborAssigned = canton?.laborAssigned?.[sector];
+        if (laborAssigned) {
+          assignedTotal += Object.values(laborAssigned).reduce((sum, value) => sum + (value ?? 0), 0);
+        }
+        const laborDemand = canton?.laborDemand?.[sector];
+        if (laborDemand) {
+          demandTotal += Object.values(laborDemand).reduce((sum, value) => sum + (value ?? 0), 0);
+        }
+      }
+    }
     const afterLabor = Math.min(afterLogistics, runningSlots);
     const gateTrace: Record<typeof GATE_SEQUENCE[number], number> = {
       budget: afterBudget,
@@ -565,8 +754,6 @@ function deriveSectorDebug(snapshot: GameSnapshot | null, nation: NationSnapshot
     if (afterBudget > afterInputs) bottlenecks.push(`Energy-limited (-${afterBudget - afterInputs} slots)`);
     if (afterInputs > afterLogistics) bottlenecks.push(`Logistics-limited (-${afterInputs - afterLogistics} slots)`);
     if (afterLogistics > runningSlots) {
-      const demandTotal = laborDemand ? Object.values(laborDemand).reduce((sum, v) => sum + (v ?? 0), 0) : 0;
-      const assignedTotal = laborAssigned ? Object.values(laborAssigned).reduce((sum, v) => sum + (v ?? 0), 0) : 0;
       if (assignedTotal < demandTotal) {
         bottlenecks.push(`Labor-limited (-${afterLogistics - runningSlots} slots)`);
       } else {
@@ -669,66 +856,96 @@ function deriveCantons(
   snapshot: GameSnapshot | null,
   nation: NationSnapshot | null,
   nationId: string | null,
-): CantonEntry[] {
-  if (!snapshot?.economy?.cantons) return [];
+  cantonIds: string[],
+): { entries: CantonEntry[]; reconciliation: ReconciliationData } {
+  if (!snapshot?.economy?.cantons) {
+    return {
+      entries: [],
+      reconciliation: {
+        cantonLabor: { available: 0, assigned: 0, demand: 0 },
+        nationLabor: computeNationLaborTotals(nation),
+        cantonSectors: {},
+        nationSectors: aggregateNationSectorTotals(nation),
+      },
+    };
+  }
   const rawCantons = snapshot.economy.cantons;
-  const candidateIds = new Set<string>();
-  if (nation?.canton) {
-    candidateIds.add(nation.canton);
-  }
-  if (nationId) {
-    for (const [id, canton] of Object.entries(rawCantons)) {
-      if ((canton as any)?.owner === nationId) {
-        candidateIds.add(id);
-      }
-    }
-  }
-  const ids = Array.from(candidateIds);
-  return ids
-    .map((id) => {
-      const canton = rawCantons[id];
-      if (!canton) return null;
-      const sectorMix = Object.entries(canton.sectors ?? {}).map(([sector, data]) => ({
-        sector,
-        capacity: data?.capacity ?? 0,
-        funded: data?.funded ?? 0,
-        idle: data?.idle ?? Math.max(0, (data?.capacity ?? 0) - (data?.funded ?? 0)),
-      }));
-      const suitability = Object.entries(canton.suitability ?? {}).map(([sector, percent]) => ({
-        sector,
-        percent: typeof percent === 'number' ? percent : null,
-      }));
-      const laborDemand = Object.values(canton.laborDemand ?? {}).reduce(
-        (sum, entry) => sum + Object.values(entry ?? {}).reduce((inner, value) => inner + (value ?? 0), 0),
-        0,
-      );
-      const laborAssigned = Object.values(canton.laborAssigned ?? {}).reduce(
-        (sum, entry) => sum + Object.values(entry ?? {}).reduce((inner, value) => inner + (value ?? 0), 0),
-        0,
-      );
-      const laborAvailable = Object.values(canton.labor ?? {}).reduce((sum, value) => sum + (value ?? 0), 0);
-      const consumption = canton.consumption ?? {};
-      return {
-        id,
-        urbanization: canton.urbanizationLevel ?? null,
-        development: canton.development ?? null,
-        happiness: canton.happiness ?? null,
-        laborDemand,
-        laborAssigned,
-        laborAvailable,
-        foodOk:
-          consumption.foodProvided !== undefined && consumption.foodRequired !== undefined
-            ? consumption.foodProvided >= consumption.foodRequired
-            : null,
-        luxuryOk:
-          consumption.luxuryProvided !== undefined && consumption.luxuryRequired !== undefined
-            ? consumption.luxuryProvided >= consumption.luxuryRequired
-            : null,
-        suitability,
-        sectorMix,
+  const ids = cantonIds.length > 0 ? cantonIds : nation?.canton ? [nation.canton] : [];
+  const entries: CantonEntry[] = [];
+  let laborDemandTotal = 0;
+  let laborAssignedTotal = 0;
+  let laborAvailableTotal = 0;
+  const cantonSectorTotals: Record<string, SectorTotals> = {};
+
+  for (const id of ids) {
+    const canton = rawCantons[id];
+    if (!canton) continue;
+    const sectorMix = Object.entries(canton.sectors ?? {}).map(([sector, data]) => {
+      const capacity = data?.capacity ?? 0;
+      const funded = data?.funded ?? 0;
+      const utilization = data?.utilization ?? funded;
+      const idle = data?.idle ?? Math.max(0, capacity - utilization);
+      const existing = cantonSectorTotals[sector] ?? { capacity: 0, funded: 0, utilization: 0, idle: 0 };
+      cantonSectorTotals[sector] = {
+        capacity: existing.capacity + capacity,
+        funded: existing.funded + funded,
+        utilization: existing.utilization + utilization,
+        idle: existing.idle + idle,
       };
-    })
-    .filter((entry): entry is CantonEntry => Boolean(entry));
+      return {
+        sector,
+        capacity,
+        funded,
+        idle,
+      };
+    });
+    const suitability = Object.entries(canton.suitability ?? {}).map(([sector, percent]) => ({
+      sector,
+      percent: typeof percent === 'number' ? percent : null,
+    }));
+    const laborDemand = Object.values(canton.laborDemand ?? {}).reduce(
+      (sum, entry) => sum + Object.values(entry ?? {}).reduce((inner, value) => inner + (value ?? 0), 0),
+      0,
+    );
+    const laborAssigned = Object.values(canton.laborAssigned ?? {}).reduce(
+      (sum, entry) => sum + Object.values(entry ?? {}).reduce((inner, value) => inner + (value ?? 0), 0),
+      0,
+    );
+    const laborAvailable = Object.values(canton.labor ?? {}).reduce((sum, value) => sum + (value ?? 0), 0);
+    laborDemandTotal += laborDemand;
+    laborAssignedTotal += laborAssigned;
+    laborAvailableTotal += laborAvailable;
+    const consumption = canton.consumption ?? {};
+    entries.push({
+      id,
+      urbanization: canton.urbanizationLevel ?? null,
+      development: canton.development ?? null,
+      happiness: canton.happiness ?? null,
+      laborDemand,
+      laborAssigned,
+      laborAvailable,
+      foodOk:
+        consumption.foodProvided !== undefined && consumption.foodRequired !== undefined
+          ? consumption.foodProvided >= consumption.foodRequired
+          : null,
+      luxuryOk:
+        consumption.luxuryProvided !== undefined && consumption.luxuryRequired !== undefined
+          ? consumption.luxuryProvided >= consumption.luxuryRequired
+          : null,
+      suitability,
+      sectorMix,
+    });
+  }
+
+  return {
+    entries,
+    reconciliation: {
+      cantonLabor: { available: laborAvailableTotal, assigned: laborAssignedTotal, demand: laborDemandTotal },
+      nationLabor: computeNationLaborTotals(nation),
+      cantonSectors: cantonSectorTotals,
+      nationSectors: aggregateNationSectorTotals(nation),
+    },
+  };
 }
 
 function deriveProjects(nation: NationSnapshot | null): ProjectEntry[] {
@@ -757,7 +974,7 @@ function deriveResearch(nation: NationSnapshot | null, snapshot: GameSnapshot | 
   return { perTurn, policies };
 }
 
-function deriveDiagnostics(data: DebugSidebarData, nation: NationSnapshot | null): DiagnosticEntry[] {
+function deriveDiagnostics(data: NationDebugSidebarData, nation: NationSnapshot | null): DiagnosticEntry[] {
   const assertions: DiagnosticEntry[] = [];
   const fundingZeroViolations = data.sectors.filter((sector) => sector.funding === 0 && sector.gateTrace.suitability > 0);
   assertions.push({
@@ -782,6 +999,45 @@ function deriveDiagnostics(data: DebugSidebarData, nation: NationSnapshot | null
     passed: treasury >= 0 || goldNumeric < 0 || debt === 0,
     message: treasury < 0 && goldNumeric >= 0 ? 'Treasury below zero but gold not negative' : undefined,
   });
+  const { reconciliation } = data;
+  const laborChecks: string[] = [];
+  if (reconciliation.nationLabor.available || reconciliation.cantonLabor.available) {
+    if (!withinTolerance(reconciliation.nationLabor.available, reconciliation.cantonLabor.available, 0.02)) {
+      laborChecks.push('available');
+    }
+  }
+  if (reconciliation.nationLabor.assigned || reconciliation.cantonLabor.assigned) {
+    if (!withinTolerance(reconciliation.nationLabor.assigned, reconciliation.cantonLabor.assigned, 0.02)) {
+      laborChecks.push('assigned');
+    }
+  }
+  assertions.push({
+    id: 'labor-reconcile',
+    label: 'Canton labor sums match nation totals',
+    passed: laborChecks.length === 0,
+    message: laborChecks.length === 0 ? undefined : `Mismatch in ${laborChecks.join(', ')}`,
+  });
+
+  const sectorMismatches: string[] = [];
+  for (const sector of SECTORS) {
+    const cantonTotals = reconciliation.cantonSectors[sector] ?? { capacity: 0, funded: 0, utilization: 0, idle: 0 };
+    const nationTotals = reconciliation.nationSectors[sector] ?? { capacity: 0, funded: 0, utilization: 0, idle: 0 };
+    const relevant =
+      cantonTotals.capacity || cantonTotals.funded || nationTotals.capacity || nationTotals.funded || 0;
+    if (!relevant) continue;
+    const capacityOk = withinTolerance(nationTotals.capacity, cantonTotals.capacity, 0.02);
+    const fundedOk = withinTolerance(nationTotals.funded, cantonTotals.funded, 0.02);
+    const utilizationOk = withinTolerance(nationTotals.utilization, cantonTotals.utilization, 0.05);
+    if (!capacityOk || !fundedOk || !utilizationOk) {
+      sectorMismatches.push(SECTOR_TITLES[sector]);
+    }
+  }
+  assertions.push({
+    id: 'sector-reconcile',
+    label: 'Canton sector sums match nation totals',
+    passed: sectorMismatches.length === 0,
+    message: sectorMismatches.length === 0 ? undefined : `Mismatch in ${sectorMismatches.join(', ')}`,
+  });
   return assertions;
 }
 
@@ -790,27 +1046,39 @@ export function buildDebugSidebarData(
   playerId: string | null,
   previousLastRound: number = 0,
 ): DebugSidebarData {
-  const { nation, nationId } = resolveNation(snapshot, playerId);
-  const gold = deriveGoldDisplay(nation);
-  const stockpiles = deriveStockpiles(nation);
-  const flows = {
-    energyRatio: nation?.energy?.ratio ?? null,
-    logisticsRatio: nation?.logistics?.ratio ?? null,
-    research: nation?.status?.flows?.research ?? null,
-  };
-  const laborRows = deriveLaborRows(nation);
-  const happiness = deriveHappiness(nation, nationId);
-  const finance = deriveFinance(snapshot, nation, nationId, previousLastRound);
-  const sectors = deriveSectorDebug(snapshot, nation, nationId);
-  const energy = deriveEnergyDetails(snapshot, nation);
-  const logistics = deriveLogisticsDetails(nation);
-  const trade = deriveTradeDetails(snapshot, nationId ?? null);
-  const cantons = deriveCantons(snapshot, nation, nationId ?? null);
-  const projects = deriveProjects(nation);
-  const research = deriveResearch(nation, snapshot);
-  const diagnostics = deriveDiagnostics(
-    {
-      nationId: nationId ?? null,
+  const nations = snapshot?.nations ?? {};
+  const nationOrder = Object.keys(nations);
+  const nameLookup = new Map<string, string>();
+  for (const entry of snapshot?.meta?.nations ?? []) {
+    if (entry.id) {
+      nameLookup.set(entry.id, entry.name ?? entry.id);
+    }
+  }
+  const result: Record<string, NationDebugSidebarData> = {};
+  for (const nationId of nationOrder) {
+    const nation = nations[nationId];
+    const label = nation?.name ?? nameLookup.get(nationId) ?? nationId;
+    const cantonIds = listCantonIdsForNation(snapshot, nation, nationId);
+    const gold = deriveGoldDisplay(nation);
+    const stockpiles = deriveStockpiles(nation);
+    const flows = {
+      energyRatio: nation?.energy?.ratio ?? null,
+      logisticsRatio: nation?.logistics?.ratio ?? null,
+      research: nation?.status?.flows?.research ?? null,
+    };
+    const laborRows = deriveLaborRows(nation);
+    const happiness = deriveHappiness(nation, nationId);
+    const finance = deriveFinance(snapshot, nation, nationId, cantonIds, previousLastRound);
+    const sectors = deriveSectorDebug(snapshot, nation, nationId, cantonIds);
+    const energy = deriveEnergyDetails(snapshot, nation);
+    const logistics = deriveLogisticsDetails(nation);
+    const trade = deriveTradeDetails(snapshot, nationId);
+    const cantonData = deriveCantons(snapshot, nation, nationId, cantonIds);
+    const projects = deriveProjects(nation);
+    const research = deriveResearch(nation, snapshot);
+    const nationData: NationDebugSidebarData = {
+      nationId,
+      label,
       gold,
       stockpiles,
       flows,
@@ -821,31 +1089,23 @@ export function buildDebugSidebarData(
       energy,
       logistics,
       trade,
-      cantons,
+      cantons: cantonData.entries,
       projects,
       research,
       diagnostics: [],
-      seed: snapshot?.meta?.seed ?? null,
-    },
-    nation,
-  );
+      reconciliation: cantonData.reconciliation,
+    };
+    nationData.diagnostics = deriveDiagnostics(nationData, nation);
+    result[nationId] = nationData;
+  }
+
+  const preferred = playerId && nationOrder.includes(playerId) ? playerId : nationOrder[0] ?? null;
+  resetMissingNationPages(nationOrder);
 
   return {
-    nationId: nationId ?? null,
-    gold,
-    stockpiles,
-    flows,
-    laborRows,
-    happiness,
-    finance,
-    sectors,
-    energy,
-    logistics,
-    trade,
-    cantons,
-    projects,
-    research,
-    diagnostics,
+    nationOrder,
+    nations: result,
+    activeNationId: preferred,
     seed: snapshot?.meta?.seed ?? null,
   };
 }
@@ -947,7 +1207,7 @@ function toggleSidebar(open: boolean): void {
   }
 }
 
-function renderOverviewSection(data: DebugSidebarData): string {
+function renderOverviewSection(data: NationDebugSidebarData): string {
   const stockRows = data.stockpiles
     .map(
       (item) => `
@@ -969,7 +1229,7 @@ function renderOverviewSection(data: DebugSidebarData): string {
     .join('');
   return `
     <section id="debugSection-overview" class="debug-section">
-      <div id="debugSectionHeader-overview" class="debug-section-header">Nation Overview</div>
+      <div id="debugSectionHeader-overview" class="debug-section-header">Nation Overview — ${escapeHtml(data.label)}</div>
       <div id="debugGold" style="color:${data.gold.color}; font-weight:600; font-size:14px;">${data.gold.formatted}</div>
       <div id="debugStockpileContainer" class="debug-metric-grid">${stockRows}</div>
       <div id="debugFlowContainer" class="debug-card">
@@ -997,7 +1257,7 @@ function renderOverviewSection(data: DebugSidebarData): string {
   `;
 }
 
-function renderFinanceSection(data: DebugSidebarData): string {
+function renderFinanceSection(data: NationDebugSidebarData): string {
   const finance = data.finance;
   return `
     <section id="debugSection-finance" class="debug-section">
@@ -1032,7 +1292,7 @@ function renderFinanceSection(data: DebugSidebarData): string {
   `;
 }
 
-function renderSectorsSection(data: DebugSidebarData): string {
+function renderSectorsSection(data: NationDebugSidebarData): string {
   const sectorCards = data.sectors
     .map((sector) => {
       const gateRows = GATE_SEQUENCE.map(
@@ -1101,7 +1361,7 @@ function renderSectorsSection(data: DebugSidebarData): string {
   `;
 }
 
-function renderEnergySection(data: DebugSidebarData): string {
+function renderEnergySection(data: NationDebugSidebarData): string {
   const rows = data.energy.generation
     .map(
       (entry) => `
@@ -1157,7 +1417,7 @@ function renderEnergySection(data: DebugSidebarData): string {
   `;
 }
 
-function renderTradeSection(data: DebugSidebarData): string {
+function renderTradeSection(data: NationDebugSidebarData): string {
   const gatewayRows = data.trade.gateways
     .map(
       (gateway) => `
@@ -1204,11 +1464,15 @@ function renderTradeSection(data: DebugSidebarData): string {
   `;
 }
 
-function renderCantonsSection(data: DebugSidebarData): string {
+function renderCantonsSection(nationId: string | null, data: NationDebugSidebarData): string {
   const entries = data.cantons;
   const totalPages = Math.max(1, Math.ceil(entries.length / CANTON_PAGE_SIZE));
-  if (cantonPage >= totalPages) cantonPage = totalPages - 1;
-  const startIndex = cantonPage * CANTON_PAGE_SIZE;
+  let page = nationId ? getCantonPage(nationId) : 0;
+  if (page >= totalPages) {
+    page = totalPages - 1;
+    if (nationId) setCantonPage(nationId, page);
+  }
+  const startIndex = page * CANTON_PAGE_SIZE;
   const slice = entries.slice(startIndex, startIndex + CANTON_PAGE_SIZE);
   const rows = slice
     .map((entry, index) => {
@@ -1232,6 +1496,8 @@ function renderCantonsSection(data: DebugSidebarData): string {
       `;
     })
     .join('');
+  const nationLabor = data.reconciliation.nationLabor;
+  const cantonLabor = data.reconciliation.cantonLabor;
   return `
     <section id="debugSection-cantons" class="debug-section">
       <div id="debugSectionHeader-cantons" class="debug-section-header">Labor & Cantons</div>
@@ -1239,17 +1505,19 @@ function renderCantonsSection(data: DebugSidebarData): string {
         <span class="debug-label">Total Cantons</span>
         <span class="debug-value">${entries.length}</span>
       </div>
+      <div class="debug-grid-row"><span class="debug-label">Nation Labor</span><span class="debug-value">Avail ${formatNumber(nationLabor.available, 1)} • Assigned ${formatNumber(nationLabor.assigned, 1)}</span></div>
+      <div class="debug-grid-row"><span class="debug-label">Canton Labor</span><span class="debug-value">Avail ${formatNumber(cantonLabor.available, 1)} • Assigned ${formatNumber(cantonLabor.assigned, 1)} • Demand ${formatNumber(cantonLabor.demand, 1)}</span></div>
       <div id="debugCantonsContainer" class="debug-stack">${rows || '<div id="debugCantons-empty">No canton data</div>'}</div>
       <div id="debugCantonsPagination" class="debug-grid-row" style="justify-content:space-between;">
-        <button id="debugCantonsPrev" ${cantonPage === 0 ? 'disabled' : ''}>Prev</button>
-        <span id="debugCantonsPage">Page ${entries.length === 0 ? 0 : cantonPage + 1} / ${totalPages}</span>
-        <button id="debugCantonsNext" ${cantonPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+        <button id="debugCantonsPrev" ${page === 0 ? 'disabled' : ''}>Prev</button>
+        <span id="debugCantonsPage">Page ${entries.length === 0 ? 0 : page + 1} / ${totalPages}</span>
+        <button id="debugCantonsNext" ${page >= totalPages - 1 ? 'disabled' : ''}>Next</button>
       </div>
     </section>
   `;
 }
 
-function renderProjectsSection(data: DebugSidebarData): string {
+function renderProjectsSection(data: NationDebugSidebarData): string {
   const rows = data.projects
     .map(
       (project) => `
@@ -1268,7 +1536,7 @@ function renderProjectsSection(data: DebugSidebarData): string {
   `;
 }
 
-function renderResearchSection(data: DebugSidebarData): string {
+function renderResearchSection(data: NationDebugSidebarData): string {
   const policyRows = data.research.policies
     .map(
       (policy) => `
@@ -1293,7 +1561,7 @@ function renderResearchSection(data: DebugSidebarData): string {
   `;
 }
 
-function renderDiagnosticsSection(data: DebugSidebarData): string {
+function renderDiagnosticsSection(data: NationDebugSidebarData, seed: string | null): string {
   const rows = data.diagnostics
     .map(
       (entry) => `
@@ -1311,7 +1579,7 @@ function renderDiagnosticsSection(data: DebugSidebarData): string {
     <section id="debugSection-diagnostics" class="debug-section">
       <div id="debugSectionHeader-diagnostics" class="debug-section-header">Diagnostics</div>
       <div id="debugDiagContainer" class="debug-stack">${rows || '<div id="debugDiag-empty">No assertions evaluated</div>'}</div>
-      <div id="debugSeed" class="debug-grid-row"><span class="debug-label">Seed</span><span class="debug-value">${data.seed ?? '—'}</span></div>
+      <div id="debugSeed" class="debug-grid-row"><span class="debug-label">Seed</span><span class="debug-value">${seed ?? '—'}</span></div>
       <div id="debugExportButtons" class="debug-grid-row" style="justify-content:flex-start; gap:8px;">
         <button id="debugExportJson">Export JSON</button>
         <button id="debugExportCsv">Export CSV</button>
@@ -1323,41 +1591,100 @@ function renderDiagnosticsSection(data: DebugSidebarData): string {
 function renderSidebar(data: DebugSidebarData): void {
   if (!contentEl) return;
   latestData = data;
+  const nationId = resolveActiveNationId(data);
+  activeNationId = nationId;
+  const selector = renderNationSelector(data, nationId);
+  const nationData = nationId ? data.nations[nationId] ?? null : null;
+  if (!nationData) {
+    contentEl.innerHTML = `${selector}<div id="debugNoNation">No nation data available</div>`;
+    attachNationSelectorHandler();
+    attachExportHandlers();
+    return;
+  }
   const sections = [
-    renderOverviewSection(data),
-    renderFinanceSection(data),
-    renderSectorsSection(data),
-    renderEnergySection(data),
-    renderTradeSection(data),
-    renderCantonsSection(data),
-    renderProjectsSection(data),
-    renderResearchSection(data),
-    renderDiagnosticsSection(data),
+    selector,
+    renderOverviewSection(nationData),
+    renderFinanceSection(nationData),
+    renderSectorsSection(nationData),
+    renderEnergySection(nationData),
+    renderTradeSection(nationData),
+    renderCantonsSection(nationId, nationData),
+    renderProjectsSection(nationData),
+    renderResearchSection(nationData),
+    renderDiagnosticsSection(nationData, data.seed),
   ].join('');
   contentEl.innerHTML = sections;
-  attachPaginationHandlers();
+  attachNationSelectorHandler();
+  attachPaginationHandlers(nationId);
   attachExportHandlers();
 }
 
-function attachPaginationHandlers(): void {
+function renderNationSelector(data: DebugSidebarData, nationId: string | null): string {
+  const active = nationId && data.nations[nationId] ? data.nations[nationId] : null;
+  const hasMultiple = data.nationOrder.filter((id) => data.nations[id]).length > 1;
+  if (!hasMultiple) {
+    const label = active ? escapeHtml(active.label) : '—';
+    return `
+      <section id="debugSection-nation" class="debug-section">
+        <div class="debug-section-header">Nation</div>
+        <div class="debug-value">${label}</div>
+      </section>
+    `;
+  }
+  const options = data.nationOrder
+    .filter((id) => data.nations[id])
+    .map((id) => {
+      const entry = data.nations[id]!;
+      const selected = id === nationId ? 'selected' : '';
+      return `<option value="${id}" ${selected}>${escapeHtml(entry.label)}</option>`;
+    })
+    .join('');
+  return `
+    <section id="debugSection-nation" class="debug-section">
+      <div class="debug-section-header">Nation</div>
+      <label for="debugNationSelect" class="debug-label">Active Nation</label>
+      <select id="debugNationSelect">${options}</select>
+    </section>
+  `;
+}
+
+function attachNationSelectorHandler(): void {
+  const select = document.getElementById('debugNationSelect') as HTMLSelectElement | null;
+  if (!select) return;
+  select.addEventListener('change', () => {
+    activeNationId = select.value || null;
+    if (activeNationId) {
+      setCantonPage(activeNationId, 0);
+    }
+    if (latestData) {
+      renderSidebar(latestData);
+    }
+  });
+}
+
+function attachPaginationHandlers(nationId: string | null): void {
   const prev = document.getElementById('debugCantonsPrev') as HTMLButtonElement | null;
   const next = document.getElementById('debugCantonsNext') as HTMLButtonElement | null;
   if (prev) {
     prev.addEventListener('click', () => {
-      if (cantonPage > 0) {
-        cantonPage -= 1;
-        if (latestData) renderSidebar(latestData);
+      if (!latestData || !nationId) return;
+      const page = getCantonPage(nationId);
+      if (page > 0) {
+        setCantonPage(nationId, page - 1);
+        renderSidebar(latestData);
       }
     });
   }
   if (next) {
     next.addEventListener('click', () => {
-      if (latestData) {
-        const totalPages = Math.max(1, Math.ceil(latestData.cantons.length / CANTON_PAGE_SIZE));
-        if (cantonPage < totalPages - 1) {
-          cantonPage += 1;
-          renderSidebar(latestData);
-        }
+      if (!latestData || !nationId) return;
+      const nationData = latestData.nations[nationId];
+      if (!nationData) return;
+      const totalPages = Math.max(1, Math.ceil(nationData.cantons.length / CANTON_PAGE_SIZE));
+      const page = getCantonPage(nationId);
+      if (page < totalPages - 1) {
+        setCantonPage(nationId, page + 1);
+        renderSidebar(latestData);
       }
     });
   }
@@ -1369,7 +1696,8 @@ function attachExportHandlers(): void {
   if (jsonBtn) {
     jsonBtn.addEventListener('click', () => {
       if (!latestData) return;
-      const blob = new Blob([JSON.stringify(latestData, null, 2)], { type: 'application/json' });
+      const payload = buildJsonExportPayload(latestData);
+      const blob = new Blob([payload], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -1381,24 +1709,104 @@ function attachExportHandlers(): void {
   if (csvBtn) {
     csvBtn.addEventListener('click', () => {
       if (!latestData) return;
-      const header = 'Sector,Capacity,Funding,Running,IdleCost';
-      const rows = latestData.sectors
-        .map((sector) => `${sector.title},${sector.capacity},${sector.funding},${sector.gateTrace.suitability},${sector.idleCost}`)
-        .join('\n');
-      const blob = new Blob([`${header}\n${rows}`], { type: 'text/csv' });
+      const csv = buildCsvExport(latestData);
+      const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = 'debug-sectors.csv';
+      anchor.download = 'debug-sidebar.csv';
       anchor.click();
       URL.revokeObjectURL(url);
     });
   }
 }
 
+function escapeCsv(value: string | number | null): string {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (/[",\n]/.test(str)) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
+export function buildJsonExportPayload(data: DebugSidebarData): string {
+  return JSON.stringify(data, null, 2);
+}
+
+export function buildCsvExport(data: DebugSidebarData): string {
+  const rows: string[] = ['Nation,Section,Name,Metric,Value'];
+  for (const nationId of data.nationOrder) {
+    const nation = data.nations[nationId];
+    if (!nation) continue;
+    const label = nation.label;
+    rows.push(
+      [escapeCsv(label), 'Overview', 'Gold', 'Numeric', escapeCsv(nation.gold.numeric)].join(','),
+    );
+    rows.push(
+      [escapeCsv(label), 'Overview', 'Gold', 'Formatted', escapeCsv(nation.gold.formatted)].join(','),
+    );
+    rows.push(
+      [escapeCsv(label), 'Labor', 'Nation', 'Available', escapeCsv(nation.reconciliation.nationLabor.available)].join(','),
+    );
+    rows.push(
+      [escapeCsv(label), 'Labor', 'Nation', 'Assigned', escapeCsv(nation.reconciliation.nationLabor.assigned)].join(','),
+    );
+    rows.push(
+      [escapeCsv(label), 'Labor', 'Canton', 'Available', escapeCsv(nation.reconciliation.cantonLabor.available)].join(','),
+    );
+    rows.push(
+      [escapeCsv(label), 'Labor', 'Canton', 'Assigned', escapeCsv(nation.reconciliation.cantonLabor.assigned)].join(','),
+    );
+    rows.push(
+      [escapeCsv(label), 'Labor', 'Canton', 'Demand', escapeCsv(nation.reconciliation.cantonLabor.demand)].join(','),
+    );
+    for (const sector of SECTORS) {
+      const title = SECTOR_TITLES[sector];
+      const nationTotals = nation.reconciliation.nationSectors[sector] ?? {
+        capacity: 0,
+        funded: 0,
+        utilization: 0,
+        idle: 0,
+      };
+      const cantonTotals = nation.reconciliation.cantonSectors[sector] ?? {
+        capacity: 0,
+        funded: 0,
+        utilization: 0,
+        idle: 0,
+      };
+      rows.push(
+        [escapeCsv(label), 'Sector', escapeCsv(title), 'NationCapacity', escapeCsv(nationTotals.capacity)].join(','),
+      );
+      rows.push(
+        [escapeCsv(label), 'Sector', escapeCsv(title), 'CantonCapacity', escapeCsv(cantonTotals.capacity)].join(','),
+      );
+      rows.push(
+        [escapeCsv(label), 'Sector', escapeCsv(title), 'NationFunded', escapeCsv(nationTotals.funded)].join(','),
+      );
+      rows.push(
+        [escapeCsv(label), 'Sector', escapeCsv(title), 'CantonFunded', escapeCsv(cantonTotals.funded)].join(','),
+      );
+    }
+    for (const canton of nation.cantons) {
+      rows.push(
+        [escapeCsv(label), 'Canton', escapeCsv(canton.id), 'LaborAvailable', escapeCsv(canton.laborAvailable)].join(','),
+      );
+      rows.push(
+        [escapeCsv(label), 'Canton', escapeCsv(canton.id), 'LaborAssigned', escapeCsv(canton.laborAssigned)].join(','),
+      );
+      rows.push(
+        [escapeCsv(label), 'Canton', escapeCsv(canton.id), 'LaborDemand', escapeCsv(canton.laborDemand)].join(','),
+      );
+    }
+  }
+  return rows.join('\n');
+}
+
 export function __resetDebugSidebarStateForTest(): void {
   previousHappiness.clear();
-  cantonPage = 0;
+  cantonPageByNation.clear();
+  activeNationId = null;
   latestData = null;
 }
 

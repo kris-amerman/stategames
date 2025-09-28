@@ -1,9 +1,20 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { buildDebugSidebarData, __resetDebugSidebarStateForTest } from './debugSidebar';
+import {
+  buildCsvExport,
+  buildDebugSidebarData,
+  buildJsonExportPayload,
+  __resetDebugSidebarStateForTest,
+} from './debugSidebar';
 
 const BASE_SNAPSHOT: any = {
   turnNumber: 2,
-  meta: { seed: 'seed-1' },
+  meta: {
+    seed: 'seed-1',
+    nations: [
+      { id: 'alpha', name: 'Alpha Union' },
+      { id: 'beta', name: 'Beta Collective' },
+    ],
+  },
   nations: {
     alpha: {
       canton: 'c1',
@@ -48,6 +59,27 @@ const BASE_SNAPSHOT: any = {
       welfare: { education: 1, healthcare: 1, socialSupport: 0 },
       projects: [{ id: 1, sector: 'energy', tier: 'small', turnsRemaining: 3, delayed: false }],
     },
+    beta: {
+      canton: 'c2',
+      finance: { treasury: 40, debt: 0 },
+      status: {
+        stockpiles: { fx: { current: 20, delta: 1 } },
+        flows: { energy: 8, logistics: 5, research: 2 },
+        happiness: { value: 20, emoji: '😃' },
+      },
+      energy: { ratio: 0.9, supply: 18, demand: 20, plants: [] },
+      logistics: { ratio: 0.8, supply: 8, demand: 10, throttledSectors: {} },
+      labor: {
+        available: { general: 5, skilled: 2, specialist: 1 },
+        assigned: { general: 3, skilled: 1, specialist: 1 },
+        happiness: 0.4,
+      },
+      sectors: {
+        industry: { capacity: 4, funded: 2, utilization: 2 },
+      },
+      idleCost: 0.5,
+      omCost: 10,
+    },
   },
   economy: {
     cantons: {
@@ -55,14 +87,27 @@ const BASE_SNAPSHOT: any = {
         sectors: {
           agriculture: { capacity: 5, funded: 3, utilization: 2, idle: 3 },
         },
-        laborDemand: { agriculture: { general: 3 } },
-        laborAssigned: { agriculture: { general: 2 } },
-        labor: { general: 6 },
+        laborDemand: { agriculture: { general: 4, skilled: 2, specialist: 1 } },
+        laborAssigned: { agriculture: { general: 4, skilled: 2, specialist: 1 } },
+        labor: { general: 6, skilled: 3, specialist: 2 },
         consumption: { foodRequired: 5, foodProvided: 5, luxuryRequired: 5, luxuryProvided: 4 },
         suitability: { agriculture: 80 },
         urbanizationLevel: 4,
         development: 1.2,
         happiness: 0.6,
+      },
+      c2: {
+        sectors: {
+          industry: { capacity: 4, funded: 2, utilization: 2, idle: 2 },
+        },
+        laborDemand: { industry: { general: 3, skilled: 1, specialist: 1 } },
+        laborAssigned: { industry: { general: 3, skilled: 1, specialist: 1 } },
+        labor: { general: 5, skilled: 2, specialist: 1 },
+        consumption: { foodRequired: 3, foodProvided: 3, luxuryRequired: 2, luxuryProvided: 2 },
+        suitability: { industry: 70 },
+        urbanizationLevel: 3,
+        development: 0.9,
+        happiness: 0.5,
       },
     },
     energy: { state: { supply: 20, demand: 20, ratio: 1 }, oAndMSpent: 5 },
@@ -76,6 +121,14 @@ const BASE_SNAPSHOT: any = {
     trade: { pendingImports: { food: 3 }, pendingExports: { materials: 2 } },
     welfare: { current: { education: 1, healthcare: 1, socialSupport: 0 } },
     resources: { gold: 25, research: 3 },
+  },
+  nationCantons: {
+    alpha: ['c1'],
+    beta: ['c2'],
+  },
+  cantonMeta: {
+    c1: { owner: 'alpha' },
+    c2: { owner: 'beta' },
   },
 };
 
@@ -93,13 +146,15 @@ describe('buildDebugSidebarData', () => {
     snapshot.nations.alpha.finance.treasury = 0;
     snapshot.nations.alpha.finance.debt = 12;
     const data = buildDebugSidebarData(snapshot, 'alpha');
-    expect(data.finance.gold.numeric).toBe(-12);
-    expect(data.finance.gold.formatted.includes('-')).toBe(true);
+    const alpha = data.nations.alpha;
+    expect(alpha?.finance.gold.numeric).toBe(-12);
+    expect(alpha?.finance.gold.formatted.includes('-')).toBe(true);
   });
 
   it('computes sector ceilings and idle taxes from capacities', () => {
     const data = buildDebugSidebarData(cloneSnapshot(), 'alpha');
-    const agriculture = data.sectors.find((sector) => sector.key === 'agriculture');
+    const alpha = data.nations.alpha!;
+    const agriculture = alpha.sectors.find((sector) => sector.key === 'agriculture');
     expect(agriculture).toBeDefined();
     expect(agriculture!.ceiling).toBeGreaterThan(0);
     expect(agriculture!.ceiling).toBe(agriculture!.capacity * agriculture!.perSlotCost);
@@ -110,21 +165,40 @@ describe('buildDebugSidebarData', () => {
     const snapshot = cloneSnapshot();
     snapshot.nations.alpha.energy.throttledSectors = { agriculture: 1 };
     const data = buildDebugSidebarData(snapshot, 'alpha');
-    const agriculture = data.sectors.find((sector) => sector.key === 'agriculture');
+    const alpha = data.nations.alpha!;
+    const agriculture = alpha.sectors.find((sector) => sector.key === 'agriculture');
     expect(agriculture?.bottlenecks.some((item) => item.toLowerCase().includes('energy'))).toBe(true);
   });
 
-  it('does not leak other nations when player id is missing', () => {
-    const snapshot = cloneSnapshot();
-    snapshot.nations.beta = {
-      canton: 'c2',
-      finance: { treasury: 90, debt: 0 },
-      status: { stockpiles: { fx: { current: 99, delta: 0 } } },
-    };
-    const data = buildDebugSidebarData(snapshot, null);
-    expect(data.nationId).toBeNull();
-    expect(data.gold.numeric).toBe(0);
-    expect(data.stockpiles.every((entry) => entry.formatted.startsWith('0'))).toBe(true);
+  it('exposes all nations while defaulting to the player selection', () => {
+    const data = buildDebugSidebarData(cloneSnapshot(), 'alpha');
+    expect(data.activeNationId).toBe('alpha');
+    expect(Object.keys(data.nations)).toEqual(expect.arrayContaining(['alpha', 'beta']));
+    expect(data.nations.beta?.label).toBe('Beta Collective');
+  });
+
+  it('generates grouped csv exports for every nation', () => {
+    const data = buildDebugSidebarData(cloneSnapshot(), 'alpha');
+    const csv = buildCsvExport(data);
+    expect(csv).toContain('Alpha Union,Overview,Gold,Numeric');
+    expect(csv).toContain('Beta Collective,Overview,Gold,Numeric');
+    expect(csv).toContain('Alpha Union,Canton,c1,LaborAvailable');
+  });
+
+  it('passes reconciliation diagnostics when canton sums match nations', () => {
+    const data = buildDebugSidebarData(cloneSnapshot(), 'alpha');
+    const alphaDiagnostics = data.nations.alpha?.diagnostics ?? [];
+    const laborDiag = alphaDiagnostics.find((diag) => diag.id === 'labor-reconcile');
+    const sectorDiag = alphaDiagnostics.find((diag) => diag.id === 'sector-reconcile');
+    expect(laborDiag?.passed).toBe(true);
+    expect(sectorDiag?.passed).toBe(true);
+  });
+
+  it('includes all nation data in the json export payload', () => {
+    const data = buildDebugSidebarData(cloneSnapshot(), 'alpha');
+    const json = buildJsonExportPayload(data);
+    expect(json).toContain('Alpha Union');
+    expect(json).toContain('Beta Collective');
   });
 });
 
