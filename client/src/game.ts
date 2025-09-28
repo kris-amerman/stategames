@@ -42,21 +42,10 @@ interface CantonVisual {
   cells: number[];
 }
 
-interface NationOutlineRing {
-  points: number[]; // flattened [x0, y0, x1, y1, ...]
-}
-
-interface NationOutline {
-  nationId: string;
-  rings: NationOutlineRing[];
-}
-
 let mapHighlightMode: MapHighlightMode = 'nation';
 let cellCantons: Record<number, string> = {};
 let cantonVisuals: Record<string, CantonVisual> = {};
 let cantonTooltip: HTMLDivElement | null = null;
-let nationCellMembership: Record<string, number[]> = {};
-let nationOutlineCache: Record<string, NationOutline> = {};
 
 export let currentGameId: string | null = null;
 export let currentPlayerName: string | null = null;
@@ -226,8 +215,6 @@ export function processGameData(gameData: any): void {
 function ingestCantonData(gameState: any): void {
   cellCantons = {};
   cantonVisuals = {};
-  nationCellMembership = {};
-  nationOutlineCache = {};
 
   const cellMap = gameState?.cellCantons ?? {};
   for (const [cellKey, cantonId] of Object.entries(cellMap)) {
@@ -263,7 +250,6 @@ function ingestCantonData(gameState: any): void {
     }
     const baseHue = (index * 137 + 23) % 360;
     let satelliteOrdinal = 1;
-    const nationCells: number[] = [];
 
     cantonIds.forEach((cantonId, cantonIndex) => {
       const cantonState = cantonStates[cantonId];
@@ -299,12 +285,7 @@ function ingestCantonData(gameState: any): void {
         cells,
       };
 
-      nationCells.push(...cells);
     });
-
-    if (nationCells.length > 0) {
-      nationCellMembership[nationId] = nationCells;
-    }
   });
 }
 
@@ -476,187 +457,8 @@ function drawCantonOverlay(): void {
     ctx.fill();
   }
 
-  drawNationOutlines();
-
   ctx.restore();
 
-}
-
-function drawNationOutlines(): void {
-  if (!meshData) return;
-  ensureNationOutlines();
-  const outlines = Object.values(nationOutlineCache);
-  if (outlines.length === 0) return;
-
-  ctx.lineWidth = 2.5;
-  ctx.strokeStyle = 'rgba(20, 20, 20, 0.85)';
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-
-  for (const outline of outlines) {
-    for (const ring of outline.rings) {
-      const points = ring.points;
-      if (points.length < 6) continue;
-      ctx.beginPath();
-      ctx.moveTo(points[0], points[1]);
-      for (let i = 2; i < points.length; i += 2) {
-        ctx.lineTo(points[i], points[i + 1]);
-      }
-      ctx.closePath();
-      ctx.stroke();
-    }
-  }
-}
-
-function ensureNationOutlines(): void {
-  if (!meshData) return;
-  for (const [nationId, cells] of Object.entries(nationCellMembership)) {
-    if (nationOutlineCache[nationId]) continue;
-    nationOutlineCache[nationId] = {
-      nationId,
-      rings: buildNationOutlineRings(new Set(cells)),
-    };
-  }
-}
-
-function buildNationOutlineRings(cells: Set<number>): NationOutlineRing[] {
-  if (!meshData) return [];
-  const { cellOffsets, cellVertexIndices, cellNeighbors, allVertices } = meshData;
-
-  const adjacency = new Map<number, number[]>();
-
-  const addEdge = (from: number, to: number) => {
-    if (!adjacency.has(from)) {
-      adjacency.set(from, []);
-    }
-    adjacency.get(from)!.push(to);
-  };
-
-  for (const cellId of cells) {
-    const start = cellOffsets[cellId];
-    const end = cellOffsets[cellId + 1];
-    if (start >= end) continue;
-
-    for (let i = start; i < end; i++) {
-      const neighbor = cellNeighbors[i];
-      if (neighbor >= 0 && cells.has(neighbor)) {
-        continue;
-      }
-      const fromVertex = cellVertexIndices[i];
-      const nextIndex = i + 1 < end ? i + 1 : start;
-      const toVertex = cellVertexIndices[nextIndex];
-      addEdge(fromVertex, toVertex);
-    }
-  }
-
-  const rings: NationOutlineRing[] = [];
-  const totalEdges = Array.from(adjacency.values()).reduce((sum, arr) => sum + arr.length, 0);
-
-  const takeNextEdge = (from: number): number | undefined => {
-    const list = adjacency.get(from);
-    if (!list || list.length === 0) {
-      return undefined;
-    }
-    const next = list.shift();
-    if (!list.length) {
-      adjacency.delete(from);
-    }
-    return next;
-  };
-
-  while (adjacency.size > 0) {
-    const iterator = adjacency.entries().next();
-    if (iterator.done || !iterator.value) {
-      break;
-    }
-    const [startVertex] = iterator.value;
-
-    const ringVertexIndices: number[] = [];
-    let currentVertex = startVertex;
-    let guard = 0;
-    let closed = false;
-
-    while (guard < totalEdges * 2) {
-      ringVertexIndices.push(currentVertex);
-      const nextVertex = takeNextEdge(currentVertex);
-      if (nextVertex === undefined) {
-        break;
-      }
-      currentVertex = nextVertex;
-      guard++;
-      if (currentVertex === startVertex) {
-        closed = true;
-        break;
-      }
-    }
-
-    if (!closed || ringVertexIndices.length < 3) {
-      continue;
-    }
-
-    const coords = ringVertexIndices.map((vertexIndex) => [
-      allVertices[vertexIndex * 2],
-      allVertices[vertexIndex * 2 + 1],
-    ]);
-
-    const simplified = simplifyRing(coords);
-    if (simplified.length < 3) {
-      continue;
-    }
-
-    const flattened: number[] = [];
-    for (const [x, y] of simplified) {
-      flattened.push(x, y);
-    }
-    rings.push({ points: flattened });
-  }
-
-  return rings;
-}
-
-function simplifyRing(points: number[][]): number[][] {
-  if (points.length <= 3) {
-    return points;
-  }
-
-  const simplified: number[][] = [];
-  const len = points.length;
-  const tolerance = 1e-6;
-
-  for (let i = 0; i < len; i++) {
-    const prev = points[(i - 1 + len) % len];
-    const curr = points[i];
-    const next = points[(i + 1) % len];
-
-    const dx1 = curr[0] - prev[0];
-    const dy1 = curr[1] - prev[1];
-    const dx2 = next[0] - curr[0];
-    const dy2 = next[1] - curr[1];
-    const cross = dx1 * dy2 - dy1 * dx2;
-
-    if (Math.abs(cross) < tolerance) {
-      continue;
-    }
-
-    simplified.push(curr);
-  }
-
-  return simplified.length >= 3 ? simplified : points;
-}
-
-function getCellPolygon(cellId: number): { x: number; y: number }[] {
-  if (!meshData) return [];
-  const polygon: { x: number; y: number }[] = [];
-  const start = meshData.cellOffsets[cellId];
-  const end = meshData.cellOffsets[cellId + 1];
-  for (let idx = start; idx < end; idx++) {
-    const vi = meshData.cellVertexIndices[idx];
-    polygon.push({
-      x: meshData.allVertices[vi * 2],
-      y: meshData.allVertices[vi * 2 + 1],
-    });
-  }
-  return polygon;
 }
 
 function ensureCantonTooltip(): void {
