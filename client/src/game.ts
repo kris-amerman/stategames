@@ -446,7 +446,7 @@ function drawCantonOverlay(): void {
   ctx.save();
   for (const visual of Object.values(cantonVisuals)) {
     if (!visual.capital) continue;
-    const markerPosition = computeCapitalMarkerPosition(visual.cells);
+    const markerPosition = computeCapitalMarkerPosition(visual.id, visual.cells);
     if (!markerPosition) continue;
     ctx.font = 'bold 18px sans-serif';
     ctx.textAlign = 'center';
@@ -461,30 +461,69 @@ function drawCantonOverlay(): void {
 }
 
 function computeCapitalMarkerPosition(
-  cells: number[],
+  cantonId: string,
+  fallbackCells: number[] = [],
 ): { x: number; y: number } | null {
-  if (!meshData || cells.length === 0) return null;
+  if (!meshData) return null;
 
-  let sumX = 0;
-  let sumY = 0;
-  const centers: { x: number; y: number }[] = [];
+  const relevantCells: number[] = [];
+  const seen = new Set<number>();
 
-  for (const cell of cells) {
-    const centerIndex = cell * 2;
-    const x = meshData.cellTriangleCenters[centerIndex];
-    const y = meshData.cellTriangleCenters[centerIndex + 1];
-    centers.push({ x, y });
-    sumX += x;
-    sumY += y;
+  for (const cell of fallbackCells) {
+    if (!Number.isFinite(cell)) continue;
+    const id = Math.trunc(cell);
+    if (id < 0 || id >= meshData.cellCount) continue;
+    if (cellCantons[id] !== cantonId) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    relevantCells.push(id);
   }
 
-  if (centers.length === 0) return null;
+  if (relevantCells.length === 0) {
+    for (let cell = 0; cell < meshData.cellCount; cell++) {
+      if (cellCantons[cell] !== cantonId) continue;
+      if (seen.has(cell)) continue;
+      seen.add(cell);
+      relevantCells.push(cell);
+    }
+  }
 
-  const targetX = sumX / centers.length;
-  const targetY = sumY / centers.length;
+  if (relevantCells.length === 0) {
+    return null;
+  }
+
+  const polygonCentroid = computeCantonCentroid(relevantCells);
+  if (polygonCentroid) {
+    for (const cell of relevantCells) {
+      if (pointInCell(cell, polygonCentroid.x, polygonCentroid.y)) {
+        return polygonCentroid;
+      }
+    }
+  }
+
+  let targetX = 0;
+  let targetY = 0;
+  const centers: { x: number; y: number }[] = [];
+
+  for (const cell of relevantCells) {
+    const index = cell * 2;
+    const x = meshData.cellTriangleCenters[index];
+    const y = meshData.cellTriangleCenters[index + 1];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    centers.push({ x, y });
+    targetX += x;
+    targetY += y;
+  }
+
+  if (centers.length === 0) {
+    return null;
+  }
+
+  targetX /= centers.length;
+  targetY /= centers.length;
 
   let best = centers[0];
-  let bestDistanceSq = Infinity;
+  let bestDistanceSq = Number.POSITIVE_INFINITY;
 
   for (const center of centers) {
     const dx = center.x - targetX;
@@ -496,7 +535,91 @@ function computeCapitalMarkerPosition(
     }
   }
 
-  return { x: best.x, y: best.y };
+  return best;
+}
+
+function computeCantonCentroid(cells: number[]): { x: number; y: number } | null {
+  if (!meshData) return null;
+
+  let totalArea = 0;
+  let centroidX = 0;
+  let centroidY = 0;
+
+  for (const cellId of cells) {
+    const polygon = getCellPolygon(cellId);
+    if (polygon.length < 3) continue;
+
+    let cellArea = 0;
+    let cellCentroidX = 0;
+    let cellCentroidY = 0;
+
+    for (let i = 0; i < polygon.length; i++) {
+      const { x: x0, y: y0 } = polygon[i];
+      const { x: x1, y: y1 } = polygon[(i + 1) % polygon.length];
+      const cross = x0 * y1 - x1 * y0;
+      cellArea += cross;
+      cellCentroidX += (x0 + x1) * cross;
+      cellCentroidY += (y0 + y1) * cross;
+    }
+
+    cellArea *= 0.5;
+    if (cellArea === 0) continue;
+
+    cellCentroidX /= 6 * cellArea;
+    cellCentroidY /= 6 * cellArea;
+
+    totalArea += cellArea;
+    centroidX += cellCentroidX * cellArea;
+    centroidY += cellCentroidY * cellArea;
+  }
+
+  if (totalArea === 0) {
+    return null;
+  }
+
+  centroidX /= totalArea;
+  centroidY /= totalArea;
+  return { x: centroidX, y: centroidY };
+}
+
+function pointInCell(cellId: number, x: number, y: number): boolean {
+  if (!meshData) return false;
+  const polygon = getCellPolygon(cellId);
+  if (polygon.length < 3) return false;
+
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x;
+    const yi = polygon[i].y;
+    const xj = polygon[j].x;
+    const yj = polygon[j].y;
+
+    const intersectsY = yi > y !== yj > y;
+    if (!intersectsY) continue;
+
+    const denominator = yj - yi;
+    if (denominator === 0) continue;
+    const xIntersection = ((xj - xi) * (y - yi)) / denominator + xi;
+    if (xIntersection > x) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function getCellPolygon(cellId: number): { x: number; y: number }[] {
+  if (!meshData) return [];
+  const polygon: { x: number; y: number }[] = [];
+  const start = meshData.cellOffsets[cellId];
+  const end = meshData.cellOffsets[cellId + 1];
+  for (let idx = start; idx < end; idx++) {
+    const vi = meshData.cellVertexIndices[idx];
+    polygon.push({
+      x: meshData.allVertices[vi * 2],
+      y: meshData.allVertices[vi * 2 + 1],
+    });
+  }
+  return polygon;
 }
 
 function ensureCantonTooltip(): void {
