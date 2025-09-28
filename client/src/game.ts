@@ -47,6 +47,51 @@ let cellCantons: Record<number, string> = {};
 let cantonVisuals: Record<string, CantonVisual> = {};
 let cantonTooltip: HTMLDivElement | null = null;
 
+export type HSLColor = { h: number; s: number; l: number };
+
+const NATION_BASE_COLORS: Record<string, HSLColor> = {
+  player1: { h: 2, s: 78, l: 52 },
+  player2: { h: 218, s: 72, l: 48 },
+  player3: { h: 135, s: 58, l: 46 },
+  player4: { h: 48, s: 82, l: 60 },
+  player5: { h: 305, s: 70, l: 56 },
+  player6: { h: 184, s: 64, l: 50 },
+};
+
+const DEFAULT_BASE_COLOR: HSLColor = { h: 210, s: 28, l: 54 };
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function formatHsl(color: HSLColor, alpha: number): string {
+  return `hsla(${Math.round(color.h)}, ${Math.round(color.s)}%, ${Math.round(color.l)}%, ${alpha})`;
+}
+
+function getNationBaseColor(nationId: string): HSLColor {
+  return NATION_BASE_COLORS[nationId] ?? DEFAULT_BASE_COLOR;
+}
+
+export function generateCantonShades(base: HSLColor, count: number): string[] {
+  if (count <= 0) return [];
+  const shades: string[] = [];
+  const saturation = clamp(base.s, 35, 88);
+  const lightness = clamp(base.l, 34, 64);
+  const lightRange = Math.min(28, Math.max(10, 60 / Math.max(1, count - 1)));
+  const satRange = Math.min(18, Math.max(6, 40 / Math.max(1, count)));
+  const lightStart = lightness - lightRange / 2;
+
+  for (let index = 0; index < count; index++) {
+    const t = count === 1 ? 0.5 : index / (count - 1);
+    const light = clamp(lightStart + lightRange * t + index / (count * 2), 25, 78);
+    const satOffset = (0.5 - Math.abs(t - 0.5)) * satRange;
+    const sat = clamp(saturation + satOffset, 35, 92);
+    shades.push(`hsla(${Math.round(base.h)}, ${Math.round(sat)}%, ${Math.round(light)}%, 0.6)`);
+  }
+
+  return shades;
+}
+
 export let currentGameId: string | null = null;
 export let currentPlayerName: string | null = null;
 export let isGameCreator = false;
@@ -248,7 +293,8 @@ function ingestCantonData(gameState: any): void {
         cantonIds.unshift(capitalId);
       }
     }
-    const baseHue = (index * 137 + 23) % 360;
+    const baseColor = getNationBaseColor(nationId);
+    const shades = generateCantonShades(baseColor, cantonIds.length);
     let satelliteOrdinal = 1;
 
     cantonIds.forEach((cantonId, cantonIndex) => {
@@ -257,7 +303,7 @@ function ingestCantonData(gameState: any): void {
         ? [...territories[cantonId]]
         : [];
       const isCapital = capitalId === cantonId;
-      const fillColor = computeCantonFillColor(baseHue, cantonIndex, cantonIds.length);
+      const fillColor = shades[cantonIndex] ?? formatHsl(baseColor, 0.6);
       const capacity = Object.values(cantonState?.sectors ?? {}).reduce(
         (sum: number, sector: any) => sum + (sector?.capacity ?? 0),
         0,
@@ -287,14 +333,6 @@ function ingestCantonData(gameState: any): void {
 
     });
   });
-}
-
-function computeCantonFillColor(baseHue: number, index: number, total: number): string {
-  const hue = (baseHue + (index * 47) % 360) % 360;
-  const saturation = 68;
-  const lightnessBase = 58 - Math.min(18, index * 6);
-  const lightness = Math.max(28, lightnessBase);
-  return `hsla(${hue}, ${saturation}%, ${lightness}%, 0.55)`;
 }
 
 export function renderGameState(): void {
@@ -396,18 +434,14 @@ function drawTerritoryOverlay(): void {
     return;
   }
 
-  const territoryColors: { [playerId: string]: string } = {
-    'player1': 'rgba(255, 0, 0, 0.3)',
-    'player2': 'rgba(0, 0, 255, 0.3)',
-    'player3': 'rgba(0, 255, 0, 0.3)',
-    'player4': 'rgba(255, 255, 0, 0.3)',
-    'player5': 'rgba(255, 0, 255, 0.3)',
-    'player6': 'rgba(0, 255, 255, 0.3)',
-  };
+  const territoryColorCache: Record<string, string> = {};
 
   for (const [cellIdStr, playerId] of Object.entries(currentTerritoryData)) {
     const cellId = parseInt(cellIdStr);
-    const color = territoryColors[playerId] || 'rgba(128, 128, 128, 0.3)';
+    if (!territoryColorCache[playerId]) {
+      territoryColorCache[playerId] = formatHsl(getNationBaseColor(playerId), 0.3);
+    }
+    const color = territoryColorCache[playerId];
 
     const start = meshData.cellOffsets[cellId];
     const end = meshData.cellOffsets[cellId + 1];

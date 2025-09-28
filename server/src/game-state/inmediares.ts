@@ -33,6 +33,11 @@ import { DEBT_STRESS_TIERS } from '../finance/manager';
 import { SeededRandom } from '../utils/random';
 import { createEmptyStatusSummary, updateNationStatus } from '../status';
 import { SuitabilityManager } from '../suitability';
+import {
+  computeMinimumCantonArea,
+  MAX_COMPACTNESS_SCORE,
+  repairCantonPartition,
+} from './partition';
 
 interface StockpileBands {
   food: [number, number];
@@ -77,6 +82,8 @@ interface LayoutConfig {
   capitalUL: CantonRange;
   satelliteUL: CantonRange;
 }
+
+export const MIN_CELLS_PER_CANTON = 3;
 
 const PRESET_LAYOUT: Record<NationPreset, LayoutConfig> = {
   'Industrializing Exporter': {
@@ -276,6 +283,15 @@ function chooseCantonCount(
   }
   desired = Math.max(1, Math.min(desired, upper));
   if (desired < min && cellCount >= min) desired = min;
+  let maxByCells = Math.floor(cellCount / MIN_CELLS_PER_CANTON);
+  if (cellCount >= 2 && maxByCells < 2) {
+    maxByCells = Math.min(cellCount, 2);
+  }
+  maxByCells = Math.max(1, Math.min(maxByCells, cellCount));
+  if (maxByCells < min) {
+    return Math.max(1, maxByCells);
+  }
+  desired = Math.min(desired, maxByCells);
   return desired;
 }
 
@@ -329,6 +345,7 @@ function assignCantons(
   capital: number,
   adjacency: Map<number, number[]>,
   rng: SeededRandom,
+  minArea: number,
 ): Map<number, number> {
   const seeds: number[] = [capital];
   const remaining = cells.filter((c) => c !== capital);
@@ -430,7 +447,7 @@ function assignCantons(
     }
   }
 
-  rebalanceCantonSizes(cells, adjacency, assignment, seeds.length);
+  rebalanceCantonSizes(cells, adjacency, assignment, seeds.length, minArea);
 
   return assignment;
 }
@@ -440,13 +457,14 @@ function rebalanceCantonSizes(
   adjacency: Map<number, number[]>,
   assignment: Map<number, number>,
   cantonCount: number,
+  minimum: number,
 ): void {
   if (cantonCount <= 1) return;
   const total = cells.length;
   if (total === 0) return;
 
   const average = total / cantonCount;
-  const minTarget = Math.max(2, Math.floor(average * 0.6));
+  const minTarget = Math.max(minimum, Math.floor(average * 0.65));
   const maxIterations = total * 2;
 
   const ownerCells = () => {
@@ -640,7 +658,8 @@ function buildNationLayout(
   const layout = PRESET_LAYOUT[preset];
   const cantonCount = chooseCantonCount(preset, cells.length, rng);
   const adjacency = buildCellAdjacency(cells, neighbors, offsets);
-  const assignment = assignCantons(cells, cantonCount, capital, adjacency, rng);
+  const minArea = computeMinimumCantonArea(cells.length, cantonCount);
+  const assignment = assignCantons(cells, cantonCount, capital, adjacency, rng, minArea);
   const cantonCells: Map<number, number[]> = new Map();
   for (const cell of cells) {
     const idx = assignment.get(cell) ?? 0;
@@ -648,20 +667,62 @@ function buildNationLayout(
     list.push(cell);
     cantonCells.set(idx, list);
   }
+
+  const capitalOwnerIndex = assignment.get(capital) ?? 0;
+  const indexToId = new Map<number, string>();
+  for (const index of cantonCells.keys()) {
+    const cantonId = index === capitalOwnerIndex ? String(capital) : `${capital}-S${index}`;
+    indexToId.set(index, cantonId);
+  }
+
+  const territoriesById: Record<string, number[]> = {};
+  for (const [index, list] of cantonCells.entries()) {
+    const cantonId = indexToId.get(index)!;
+    territoriesById[cantonId] = [...list];
+  }
+
+  const capitalId = indexToId.get(capitalOwnerIndex) ?? String(capital);
+  const repairResult = repairCantonPartition({
+    nationId: playerId,
+    nationCells: cells,
+    territories: territoriesById,
+    adjacency,
+    neighbors,
+    offsets,
+    capitalCanton: capitalId,
+    capitalCell: capital,
+    minArea,
+    compactnessThreshold: MAX_COMPACTNESS_SCORE,
+  });
+
+  const territories = repairResult.territories;
+  const assignmentByCell = repairResult.assignment;
+  const repairReport = repairResult.report;
+  console.info(
+    `[canton-repair] ${playerId}: gaps=${repairReport.gapsFilled}, overlaps=${repairReport.overlapsResolved}, components=${repairReport.componentsResolved}, fragments=${repairReport.fragmentsAbsorbed}, final=${repairReport.finalCount}`,
+  );
+
   const cantonLayouts: CantonLayout[] = [];
   const adjacencyById: Record<string, Set<string>> = {};
+
+  const orderedCantonIds = Object.keys(territories).sort();
+  if (orderedCantonIds.includes(capitalId)) {
+    const idx = orderedCantonIds.indexOf(capitalId);
+    orderedCantonIds.splice(idx, 1);
+    orderedCantonIds.unshift(capitalId);
+  }
 
   const capitalRange = layout.capitalUL;
   const satelliteRange = layout.satelliteUL;
   let capitalUL = pickInRange(capitalRange, rng);
   const satelliteULs: number[] = [];
 
-  for (const [index, cellsList] of cantonCells.entries()) {
-    cellsList.sort((a, b) => a - b);
-    const isCapital = assignment.get(capital) === index;
-    const cantonId = isCapital
-      ? String(capital)
-      : `${capital}-S${index}`;
+  for (const cantonId of orderedCantonIds) {
+    const cellsList = [...(territories[cantonId] ?? [])].sort((a, b) => a - b);
+    if (cellsList.length === 0) {
+      continue;
+    }
+    const isCapital = cantonId === capitalId;
     if (!economy.cantons[cantonId]) {
       EconomyManager.addCanton(economy, cantonId, playerId);
     }
@@ -684,16 +745,14 @@ function buildNationLayout(
     const neighborSet = new Set<string>();
     for (const cell of cellsList) {
       for (const nb of adjacency.get(cell) ?? []) {
-        const otherIdx = assignment.get(nb);
-        if (otherIdx === undefined || otherIdx === index) continue;
-        const otherId = otherIdx === assignment.get(capital)
-          ? String(capital)
-          : `${capital}-S${otherIdx}`;
-        neighborSet.add(otherId);
+        const ownerId = assignmentByCell.get(nb);
+        if (!ownerId || ownerId === cantonId) continue;
+        neighborSet.add(ownerId);
       }
     }
-    canton.neighbors = [...neighborSet].sort();
-    economy.cantonAdjacency[cantonId] = [...canton.neighbors];
+    const sortedNeighbors = [...neighborSet].sort();
+    canton.neighbors = sortedNeighbors;
+    economy.cantonAdjacency[cantonId] = [...sortedNeighbors];
     cantonLayouts.push({
       id: cantonId,
       capital: isCapital,
