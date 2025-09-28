@@ -55,7 +55,12 @@ export class GameStateManager {
       // Initialize empty ownership maps
       cellOwnership: {},
       playerCells: Object.fromEntries(players.map(p => [p, []])),
-      
+      playerCapitals: Object.fromEntries(players.map(p => [p, undefined])),
+      cellCantons: {},
+      cantonCells: {},
+      nationCantons: Object.fromEntries(players.map(p => [p, []])),
+      cantonMeta: {},
+
       // Initialize empty entity tracking
       entities: {},
       cellEntities: {},
@@ -373,11 +378,12 @@ export class GameStateManager {
     for (const player of players) {
       const cells = this.getPlayerCells(gameState, player);
       if (cells.length === 0) continue;
-      const capital = cells[0];
-      const cantonId = String(capital);
+      const capital = gameState.playerCapitals[player] ?? cells[0];
+      const cantonId = gameState.cellCantons[capital] ?? String(capital);
 
-      // Ensure a canton exists for this capital cell
-      EconomyManager.addCanton(gameState.economy, cantonId);
+      if (!gameState.economy.cantons[cantonId]) {
+        EconomyManager.addCanton(gameState.economy, cantonId);
+      }
 
       const base: InfrastructureData = {
         owner: 'national',

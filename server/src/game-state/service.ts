@@ -14,6 +14,7 @@ import type {
   NationMeta,
 } from '../types';
 import { InMediaResInitializer } from './inmediares';
+import { initializeCantons } from './cantons';
 import { SeededRandom } from '../utils/random';
 
 // In-memory game store (replace with database later)
@@ -126,6 +127,20 @@ export class GameService {
       biomes,
       7,
       () => territoryRandom.next(),
+    );
+
+    const presetMap = Object.fromEntries(
+      players.map((playerId, index) => [playerId, nationInputs[index].preset]),
+    );
+
+    initializeCantons(
+      game.state,
+      presetMap,
+      meshData.cellNeighbors,
+      meshData.cellOffsets,
+      meshData.cellTriangleCenters,
+      biomes,
+      normalizedSeed,
     );
 
     GameStateManager.initializeNationInfrastructure(

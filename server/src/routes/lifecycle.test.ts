@@ -57,7 +57,7 @@ test('submitted planner payload persists and executes next turn', async () => {
   const state = await GameService.getGameState(gameId);
   expect(state).not.toBeNull();
   if (!state) return;
-  state.economy.resources.gold = 100;
+  state.economy.resources.gold = 1000;
   await GameService.saveGameState(state, gameId);
 
   const plan: TurnPlan = {

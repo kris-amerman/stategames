@@ -8,15 +8,18 @@ import {
   type NationMeta,
   type PlantRegistryEntry,
   type ResourceType,
+  type CantonEconomy,
+  type CantonTerritoryMeta,
+  type LaborPool,
+  type LaborConsumption,
+  type SectorState,
+  type TileType,
+  type PlantType,
 } from '../types';
 import { EconomyManager } from '../economy';
 import { OM_COST_PER_SLOT } from '../budget/manager';
 import { LP_PER_SLOT, OPERATING_LP_COST } from '../logistics/manager';
-import {
-  ENERGY_PER_SLOT,
-  PLANT_ATTRIBUTES,
-  type PlantType,
-} from '../energy/manager';
+import { ENERGY_PER_SLOT, PLANT_ATTRIBUTES } from '../energy/manager';
 import {
   EDUCATION_TIERS,
   HEALTHCARE_TIERS,
@@ -235,12 +238,6 @@ const PROFILES: Record<NationPreset, NationProfile> = {
   },
 };
 
-interface CantonInfo {
-  cantonId: string;
-  capital: number;
-  coastal: boolean;
-}
-
 function computeCoastal(
   capital: number,
   biomes: Uint8Array,
@@ -418,28 +415,6 @@ function resolveWelfare(
   }
   return { tiers, cost, downshifted };
 }
-function ensureCanton(
-  game: Game,
-  playerId: PlayerId,
-  biomes: Uint8Array,
-  neighbors: Int32Array,
-  offsets: Uint32Array,
-): CantonInfo | null {
-  const cells = game.state.playerCells[playerId] ?? [];
-  if (cells.length === 0) {
-    return null;
-  }
-  const capital = cells[0];
-  const cantonId = String(capital);
-  if (!game.state.economy.cantons[cantonId]) {
-    EconomyManager.addCanton(game.state.economy, cantonId);
-  }
-  return {
-    cantonId,
-    capital,
-    coastal: computeCoastal(capital, biomes, neighbors, offsets),
-  };
-}
 
 function cloneSectorStates(
   sectors: Partial<Record<SectorType, { capacity: number; funded: number; idle: number; utilization?: number }>>,
@@ -449,6 +424,348 @@ function cloneSectorStates(
     clone[key as SectorType] = value ? { ...value } : undefined;
   }
   return clone;
+}
+
+interface CantonContext {
+  id: string;
+  canton: CantonEconomy;
+  meta?: CantonTerritoryMeta;
+  coastal: boolean;
+  capital: boolean;
+  geography: Record<TileType, number>;
+}
+
+interface CantonPlan {
+  context: CantonContext;
+  mix: Record<string, number>;
+  logistics: { demand: number; supply: number; slots: number };
+  energyDemand: number;
+  energySupply: number;
+  energyRatio: number;
+  plants: PlantRegistryEntry[];
+  fuelUsage: Partial<Record<ResourceType, number>>;
+  fuelPerTurn: number;
+  stableRevenue: number;
+  laborDemand: LaborPool;
+  laborBuffer: LaborPool;
+  laborAssigned: LaborPool;
+  lai: number;
+  happiness: number;
+  consumption: LaborConsumption;
+  stockpiles: { food: number; fuel: number; materials: number; fx: number; luxury: number; ordnance: number; production: number };
+  debt: number;
+  creditLimit: number;
+  interest: number;
+  treasury: number;
+  totalOps: number;
+  idleCost: number;
+  omCost: number;
+  initialTreasury: number;
+  totalObligations: number;
+  welfare: { tiers: { education: number; healthcare: number; socialSupport: number }; cost: number; downshifted: boolean };
+  military: { upkeep: number; discretionary: number; spend: number };
+  energyOM: number;
+  project: {
+    sector: SectorType;
+    tier: 'small' | 'medium' | 'large' | 'mega';
+    slots: number;
+    turns: number;
+    goldCost: number;
+    productionCost: number;
+    delayed: boolean;
+    spendPerTurn: number;
+  };
+  sectorStates: Record<SectorType, SectorState>;
+  suitability: Partial<Record<SectorType, number>>;
+  suitabilityMultipliers: Partial<Record<SectorType, number>>;
+  urbanizationLevel: number;
+  nextUrbanizationLevel: number;
+  development: number;
+  laborDemandBySector: Partial<Record<SectorType, LaborPool>>;
+  laborAssignedBySector: Partial<Record<SectorType, LaborPool>>;
+}
+
+function seedCantonPlan(
+  rng: SeededRandom,
+  profile: NationProfile,
+  context: CantonContext,
+  interestRate: number,
+): CantonPlan {
+  const { canton } = context;
+
+  const mix: Record<string, number> = {};
+  for (const [sector, value] of Object.entries(profile.baseMix)) {
+    const variation = 0.9 + rng.nextRange(0, 0.2);
+    mix[sector] = Math.max(1, Math.round(value * variation));
+  }
+  mix.logistics = Math.max(mix.logistics ?? MIN_LOGISTICS_SLOTS, MIN_LOGISTICS_SLOTS);
+  const logistics = scaleMixToLogistics(mix, mix.logistics);
+  mix.logistics = logistics.slots;
+
+  const energyDemand = computeEnergyDemand(mix);
+  const plantPlan = choosePlants(profile, context.id, energyDemand, rng);
+  const rawEnergyRatio = energyDemand > 0 ? plantPlan.supply / energyDemand : 1;
+  const energyRatio = Math.min(Math.max(rawEnergyRatio, 0.95), 1.05);
+  const effectiveEnergySupply = energyDemand * energyRatio;
+
+  const stableRevenue = Math.max(20, computeStableRevenue(mix, profile.stableRevenueMultiplier, rng));
+  const labor = computeLaborMix(mix);
+  const laborBuffer: LaborPool = {
+    general: labor.demand.general + Math.max(1, Math.round(labor.demand.general * 0.1)),
+    skilled: labor.demand.skilled + Math.max(1, Math.round(labor.demand.skilled * 0.1)),
+    specialist: labor.demand.specialist + Math.max(1, Math.round(labor.demand.specialist * 0.15)),
+  };
+  const lai = 1 + rng.nextRange(0, 0.05);
+
+  const foodTurns = rng.nextRange(profile.stockpiles.food[0], profile.stockpiles.food[1]);
+  const foodStock = Math.max(labor.total, Math.round(foodTurns * labor.total));
+  const fuelPerTurn = Object.values(plantPlan.fuel).reduce((sum, value) => sum + (value ?? 0), 0);
+  const fuelTurns = profile.stockpiles.fuel[0] + rng.nextRange(0, profile.stockpiles.fuel[1] - profile.stockpiles.fuel[0]);
+  const fuelStock = Math.round(fuelPerTurn * fuelTurns);
+  const materialsPerTurn = Math.max(
+    2,
+    Math.round(
+      (mix.manufacturing ?? 0) * 1.3 +
+        (mix.defense ?? 0) * 1.2 +
+        (mix.extraction ?? 0) * 0.6 +
+        (mix.logistics ?? 0) * 0.3,
+    ),
+  );
+  const materialTurns = rng.nextRange(profile.stockpiles.materials[0], profile.stockpiles.materials[1]);
+  const materialsStock = Math.round(materialsPerTurn * materialTurns);
+  const fxReserves = Math.round(stableRevenue * rng.nextRange(profile.stockpiles.fx[0], profile.stockpiles.fx[1]));
+  const luxuryStock = Math.max(
+    labor.total,
+    Math.round(labor.total * rng.nextRange(profile.stockpiles.luxury[0], profile.stockpiles.luxury[1])),
+  );
+  const ordnanceStock = Math.max(
+    1,
+    Math.round((mix.defense ?? 0) * rng.nextRange(profile.stockpiles.ordnance[0], profile.stockpiles.ordnance[1])),
+  );
+  const productionStock = Math.max(
+    1,
+    Math.round((mix.manufacturing ?? 0) * rng.nextRange(profile.stockpiles.production[0], profile.stockpiles.production[1])),
+  );
+
+  const debtSample = Math.round(stableRevenue * rng.nextRange(0.4, 0.7));
+  const startInDebt = rng.nextBoolean();
+  const debt = startInDebt ? debtSample : 0;
+  const interest = Math.round(debt * interestRate * 100) / 100;
+  const creditLimit = Math.max(debtSample + 20, Math.round(stableRevenue * profile.creditLimitMultiplier));
+
+  const sectorStates: Record<SectorType, SectorState> = {} as any;
+  let omCost = 0;
+  let idleCost = 0;
+  const laborDemandBySector: Partial<Record<SectorType, LaborPool>> = {};
+  const laborAssignedBySector: Partial<Record<SectorType, LaborPool>> = {};
+  for (const [sectorKey, funded] of Object.entries(mix)) {
+    const sector = sectorKey as SectorType;
+    const idle = funded > 0 ? (rng.nextBoolean() ? 1 : 0) : 0;
+    const capacity = funded + idle;
+    const state: SectorState = {
+      capacity,
+      funded,
+      idle,
+      utilization: funded,
+    };
+    sectorStates[sector] = state;
+    const costPer = OM_COST_PER_SLOT[sector] ?? 1;
+    omCost += funded * costPer;
+    idleCost += idle * costPer * IDLE_TAX_RATE;
+    const laborType = SECTOR_LABOR_TYPES[sector];
+    if (laborType) {
+      const demand: LaborPool = { general: 0, skilled: 0, specialist: 0 };
+      demand[laborType] = funded;
+      laborDemandBySector[sector] = demand;
+      const assigned: LaborPool = { general: 0, skilled: 0, specialist: 0 };
+      assigned[laborType] = funded;
+      laborAssignedBySector[sector] = assigned;
+    }
+  }
+  const energyOM = plantPlan.plants.reduce(
+    (sum, plant) => sum + (PLANT_ATTRIBUTES[plant.type].oAndMCost ?? 0),
+    0,
+  );
+  omCost += energyOM;
+
+  const desiredWelfare = { ...profile.welfare };
+  const availableForWelfare = Math.max(0, stableRevenue * 0.6);
+  const welfarePlan = resolveWelfare(desiredWelfare, labor.total, availableForWelfare);
+
+  const projectSector = rng.pick(profile.projectSectors);
+  const projectTier = rng.pick(['small', 'medium', 'large'] as const);
+  const tierWeight = projectTier === 'large' ? 3 : projectTier === 'medium' ? 2 : 1;
+  const projectGoldCost = 12 * tierWeight;
+  const projectProductionCost = 6 * tierWeight;
+  let projectTurns = rng.nextInt(3) + 2;
+  const projectSpendPerTurn = Math.max(2, Math.round(projectGoldCost / projectTurns));
+
+  const militaryUpkeep = Math.max(
+    3,
+    Math.round(((mix.defense ?? 0) * 2.5 + (mix.manufacturing ?? 0) * 0.5 + 4) * profile.militaryFocus),
+  );
+  const discretionaryMilitary = Math.max(0, Math.round(militaryUpkeep * 0.15));
+  const militarySpend = militaryUpkeep + discretionaryMilitary;
+
+  const buffer = Math.max(8, Math.round(stableRevenue * 0.25));
+  const totalOps = omCost + idleCost;
+  const totalObligations = interest + totalOps + welfarePlan.cost + militarySpend + projectSpendPerTurn;
+  let treasury = startInDebt ? 0 : buffer;
+  const initialTreasury = totalObligations + treasury;
+
+  const energyShort = energyRatio < 0.98;
+  const logisticsRatio = logistics.demand > 0 ? logistics.supply / logistics.demand : 1;
+  const logisticsShort = logisticsRatio < 0.98;
+  const debtStress = creditLimit > 0 ? debt / creditLimit > 0.85 : false;
+  const projectDelayed = energyShort || logisticsShort || debtStress;
+  if (projectDelayed) {
+    projectTurns += 1;
+  }
+
+  const plantsEffective = plantPlan.plants.map((plant) => ({ ...plant }));
+
+  canton.sectors = sectorStates;
+  canton.labor = { ...laborBuffer };
+  canton.laborDemand = { ...laborDemandBySector };
+  canton.laborAssigned = { ...laborAssignedBySector };
+  canton.lai = lai;
+  canton.happiness = rng.nextRange(0.3, 0.8) + (luxuryStock >= labor.total ? 0.4 : 0);
+  canton.consumption = {
+    foodRequired: labor.total,
+    foodProvided: Math.min(foodStock, labor.total),
+    luxuryRequired: labor.total,
+    luxuryProvided: Math.min(luxuryStock, labor.total),
+  };
+  canton.shortages = { food: false, luxury: false };
+  const areaFactor = Math.min(2, Math.max(0, (context.meta?.area ?? 60) / 60 - 1));
+  const ulBase = 4 + rng.nextInt(3) + Math.round(areaFactor);
+  canton.urbanizationLevel = ulBase;
+  canton.nextUrbanizationLevel = canton.urbanizationLevel;
+  canton.development = rng.nextRange(1, 2);
+  canton.geography = { ...context.geography };
+  canton.suitability = {};
+  canton.suitabilityMultipliers = {};
+  for (const sector of Object.keys(mix)) {
+    canton.suitability[sector as SectorType] = Math.round((0.75 + rng.nextRange(0, 0.2)) * 100);
+    canton.suitabilityMultipliers[sector as SectorType] = 1 + rng.nextRange(-0.05, 0.05);
+  }
+
+  const happiness = canton.happiness;
+  const consumption: LaborConsumption = { ...canton.consumption };
+
+  return {
+    context,
+    mix,
+    logistics,
+    energyDemand,
+    energySupply: effectiveEnergySupply,
+    energyRatio,
+    plants: plantsEffective,
+    fuelUsage: { ...plantPlan.fuel },
+    fuelPerTurn,
+    stableRevenue,
+    laborDemand: labor.demand,
+    laborBuffer,
+    laborAssigned: labor.demand,
+    lai,
+    happiness,
+    consumption,
+    stockpiles: {
+      food: foodStock,
+      fuel: fuelStock,
+      materials: materialsStock,
+      fx: fxReserves,
+      luxury: luxuryStock,
+      ordnance: ordnanceStock,
+      production: productionStock,
+    },
+    debt,
+    creditLimit,
+    interest,
+    treasury,
+    totalOps,
+    idleCost,
+    omCost,
+    energyOM,
+    initialTreasury,
+    totalObligations,
+    welfare: welfarePlan,
+    military: { upkeep: militaryUpkeep, discretionary: discretionaryMilitary, spend: militarySpend },
+    project: {
+      sector: projectSector,
+      tier: projectTier,
+      slots: tierWeight,
+      turns: projectTurns,
+      goldCost: projectGoldCost,
+      productionCost: projectProductionCost,
+      delayed: projectDelayed,
+      spendPerTurn: projectSpendPerTurn,
+    },
+    sectorStates,
+    suitability: { ...canton.suitability },
+    suitabilityMultipliers: { ...canton.suitabilityMultipliers },
+    urbanizationLevel: canton.urbanizationLevel,
+    nextUrbanizationLevel: canton.nextUrbanizationLevel,
+    development: canton.development,
+    laborDemandBySector,
+    laborAssignedBySector,
+  };
+}
+
+function buildCantonContexts(
+  game: Game,
+  playerId: PlayerId,
+  biomes: Uint8Array,
+  neighbors: Int32Array,
+  offsets: Uint32Array,
+): CantonContext[] {
+  const state = game.state;
+  const economy = state.economy;
+  const capitalCell = state.playerCapitals[playerId] ?? state.playerCells[playerId]?.[0];
+  const cantonIds = state.nationCantons[playerId] && state.nationCantons[playerId].length
+    ? state.nationCantons[playerId]
+    : capitalCell !== undefined
+      ? [String(capitalCell)]
+      : [];
+
+  const contexts: CantonContext[] = [];
+
+  for (const id of cantonIds) {
+    if (!economy.cantons[id]) {
+      EconomyManager.addCanton(economy, id);
+    }
+    const canton = economy.cantons[id];
+    const meta = state.cantonMeta[id];
+    const cantonCells = state.cantonCells[id] ?? [];
+    const coastal = meta?.coastal ?? (cantonCells.length > 0
+      ? cantonCells.some((cell) => computeCoastal(cell, biomes, neighbors, offsets))
+      : capitalCell !== undefined
+        ? computeCoastal(capitalCell, biomes, neighbors, offsets)
+        : false);
+    const capital = meta?.capital ?? (capitalCell !== undefined && id === String(capitalCell));
+    const geography = Object.keys(meta?.tileShares ?? {}).length > 0
+      ? meta!.tileShares
+      : (Object.keys(canton.geography ?? {}).length > 0 ? canton.geography : { plains: 1 });
+    contexts.push({
+      id,
+      canton,
+      meta,
+      coastal,
+      capital,
+      geography,
+    });
+  }
+
+  contexts.sort((a, b) => {
+    if (a.capital === b.capital) {
+      return a.id.localeCompare(b.id);
+    }
+    return a.capital ? -1 : 1;
+  });
+
+  state.nationCantons[playerId] = contexts.map((context) => context.id);
+
+  return contexts;
 }
 
 export class InMediaResInitializer {
@@ -536,282 +853,247 @@ export class InMediaResInitializer {
     const nationStates: Record<PlayerId, NationState> = {};
     const metas: NationMeta[] = [];
 
+
     players.forEach((playerId, index) => {
       const input = inputs[index];
       const profile = PROFILES[input.preset];
       if (!profile) {
         throw new Error(`Unknown preset for nation ${input.name}`);
       }
-      const cantonInfo = ensureCanton(game, playerId, biomes, neighbors, offsets);
-      if (!cantonInfo) {
+
+      const contexts = buildCantonContexts(game, playerId, biomes, neighbors, offsets);
+      if (contexts.length === 0) {
         return;
       }
-      const { cantonId, coastal } = cantonInfo;
-      const canton = economy.cantons[cantonId];
-
-      // Generate a working mix of funded slots per sector with slight variation.
-      const mix: Record<string, number> = {};
-      for (const [sector, value] of Object.entries(profile.baseMix)) {
-        const variation = 0.9 + rng.nextRange(0, 0.2);
-        mix[sector] = Math.max(1, Math.round(value * variation));
-      }
-      mix.logistics = Math.max(mix.logistics ?? MIN_LOGISTICS_SLOTS, MIN_LOGISTICS_SLOTS);
-      const logistics = scaleMixToLogistics(mix, mix.logistics);
-      mix.logistics = logistics.slots;
-
-      const energyDemand = computeEnergyDemand(mix);
-      const plantPlan = choosePlants(profile, cantonId, energyDemand, rng);
-      const rawEnergyRatio = energyDemand > 0 ? plantPlan.supply / energyDemand : 1;
-      const energyRatio = Math.min(Math.max(rawEnergyRatio, 0.95), 1.05);
-      const effectiveEnergySupply = energyDemand * energyRatio;
-
-      const stableRevenue = Math.max(20, computeStableRevenue(mix, profile.stableRevenueMultiplier, rng));
-      const labor = computeLaborMix(mix);
-      const laborBuffer = {
-        general: labor.demand.general + Math.max(1, Math.round(labor.demand.general * 0.1)),
-        skilled: labor.demand.skilled + Math.max(1, Math.round(labor.demand.skilled * 0.1)),
-        specialist: labor.demand.specialist + Math.max(1, Math.round(labor.demand.specialist * 0.15)),
-      };
-      const lai = 1 + rng.nextRange(0, 0.05);
-
-      const foodTurns = rng.nextRange(profile.stockpiles.food[0], profile.stockpiles.food[1]);
-      const foodStock = Math.max(labor.total, Math.round(foodTurns * labor.total));
-      const fuelPerTurn = Object.values(plantPlan.fuel).reduce((sum, value) => sum + (value ?? 0), 0);
-      const fuelTurns = profile.stockpiles.fuel[0] + rng.nextRange(0, profile.stockpiles.fuel[1] - profile.stockpiles.fuel[0]);
-      const fuelStock = Math.round(fuelPerTurn * fuelTurns);
-      const materialsPerTurn = Math.max(
-        2,
-        Math.round(
-          (mix.manufacturing ?? 0) * 1.3 +
-            (mix.defense ?? 0) * 1.2 +
-            (mix.extraction ?? 0) * 0.6 +
-            (mix.logistics ?? 0) * 0.3,
-        ),
-      );
-      const materialTurns = rng.nextRange(profile.stockpiles.materials[0], profile.stockpiles.materials[1]);
-      const materialsStock = Math.round(materialsPerTurn * materialTurns);
-      const fxReserves = Math.round(stableRevenue * rng.nextRange(profile.stockpiles.fx[0], profile.stockpiles.fx[1]));
-      const luxuryStock = Math.max(
-        labor.total,
-        Math.round(labor.total * rng.nextRange(profile.stockpiles.luxury[0], profile.stockpiles.luxury[1])),
-      );
-      const ordnanceStock = Math.max(
-        1,
-        Math.round((mix.defense ?? 0) * rng.nextRange(profile.stockpiles.ordnance[0], profile.stockpiles.ordnance[1])),
-      );
-      const productionStock = Math.max(
-        1,
-        Math.round((mix.manufacturing ?? 0) * rng.nextRange(profile.stockpiles.production[0], profile.stockpiles.production[1])),
-      );
 
       const interestRate = economy.finance.interestRate ?? 0.05;
-      const debtSample = Math.round(stableRevenue * rng.nextRange(0.4, 0.7));
-      const startInDebt = rng.nextBoolean();
-      const debt = startInDebt ? debtSample : 0;
-      const interest = Math.round(debt * interestRate * 100) / 100;
-      const creditLimit = Math.max(debtSample + 20, Math.round(stableRevenue * profile.creditLimitMultiplier));
+      const plans = contexts.map((context) => seedCantonPlan(rng, profile, context, interestRate));
 
-      const sectorStates: Record<SectorType, { capacity: number; funded: number; idle: number; utilization?: number }> = {} as any;
-      let omCost = 0;
-      let idleCost = 0;
-      for (const [sectorKey, funded] of Object.entries(mix)) {
-        const sector = sectorKey as SectorType;
-        const idle = funded > 0 ? (rng.nextBoolean() ? 1 : 0) : 0;
-        const capacity = funded + idle;
-        const state = {
-          capacity,
-          funded,
-          idle,
-          utilization: funded,
-        };
-        sectorStates[sector] = state;
-        const costPer = OM_COST_PER_SLOT[sector] ?? 1;
-        omCost += funded * costPer;
-        idleCost += idle * costPer * IDLE_TAX_RATE;
-        if (ENERGY_PER_SLOT[sector] ?? 0) {
-          aggregate.demandBySector[sector] =
-            (aggregate.demandBySector[sector] ?? 0) + funded * (ENERGY_PER_SLOT[sector] ?? 0);
+      const laborAvailable: LaborPool = { general: 0, skilled: 0, specialist: 0 };
+      const laborAssigned: LaborPool = { general: 0, skilled: 0, specialist: 0 };
+      const laborConsumption: LaborConsumption = { foodRequired: 0, foodProvided: 0, luxuryRequired: 0, luxuryProvided: 0 };
+      let laiTotal = 0;
+      let laiCount = 0;
+      let happinessWeighted = 0;
+      let happinessWeight = 0;
+
+      let stableRevenue = 0;
+      let energyDemand = 0;
+      let energySupply = 0;
+      let logisticsSupply = 0;
+      let logisticsDemand = 0;
+      let logisticsSlots = 0;
+      let debtTotal = 0;
+      let creditLimitTotal = 0;
+      let interestTotal = 0;
+      let treasuryTotal = 0;
+      let totalOps = 0;
+      let idleCostTotal = 0;
+      let omCostTotal = 0;
+      let initialTreasuryTotal = 0;
+      let totalObligationsTotal = 0;
+      let welfareCostTotal = 0;
+      let militaryUpkeepTotal = 0;
+      let militaryFundedTotal = 0;
+      let militaryDiscretionaryTotal = 0;
+      let projectSpendTotal = 0;
+      let energyOMTotal = 0;
+
+      const stockpiles = { food: 0, fuel: 0, materials: 0, fx: 0, luxury: 0, ordnance: 0, production: 0 };
+      const sectorTotals: Record<SectorType, SectorState> = {} as any;
+      const nationProjects: { id: number; sector: SectorType; tier: 'small' | 'medium' | 'large' | 'mega'; turnsRemaining: number; delayed: boolean }[] = [];
+      let welfareDownshifted = false;
+      const welfareWeightedTotals = { education: 0, healthcare: 0, socialSupport: 0 };
+      let laborTotal = 0;
+
+      plans.forEach((plan) => {
+        stableRevenue += plan.stableRevenue;
+        energyDemand += plan.energyDemand;
+        energySupply += plan.energySupply;
+        logisticsSupply += Math.min(plan.logistics.supply, plan.logistics.demand * 1.05);
+        logisticsDemand += plan.logistics.demand;
+        logisticsSlots += plan.logistics.slots;
+        debtTotal += plan.debt;
+        creditLimitTotal += plan.creditLimit;
+        interestTotal += plan.interest;
+        treasuryTotal += plan.treasury;
+        totalOps += plan.totalOps;
+        idleCostTotal += plan.idleCost;
+        omCostTotal += plan.omCost;
+        initialTreasuryTotal += plan.initialTreasury;
+        totalObligationsTotal += plan.totalObligations;
+        welfareCostTotal += plan.welfare.cost;
+        welfareDownshifted = welfareDownshifted || plan.welfare.downshifted;
+        militaryUpkeepTotal += plan.military.upkeep;
+        militaryFundedTotal += plan.military.spend;
+        militaryDiscretionaryTotal += plan.military.discretionary;
+        projectSpendTotal += plan.project.spendPerTurn;
+        energyOMTotal += plan.energyOM;
+
+        laborAvailable.general += plan.laborBuffer.general;
+        laborAvailable.skilled += plan.laborBuffer.skilled;
+        laborAvailable.specialist += plan.laborBuffer.specialist;
+        laborAssigned.general += plan.laborDemand.general;
+        laborAssigned.skilled += plan.laborDemand.skilled;
+        laborAssigned.specialist += plan.laborDemand.specialist;
+        laborConsumption.foodRequired += plan.consumption.foodRequired;
+        laborConsumption.foodProvided += plan.consumption.foodProvided;
+        laborConsumption.luxuryRequired += plan.consumption.luxuryRequired;
+        laborConsumption.luxuryProvided += plan.consumption.luxuryProvided;
+
+        laiTotal += plan.lai;
+        laiCount += 1;
+        const laborWeight = Math.max(1, plan.laborDemand.general + plan.laborDemand.skilled + plan.laborDemand.specialist);
+        happinessWeighted += plan.happiness * laborWeight;
+        happinessWeight += laborWeight;
+
+        stockpiles.food += plan.stockpiles.food;
+        stockpiles.fuel += plan.stockpiles.fuel;
+        stockpiles.materials += plan.stockpiles.materials;
+        stockpiles.fx += plan.stockpiles.fx;
+        stockpiles.luxury += plan.stockpiles.luxury;
+        stockpiles.ordnance += plan.stockpiles.ordnance;
+        stockpiles.production += plan.stockpiles.production;
+
+        for (const [sectorKey, state] of Object.entries(plan.sectorStates)) {
+          const sector = sectorKey as SectorType;
+          const total = sectorTotals[sector] || { capacity: 0, funded: 0, idle: 0, utilization: 0 };
+          total.capacity += state.capacity;
+          total.funded += state.funded;
+          total.idle += state.idle;
+          total.utilization = (total.utilization ?? 0) + (state.utilization ?? 0);
+          sectorTotals[sector] = total;
+          aggregate.demandBySector[sector] = (aggregate.demandBySector[sector] ?? 0) + state.funded * (ENERGY_PER_SLOT[sector] ?? 0);
         }
-      }
-      const energyOM = plantPlan.plants.reduce(
-        (sum, plant) => sum + (PLANT_ATTRIBUTES[plant.type].oAndMCost ?? 0),
-        0,
-      );
-      omCost += energyOM;
-      aggregate.oAndM += energyOM;
 
-      const desiredWelfare = { ...profile.welfare };
-      const availableForWelfare = Math.max(0, stableRevenue * 0.6);
-      const welfarePlan = resolveWelfare(desiredWelfare, labor.total, availableForWelfare);
-      const projectSector = rng.pick(profile.projectSectors);
-      const projectTier = rng.pick(['small', 'medium', 'large'] as const);
-      const tierWeight = projectTier === 'large' ? 3 : projectTier === 'medium' ? 2 : 1;
-      const projectGoldCost = 12 * tierWeight;
-      const projectProductionCost = 6 * tierWeight;
-      let projectTurns = rng.nextInt(3) + 2;
-      const projectSpendPerTurn = Math.max(2, Math.round(projectGoldCost / projectTurns));
+        for (const [resource, amount] of Object.entries(plan.fuelUsage)) {
+          aggregate.fuelUsed[resource as ResourceType] = (aggregate.fuelUsed[resource as ResourceType] ?? 0) + (amount ?? 0);
+        }
 
-      const militaryUpkeep = Math.max(
-        3,
-        Math.round(((mix.defense ?? 0) * 2.5 + (mix.manufacturing ?? 0) * 0.5 + 4) * profile.militaryFocus),
-      );
-      const discretionaryMilitary = Math.max(0, Math.round(militaryUpkeep * 0.15));
-      const militarySpend = militaryUpkeep + discretionaryMilitary;
+        aggregate.plants.push(...plan.plants);
 
-      const buffer = Math.max(8, Math.round(stableRevenue * 0.25));
-      const totalOps = omCost + idleCost;
-      const totalObligations = interest + totalOps + welfarePlan.cost + militarySpend + projectSpendPerTurn;
-      let treasury = startInDebt ? 0 : buffer;
-      const initialTreasury = totalObligations + treasury;
+        if (plan.fuelUsage.coal) {
+          aggregate.coal += Math.round(plan.stockpiles.fuel * (plan.fuelUsage.coal / (plan.fuelPerTurn || 1)));
+        }
+        if (plan.fuelUsage.oil) {
+          aggregate.oil += Math.round(plan.stockpiles.fuel * (plan.fuelUsage.oil / (plan.fuelPerTurn || 1)));
+        }
+        if (plan.fuelUsage.uranium) {
+          aggregate.uranium += Math.round(plan.stockpiles.fuel * (plan.fuelUsage.uranium / (plan.fuelPerTurn || 1)));
+        }
 
-      const energyShort = energyRatio < 0.98;
-      const logisticsRatio = logistics.demand > 0 ? logistics.supply / logistics.demand : 1;
-      const logisticsShort = logisticsRatio < 0.98;
-      const debtStress = creditLimit > 0 ? debt / creditLimit > 0.85 : false;
-      const projectDelayed = energyShort || logisticsShort || debtStress;
-      if (projectDelayed) {
-        projectTurns += 1;
-      }
+        const laborWeightForWelfare = plan.laborDemand.general + plan.laborDemand.skilled + plan.laborDemand.specialist;
+        laborTotal += laborWeightForWelfare;
+        welfareWeightedTotals.education += plan.welfare.tiers.education * laborWeightForWelfare;
+        welfareWeightedTotals.healthcare += plan.welfare.tiers.healthcare * laborWeightForWelfare;
+        welfareWeightedTotals.socialSupport += plan.welfare.tiers.socialSupport * laborWeightForWelfare;
 
-      const plantsEffective = plantPlan.plants.map((plant) => ({ ...plant }));
-      aggregate.plants.push(...plantsEffective);
-      for (const [resource, amount] of Object.entries(plantPlan.fuel)) {
-        aggregate.fuelUsed[resource as ResourceType] =
-          (aggregate.fuelUsed[resource as ResourceType] ?? 0) + amount!;
-      }
+        const projectId = aggregate.projectId++;
+        economy.projects.projects.push({
+          id: projectId,
+          canton: plan.context.id,
+          sector: plan.project.sector,
+          tier: plan.project.tier,
+          slots: plan.project.slots,
+          status: 'building',
+          owner: playerId,
+          turns_remaining: plan.project.turns,
+          cost: { gold: plan.project.goldCost, production: plan.project.productionCost },
+        });
+        nationProjects.push({
+          id: projectId,
+          sector: plan.project.sector,
+          tier: plan.project.tier,
+          turnsRemaining: plan.project.turns,
+          delayed: plan.project.delayed,
+        });
+      });
 
-      // Update canton economic details.
-      canton.sectors = sectorStates;
-      canton.labor = { ...laborBuffer };
-      canton.laborDemand = {};
-      canton.laborAssigned = {};
-      for (const [sectorKey, funded] of Object.entries(mix)) {
-        const sector = sectorKey as SectorType;
-        const type = SECTOR_LABOR_TYPES[sector];
-        if (!type) continue;
-        const demand: any = { general: 0, skilled: 0, specialist: 0 };
-        demand[type] = funded;
-        canton.laborDemand[sector] = demand;
-        const assigned: any = { general: 0, skilled: 0, specialist: 0 };
-        assigned[type] = funded;
-        canton.laborAssigned[sector] = assigned;
-      }
-      canton.lai = lai;
-      canton.happiness = rng.nextRange(0.3, 0.8) + (luxuryStock >= labor.total ? 0.4 : 0);
-      canton.consumption = {
-        foodRequired: labor.total,
-        foodProvided: Math.min(foodStock, labor.total),
-        luxuryRequired: labor.total,
-        luxuryProvided: Math.min(luxuryStock, labor.total),
-      };
-      canton.shortages = { food: false, luxury: false };
-      canton.urbanizationLevel = 4 + rng.nextInt(3);
-      canton.nextUrbanizationLevel = canton.urbanizationLevel;
-      canton.development = rng.nextRange(1, 2);
-      canton.geography = coastal
-        ? { plains: 0.5, coast: 0.3, hills: 0.2 }
-        : { plains: 0.6, hills: 0.25, woods: 0.15 };
-      canton.suitability = {};
-      canton.suitabilityMultipliers = {};
-      for (const sector of Object.keys(mix)) {
-        canton.suitability[sector as SectorType] = Math.round((0.75 + rng.nextRange(0, 0.2)) * 100);
-        canton.suitabilityMultipliers[sector as SectorType] = 1 + rng.nextRange(-0.05, 0.05);
-      }
+      const avgLai = laiCount > 0 ? laiTotal / laiCount : 1;
+      const happinessValue = happinessWeight > 0 ? happinessWeighted / happinessWeight : 0.5;
+      const energyRatio = energyDemand > 0 ? Math.min(Math.max(energySupply / energyDemand, 0.95), 1.05) : 1;
+      const logisticsRatio = logisticsDemand > 0 ? Math.min(Math.max(logisticsSupply / logisticsDemand, 0.95), 1.05) : 1;
+      const coastal = contexts.some((context) => context.coastal);
+      const capitalCanton = contexts.find((context) => context.capital)?.id ?? contexts[0].id;
 
-      // Prepare project entry.
-      const project = {
-        id: aggregate.projectId++,
-        canton: cantonId,
-        sector: projectSector,
-        tier: projectTier,
-        slots: tierWeight,
-        status: 'building' as const,
-        owner: playerId,
-        turns_remaining: projectTurns,
-        cost: { gold: projectGoldCost, production: projectProductionCost },
-      };
-      economy.projects.projects.push(project);
-      economy.projects.nextId = aggregate.projectId;
+      const welfareTiers = laborTotal > 0
+        ? {
+            education: Math.round(Math.min(3, Math.max(0, welfareWeightedTotals.education / laborTotal))),
+            healthcare: Math.round(Math.min(3, Math.max(0, welfareWeightedTotals.healthcare / laborTotal))),
+            socialSupport: Math.round(Math.min(3, Math.max(0, welfareWeightedTotals.socialSupport / laborTotal))),
+          }
+        : { ...profile.welfare };
+
+      const plants = plans.flatMap((plan) => plan.plants);
 
       const nationState: NationState = {
         id: playerId,
         name: input.name,
         preset: input.preset,
-        canton: cantonId,
+        canton: capitalCanton,
         coastal,
-        signature: `${profile.nonUniformityTag}-${mix.finance ?? 0}-${mix.research ?? 0}-${mix.defense ?? 0}`,
+        signature: `${profile.nonUniformityTag}-${plans.reduce((sum, plan) => sum + (plan.mix.finance ?? 0), 0)}-${plans.reduce((sum, plan) => sum + (plan.mix.research ?? 0), 0)}-${plans.reduce((sum, plan) => sum + (plan.mix.defense ?? 0), 0)}`,
         energy: {
-          supply: Math.round(effectiveEnergySupply * 100) / 100,
-          demand: energyDemand,
+          supply: Math.round(energySupply * 100) / 100,
+          demand: Math.round(energyDemand * 100) / 100,
           ratio: Math.round(energyRatio * 1000) / 1000,
-          plants: plantsEffective,
+          plants,
           throttledSectors: {},
         },
         logistics: {
-          supply: Math.round(Math.min(logistics.supply, logistics.demand * 1.05) * 100) / 100,
-          demand: Math.round(logistics.demand * 100) / 100,
-          ratio:
-            logistics.demand > 0
-              ? Math.round(Math.min(Math.max(logistics.supply / logistics.demand, 0.95), 1.05) * 1000) / 1000
-              : 1,
-          slots: mix.logistics,
+          supply: Math.round(Math.min(logisticsSupply, logisticsDemand * 1.05) * 100) / 100,
+          demand: Math.round(logisticsDemand * 100) / 100,
+          ratio: Math.round(logisticsRatio * 1000) / 1000,
+          slots: logisticsSlots,
           throttledSectors: {},
         },
         welfare: {
-          education: welfarePlan.tiers.education,
-          healthcare: welfarePlan.tiers.healthcare,
-          socialSupport: welfarePlan.tiers.socialSupport,
-          cost: Math.round(welfarePlan.cost * 100) / 100,
-          autoDownshifted: welfarePlan.downshifted,
+          education: welfareTiers.education,
+          healthcare: welfareTiers.healthcare,
+          socialSupport: welfareTiers.socialSupport,
+          cost: Math.round(welfareCostTotal * 100) / 100,
+          autoDownshifted: welfareDownshifted,
         },
         finance: {
-          treasury,
+          treasury: treasuryTotal,
           stableRevenue,
-          creditLimit,
-          debt,
-          interest,
+          creditLimit: creditLimitTotal,
+          debt: debtTotal,
+          interest: Math.round(interestTotal * 100) / 100,
           waterfall: {
-            initial: initialTreasury,
-            interest,
+            initial: initialTreasuryTotal,
+            interest: Math.round(interestTotal * 100) / 100,
             operations: Math.round(totalOps * 100) / 100,
-            welfare: Math.round(welfarePlan.cost * 100) / 100,
-            military: militarySpend,
-            projects: projectSpendPerTurn,
-            surplus: treasury,
+            welfare: Math.round(welfareCostTotal * 100) / 100,
+            military: militaryFundedTotal,
+            projects: projectSpendTotal,
+            surplus: treasuryTotal,
           },
         },
         labor: {
-          available: laborBuffer,
-          assigned: labor.demand,
-          lai,
-          happiness: canton.happiness,
-          consumption: { ...canton.consumption },
+          available: laborAvailable,
+          assigned: laborAssigned,
+          lai: Math.round(avgLai * 100) / 100,
+          happiness: happinessValue,
+          consumption: laborConsumption,
         },
         stockpiles: {
-          food: foodStock,
-          fuel: fuelStock,
-          materials: materialsStock,
-          fx: fxReserves,
-          luxury: luxuryStock,
-          ordnance: ordnanceStock,
-          production: productionStock,
+          food: stockpiles.food,
+          fuel: stockpiles.fuel,
+          materials: stockpiles.materials,
+          fx: stockpiles.fx,
+          luxury: stockpiles.luxury,
+          ordnance: stockpiles.ordnance,
+          production: stockpiles.production,
         },
         military: {
-          upkeep: militaryUpkeep,
-          funded: militarySpend,
-          discretionary: discretionaryMilitary,
+          upkeep: militaryUpkeepTotal,
+          funded: militaryFundedTotal,
+          discretionary: militaryDiscretionaryTotal,
         },
-        sectors: cloneSectorStates(sectorStates),
-        projects: [
-          {
-            id: project.id,
-            sector: project.sector,
-            tier: project.tier,
-            turnsRemaining: project.turns_remaining,
-            delayed: projectDelayed,
-          },
-        ],
-        idleCost: Math.round(idleCost * 100) / 100,
+        sectors: cloneSectorStates(sectorTotals),
+        projects: nationProjects,
+        idleCost: Math.round(idleCostTotal * 100) / 100,
         omCost: Math.round(totalOps * 100) / 100,
         status: createEmptyStatusSummary(),
       };
@@ -821,30 +1103,25 @@ export class InMediaResInitializer {
       nationStates[playerId] = nationState;
       metas.push({ id: playerId, name: input.name, preset: input.preset });
 
-      // Aggregate resources across all nations.
-      aggregate.gold += treasury;
-      aggregate.food += foodStock;
-      aggregate.materials += materialsStock;
-      aggregate.fx += fxReserves;
-      aggregate.luxury += luxuryStock;
-      aggregate.ordnance += ordnanceStock;
-      aggregate.production += productionStock;
-      aggregate.energySupply += effectiveEnergySupply;
+      aggregate.gold += treasuryTotal;
+      aggregate.food += stockpiles.food;
+      aggregate.materials += stockpiles.materials;
+      aggregate.fx += stockpiles.fx;
+      aggregate.luxury += stockpiles.luxury;
+      aggregate.ordnance += stockpiles.ordnance;
+      aggregate.production += stockpiles.production;
+      aggregate.energySupply += energySupply;
       aggregate.energyDemand += energyDemand;
-      aggregate.logisticsSupply += Math.min(logistics.supply, logistics.demand * 1.05);
-      aggregate.logisticsDemand += logistics.demand;
+      aggregate.logisticsSupply += logisticsSupply;
+      aggregate.logisticsDemand += logisticsDemand;
       aggregate.revenues += stableRevenue;
-      aggregate.expenditures += totalObligations;
-      aggregate.interest += interest;
-      aggregate.debt += debt;
-      aggregate.creditLimit += creditLimit;
-
-      if (plantPlan.fuel.coal) aggregate.coal += Math.round(fuelStock * (plantPlan.fuel.coal / (fuelPerTurn || 1)));
-      if (plantPlan.fuel.oil) aggregate.oil += Math.round(fuelStock * (plantPlan.fuel.oil / (fuelPerTurn || 1)));
-      if (plantPlan.fuel.uranium)
-        aggregate.uranium += Math.round(fuelStock * (plantPlan.fuel.uranium / (fuelPerTurn || 1)));
+      aggregate.expenditures += totalObligationsTotal;
+      aggregate.interest += interestTotal;
+      aggregate.debt += debtTotal;
+      aggregate.creditLimit += creditLimitTotal;
+      aggregate.oAndM += energyOMTotal;
     });
-
+    economy.projects.nextId = aggregate.projectId;
     economy.resources.gold = aggregate.gold;
     economy.resources.food = aggregate.food;
     economy.resources.materials = aggregate.materials;
