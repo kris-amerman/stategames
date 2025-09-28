@@ -35,7 +35,6 @@ interface CantonVisual {
   nationName: string;
   name: string;
   fillColor: string;
-  strokeColor: string;
   capital: boolean;
   urbanization: number | null;
   capacity: number;
@@ -245,7 +244,6 @@ function ingestCantonData(gameState: any): void {
         : [];
       const isCapital = nation.capitalCanton === cantonId;
       const fillColor = computeCantonFillColor(baseHue, cantonIndex, cantonIds.length);
-      const strokeColor = computeCantonStrokeColor(baseHue, cantonIndex, cantonIds.length);
       const capacity = Object.values(cantonState?.sectors ?? {}).reduce(
         (sum: number, sector: any) => sum + (sector?.capacity ?? 0),
         0,
@@ -266,7 +264,6 @@ function ingestCantonData(gameState: any): void {
         nationName: nation.name,
         name,
         fillColor,
-        strokeColor,
         capital: isCapital,
         urbanization,
         capacity,
@@ -283,11 +280,6 @@ function computeCantonFillColor(baseHue: number, index: number, total: number): 
   const lightnessBase = 58 - Math.min(18, index * 6);
   const lightness = Math.max(28, lightnessBase);
   return `hsla(${hue}, ${saturation}%, ${lightness}%, 0.55)`;
-}
-
-function computeCantonStrokeColor(baseHue: number, index: number, total: number): string {
-  const hue = (baseHue + (index * 47) % 360) % 360;
-  return `hsla(${hue}, 70%, 25%, 0.85)`;
 }
 
 export function renderGameState(): void {
@@ -448,60 +440,6 @@ function drawCantonOverlay(): void {
     }
     ctx.closePath();
     ctx.fill();
-  }
-
-  for (let cellId = 0; cellId < nCells; cellId++) {
-    const cantonId = cellCantons[cellId];
-    if (!cantonId) continue;
-    const visual = cantonVisuals[cantonId];
-    if (!visual) continue;
-
-    const start = meshData.cellOffsets[cellId];
-    const end = meshData.cellOffsets[cellId + 1];
-    if (start >= end) continue;
-
-    let hasCantonBorder = false;
-    let hasNationBorder = false;
-    for (let idx = start; idx < end; idx++) {
-      const neighbor = meshData.cellNeighbors[idx];
-      if (neighbor < 0) {
-        hasNationBorder = true;
-        continue;
-      }
-      const neighborCanton = cellCantons[neighbor];
-      if (neighborCanton !== cantonId) {
-        if (!neighborCanton) {
-          hasNationBorder = true;
-          continue;
-        }
-        hasCantonBorder = true;
-        const neighborVisual = cantonVisuals[neighborCanton];
-        if (!neighborVisual || neighborVisual.nationId !== visual.nationId) {
-          hasNationBorder = true;
-        }
-      }
-    }
-
-    if (!hasCantonBorder && !hasNationBorder) continue;
-
-    ctx.beginPath();
-    const v0 = meshData.cellVertexIndices[start];
-    ctx.moveTo(meshData.allVertices[v0 * 2], meshData.allVertices[v0 * 2 + 1]);
-    for (let idx = start + 1; idx < end; idx++) {
-      const vi = meshData.cellVertexIndices[idx];
-      ctx.lineTo(meshData.allVertices[vi * 2], meshData.allVertices[vi * 2 + 1]);
-    }
-    ctx.closePath();
-
-    if (hasNationBorder) {
-      ctx.lineWidth = 2.6;
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-      ctx.stroke();
-    } else if (hasCantonBorder) {
-      ctx.lineWidth = 1.2;
-      ctx.strokeStyle = visual.strokeColor;
-      ctx.stroke();
-    }
   }
   ctx.restore();
 
