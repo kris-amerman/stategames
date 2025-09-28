@@ -76,6 +76,8 @@ export class EconomyManager {
         labor: 0,
       },
       cantons: {},
+      cantonTerritories: {},
+      cantonAdjacency: {},
       retoolQueue: [],
       energy: {
         plants: [],
@@ -149,7 +151,13 @@ export class EconomyManager {
       geography: { plains: 1 },
       suitability: {},
       suitabilityMultipliers: {},
+      energyDelivery: 0,
+      logisticsDelivery: 0,
+      neighbors: [],
+      territory: [],
     };
+    state.cantonTerritories[cantonId] = [];
+    state.cantonAdjacency[cantonId] = [];
   }
 
   /** Placeholder for slot retooling logic. */

@@ -8,7 +8,6 @@ import { leaveGame } from './leaveGame';
 import { endGame } from './endGame';
 import { getGameState } from './getGameState';
 import { TurnManager } from '../turn';
-import { totalLabor, EDUCATION_TIERS, HEALTHCARE_TIERS } from '../welfare/manager';
 import { defaultNationInputs } from '../test-utils/nations';
 
 async function setupGame() {
@@ -88,11 +87,10 @@ test('submitted planner payload persists and executes next turn', async () => {
   const goldAfterFirst = execState.economy.resources.gold;
   TurnManager.advanceTurn(execState); // execute plan
   const goldAfterSecond = execState.economy.resources.gold;
-  const labor = totalLabor(execState.economy);
-  const welfareCost = labor * (EDUCATION_TIERS[1].cost + HEALTHCARE_TIERS[1].cost);
   const firstDelta = goldBefore - goldAfterFirst;
   const secondDelta = goldAfterFirst - goldAfterSecond;
+  const actualWelfare = execState.nations['player1']?.welfare?.cost ?? 0;
   expect(secondDelta).toBeGreaterThan(firstDelta);
   expect(secondDelta).toBeGreaterThanOrEqual(30);
-  expect(secondDelta).toBeGreaterThanOrEqual(welfareCost);
+  expect(secondDelta).toBeGreaterThanOrEqual(actualWelfare);
 });

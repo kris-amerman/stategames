@@ -8,6 +8,11 @@ import {
   type NationMeta,
   type PlantRegistryEntry,
   type ResourceType,
+  type TileType,
+  type LaborPool,
+  type CantonEconomy,
+  type GeographyModifiers,
+  type UrbanizationModifiers,
 } from '../types';
 import { EconomyManager } from '../economy';
 import { OM_COST_PER_SLOT } from '../budget/manager';
@@ -23,9 +28,11 @@ import {
   SOCIAL_SUPPORT_COST,
 } from '../welfare/manager';
 import { SECTOR_LABOR_TYPES } from '../labor/manager';
+import { LABOR_BY_UL, SECTOR_SLOTS_BY_UL } from '../development/manager';
 import { DEBT_STRESS_TIERS } from '../finance/manager';
 import { SeededRandom } from '../utils/random';
 import { createEmptyStatusSummary, updateNationStatus } from '../status';
+import { SuitabilityManager } from '../suitability';
 
 interface StockpileBands {
   food: [number, number];
@@ -62,6 +69,591 @@ const REVENUE_WEIGHTS: Partial<Record<SectorType, number>> = {
   research: 4.2,
   logistics: 2.1,
 };
+
+type CantonRange = [number, number];
+
+interface LayoutConfig {
+  cantonRange: CantonRange;
+  capitalUL: CantonRange;
+  satelliteUL: CantonRange;
+}
+
+const PRESET_LAYOUT: Record<NationPreset, LayoutConfig> = {
+  'Industrializing Exporter': {
+    cantonRange: [6, 9],
+    capitalUL: [6, 7],
+    satelliteUL: [3, 5],
+  },
+  'Agrarian Surplus': {
+    cantonRange: [6, 8],
+    capitalUL: [5, 6],
+    satelliteUL: [2, 4],
+  },
+  'Finance and Services Hub': {
+    cantonRange: [3, 4],
+    capitalUL: [7, 8],
+    satelliteUL: [4, 6],
+  },
+  'Research State': {
+    cantonRange: [4, 6],
+    capitalUL: [6, 7],
+    satelliteUL: [3, 5],
+  },
+  'Defense-Manufacturing Complex': {
+    cantonRange: [6, 8],
+    capitalUL: [6, 7],
+    satelliteUL: [3, 5],
+  },
+  'Balanced Mixed Economy': {
+    cantonRange: [4, 6],
+    capitalUL: [6, 7],
+    satelliteUL: [3, 5],
+  },
+};
+
+const BIOME_TO_TILE: Record<number, TileType> = {
+  0: 'plains',
+  1: 'woods',
+  2: 'rainforest',
+  3: 'wetlands',
+  4: 'hills',
+  5: 'mountains',
+  6: 'shallows',
+  7: 'shallows',
+  8: 'tundra',
+  9: 'tundra',
+  10: 'tundra',
+  11: 'tundra',
+  12: 'desert',
+  13: 'desert',
+  14: 'desert',
+};
+
+const DEFAULT_GEOGRAPHY_MODIFIERS: GeographyModifiers = {
+  agriculture: {
+    plains: 30,
+    woods: 12,
+    wetlands: 18,
+    rainforest: 8,
+    hills: -12,
+    mountains: -30,
+    desert: -26,
+    tundra: -22,
+  },
+  extraction: {
+    mountains: 35,
+    hills: 20,
+    desert: 10,
+    plains: -6,
+    wetlands: -18,
+    woods: -8,
+  },
+  manufacturing: {
+    plains: 20,
+    hills: 12,
+    woods: -5,
+    mountains: -24,
+    desert: -18,
+    tundra: -10,
+  },
+  defense: {
+    mountains: 28,
+    hills: 14,
+    tundra: 10,
+    plains: 2,
+    wetlands: -16,
+    desert: -8,
+  },
+  luxury: {
+    rainforest: 25,
+    woods: 12,
+    wetlands: 14,
+    plains: 4,
+    hills: -4,
+    desert: -12,
+    tundra: -6,
+  },
+  finance: {
+    plains: 22,
+    hills: 8,
+    woods: 6,
+    mountains: -18,
+    desert: -20,
+    tundra: -12,
+  },
+  research: {
+    mountains: 22,
+    hills: 16,
+    plains: 12,
+    woods: 4,
+    tundra: 6,
+    desert: -10,
+  },
+  logistics: {
+    plains: 22,
+    hills: 6,
+    shallows: 12,
+    wetlands: -14,
+    mountains: -28,
+    desert: -8,
+    tundra: -12,
+  },
+};
+
+const UL_LEVELS = Array.from({ length: 12 }, (_, i) => i + 1);
+
+const DEFAULT_UL_MODIFIERS: UrbanizationModifiers = {
+  agriculture: Object.fromEntries(
+    UL_LEVELS.map((ul) => [ul, 14 - ul * 2]),
+  ),
+  manufacturing: Object.fromEntries(
+    UL_LEVELS.map((ul) => [ul, -12 + ul * 4]),
+  ),
+  extraction: Object.fromEntries(
+    UL_LEVELS.map((ul) => [ul, -6 + ul * 2]),
+  ),
+  defense: Object.fromEntries(
+    UL_LEVELS.map((ul) => [ul, -8 + ul * 3]),
+  ),
+  luxury: Object.fromEntries(
+    UL_LEVELS.map((ul) => [ul, -4 + ul * 3]),
+  ),
+  finance: Object.fromEntries(
+    UL_LEVELS.map((ul) => [ul, -10 + ul * 4]),
+  ),
+  research: Object.fromEntries(
+    UL_LEVELS.map((ul) => [ul, -8 + ul * 4]),
+  ),
+  logistics: Object.fromEntries(
+    UL_LEVELS.map((ul) => [ul, -6 + ul * 3]),
+  ),
+};
+
+let suitabilityDefaultsApplied = false;
+
+function ensureSuitabilityDefaults(): void {
+  if (suitabilityDefaultsApplied) return;
+  SuitabilityManager.setGeographyModifiers(DEFAULT_GEOGRAPHY_MODIFIERS);
+  SuitabilityManager.setUrbanizationModifiers(DEFAULT_UL_MODIFIERS);
+  suitabilityDefaultsApplied = true;
+}
+
+interface CantonLayout {
+  id: string;
+  capital: boolean;
+  cells: number[];
+  coastal: boolean;
+  urbanizationLevel: number;
+  geography: Record<TileType, number>;
+}
+
+interface NationLayout {
+  playerId: PlayerId;
+  preset: NationPreset;
+  cantons: CantonLayout[];
+}
+
+function pickInRange(range: CantonRange, rng: SeededRandom): number {
+  const [min, max] = range;
+  if (max <= min) return min;
+  const span = max - min + 1;
+  return min + rng.nextInt(span);
+}
+
+function chooseCantonCount(
+  preset: NationPreset,
+  cellCount: number,
+  rng: SeededRandom,
+): number {
+  const layout = PRESET_LAYOUT[preset];
+  const [min, max] = layout.cantonRange;
+  if (cellCount <= 1) return 1;
+  const upper = Math.min(max, cellCount);
+  let desired = pickInRange([min, upper], rng);
+  if (desired > cellCount) desired = cellCount;
+  if (cellCount >= 3) {
+    desired = Math.max(desired, 3);
+  }
+  desired = Math.max(1, Math.min(desired, upper));
+  if (desired < min && cellCount >= min) desired = min;
+  return desired;
+}
+
+function buildCellAdjacency(
+  cells: number[],
+  neighbors: Int32Array,
+  offsets: Uint32Array,
+): Map<number, number[]> {
+  const owned = new Set(cells);
+  const map = new Map<number, number[]>();
+  for (const cell of cells) {
+    const start = offsets[cell];
+    const end = offsets[cell + 1];
+    const list: number[] = [];
+    for (let i = start; i < end; i++) {
+      const nb = neighbors[i];
+      if (nb < 0) continue;
+      if (owned.has(nb)) list.push(nb);
+    }
+    map.set(cell, list);
+  }
+  return map;
+}
+
+function computeDistancesFromSeeds(
+  adjacency: Map<number, number[]>,
+  seeds: number[],
+): Map<number, number> {
+  const dist = new Map<number, number>();
+  const queue: number[] = [];
+  for (const seed of seeds) {
+    if (dist.has(seed)) continue;
+    dist.set(seed, 0);
+    queue.push(seed);
+  }
+  while (queue.length) {
+    const cell = queue.shift()!;
+    const neighbors = adjacency.get(cell) ?? [];
+    for (const nb of neighbors) {
+      if (dist.has(nb)) continue;
+      dist.set(nb, (dist.get(cell) ?? 0) + 1);
+      queue.push(nb);
+    }
+  }
+  return dist;
+}
+
+function assignCantons(
+  cells: number[],
+  count: number,
+  capital: number,
+  adjacency: Map<number, number[]>,
+  rng: SeededRandom,
+): Map<number, number> {
+  const seeds: number[] = [capital];
+  const remaining = cells.filter((c) => c !== capital);
+  for (let i = 1; i < count; i++) {
+    const dist = computeDistancesFromSeeds(adjacency, seeds);
+    let bestCell: number | null = null;
+    let bestDist = -1;
+    for (const cell of remaining) {
+      if (seeds.includes(cell)) continue;
+      const d = dist.get(cell);
+      if (d === undefined) continue;
+      if (d > bestDist) {
+        bestDist = d;
+        bestCell = cell;
+      } else if (d === bestDist && bestCell !== null && cell < bestCell) {
+        bestCell = cell;
+      }
+    }
+    if (bestCell === null) {
+      const candidates = remaining.filter((c) => !seeds.includes(c));
+      if (candidates.length === 0) break;
+      bestCell = candidates.sort((a, b) => a - b)[0];
+    }
+    seeds.push(bestCell);
+  }
+
+  const assignment = new Map<number, number>();
+  const queue: number[] = [];
+  seeds.forEach((cell, index) => {
+    assignment.set(cell, index);
+    queue.push(cell);
+  });
+
+  while (queue.length) {
+    const cell = queue.shift()!;
+    const owner = assignment.get(cell)!;
+    for (const nb of adjacency.get(cell) ?? []) {
+      if (assignment.has(nb)) continue;
+      assignment.set(nb, owner);
+      queue.push(nb);
+    }
+  }
+
+  // Assign any remaining cells to the capital canton deterministically
+  for (const cell of cells) {
+    if (!assignment.has(cell)) {
+      assignment.set(cell, 0);
+    }
+  }
+  return assignment;
+}
+
+function computeCantonGeography(cells: number[], biomes: Uint8Array): Record<TileType, number> {
+  const counts = new Map<TileType, number>();
+  for (const cell of cells) {
+    const biome = biomes[cell];
+    const tile = BIOME_TO_TILE[biome] ?? 'plains';
+    counts.set(tile, (counts.get(tile) ?? 0) + 1);
+  }
+  const total = cells.length || 1;
+  const geography: Record<TileType, number> = {} as any;
+  for (const [tile, count] of counts.entries()) {
+    geography[tile] = Math.round((count / total) * 1000) / 1000;
+  }
+  return geography;
+}
+
+function detectCoastal(
+  cells: number[],
+  biomes: Uint8Array,
+  neighbors: Int32Array,
+  offsets: Uint32Array,
+): boolean {
+  for (const cell of cells) {
+    const start = offsets[cell];
+    const end = offsets[cell + 1];
+    for (let i = start; i < end; i++) {
+      const nb = neighbors[i];
+      if (nb < 0) continue;
+      const biome = biomes[nb];
+      if (biome === 6 || biome === 7) return true;
+    }
+  }
+  return false;
+}
+
+function buildNationLayout(
+  game: Game,
+  playerId: PlayerId,
+  preset: NationPreset,
+  biomes: Uint8Array,
+  neighbors: Int32Array,
+  offsets: Uint32Array,
+  rng: SeededRandom,
+): NationLayout {
+  const cells = [...(game.state.playerCells[playerId] ?? [])];
+  cells.sort((a, b) => a - b);
+  const economy = game.state.economy;
+  const capital = cells[0];
+  if (capital === undefined) {
+    return { playerId, preset, cantons: [] };
+  }
+  const layout = PRESET_LAYOUT[preset];
+  const cantonCount = chooseCantonCount(preset, cells.length, rng);
+  const adjacency = buildCellAdjacency(cells, neighbors, offsets);
+  const assignment = assignCantons(cells, cantonCount, capital, adjacency, rng);
+  const cantonCells: Map<number, number[]> = new Map();
+  for (const cell of cells) {
+    const idx = assignment.get(cell) ?? 0;
+    const list = cantonCells.get(idx) ?? [];
+    list.push(cell);
+    cantonCells.set(idx, list);
+  }
+  const cantonLayouts: CantonLayout[] = [];
+  const adjacencyById: Record<string, Set<string>> = {};
+
+  const capitalRange = layout.capitalUL;
+  const satelliteRange = layout.satelliteUL;
+  let capitalUL = pickInRange(capitalRange, rng);
+  const satelliteULs: number[] = [];
+
+  for (const [index, cellsList] of cantonCells.entries()) {
+    cellsList.sort((a, b) => a - b);
+    const isCapital = assignment.get(capital) === index;
+    const cantonId = isCapital
+      ? String(capital)
+      : `${capital}-S${index}`;
+    if (!economy.cantons[cantonId]) {
+      EconomyManager.addCanton(economy, cantonId);
+    }
+    const canton = economy.cantons[cantonId];
+    const geo = computeCantonGeography(cellsList, biomes);
+    const coastal = detectCoastal(cellsList, biomes, neighbors, offsets);
+    let ul = isCapital ? capitalUL : pickInRange(satelliteRange, rng);
+    if (!isCapital) satelliteULs.push(ul);
+
+    canton.urbanizationLevel = ul;
+    canton.nextUrbanizationLevel = ul;
+    canton.development = Math.min(3, rng.nextInt(4));
+    canton.geography = geo;
+    canton.territory = [...cellsList];
+    economy.cantonTerritories[cantonId] = [...cellsList];
+    const neighborSet = new Set<string>();
+    for (const cell of cellsList) {
+      for (const nb of adjacency.get(cell) ?? []) {
+        const otherIdx = assignment.get(nb);
+        if (otherIdx === undefined || otherIdx === index) continue;
+        const otherId = otherIdx === assignment.get(capital)
+          ? String(capital)
+          : `${capital}-S${otherIdx}`;
+        neighborSet.add(otherId);
+      }
+    }
+    canton.neighbors = [...neighborSet].sort();
+    economy.cantonAdjacency[cantonId] = [...canton.neighbors];
+    cantonLayouts.push({
+      id: cantonId,
+      capital: isCapital,
+      cells: cellsList,
+      coastal,
+      urbanizationLevel: ul,
+      geography: geo,
+    });
+    adjacencyById[cantonId] = neighborSet;
+  }
+
+  // Ensure capital exceeds at least one satellite UL
+  if (satelliteULs.length > 0) {
+    const minSatellite = Math.min(...satelliteULs);
+    if (capitalUL <= minSatellite) {
+      if (capitalUL < capitalRange[1]) {
+        capitalUL += 1;
+      } else {
+        const idx = satelliteULs.indexOf(minSatellite);
+        if (idx >= 0) {
+          satelliteULs[idx] = Math.max(1, satelliteULs[idx] - 1);
+        }
+      }
+      for (const layout of cantonLayouts) {
+        if (layout.capital) {
+          layout.urbanizationLevel = capitalUL;
+          const canton = economy.cantons[layout.id];
+          canton.urbanizationLevel = capitalUL;
+          canton.nextUrbanizationLevel = capitalUL;
+        }
+      }
+    }
+  }
+
+  // Update satellites with any UL adjustments
+  let satIndex = 0;
+  for (const layout of cantonLayouts) {
+    if (layout.capital) continue;
+    const ul = satelliteULs[satIndex] ?? layout.urbanizationLevel;
+    layout.urbanizationLevel = ul;
+    const canton = economy.cantons[layout.id];
+    canton.urbanizationLevel = ul;
+    canton.nextUrbanizationLevel = ul;
+    satIndex += 1;
+  }
+
+  // Normalize adjacency arrays after adjustments
+  for (const layout of cantonLayouts) {
+    const set = adjacencyById[layout.id] ?? new Set();
+    const arr = [...set].sort();
+    economy.cantonAdjacency[layout.id] = arr;
+    economy.cantons[layout.id].neighbors = arr;
+  }
+
+  return { playerId, preset, cantons: cantonLayouts };
+}
+
+function computeSectorWeight(
+  layout: CantonLayout,
+  canton: CantonEconomy,
+  sector: SectorType,
+): number {
+  const suitability = canton.suitability[sector] ?? 0;
+  let weight = Math.max(0.15, 1 + suitability / 100);
+  weight *= 1 + canton.urbanizationLevel / 14;
+  if (sector === 'logistics') {
+    if (layout.coastal) weight *= 1.2;
+    if (canton.neighbors.length >= 2) weight *= 1.05;
+  }
+  if (sector === 'finance' || sector === 'research' || sector === 'luxury') {
+    weight *= 1 + Math.max(0, canton.urbanizationLevel - 5) * 0.05;
+  }
+  if (sector === 'agriculture') {
+    weight *= 1 + (layout.geography.plains ?? 0) * 0.3;
+  }
+  if (sector === 'extraction') {
+    const rugged = (layout.geography.mountains ?? 0) + (layout.geography.hills ?? 0);
+    weight *= 1 + rugged * 0.4;
+  }
+  if (sector === 'logistics' && layout.coastal) {
+    weight *= 1.05 + (layout.geography.shallows ?? 0) * 0.1;
+  }
+  return weight;
+}
+
+function allocateSlots(
+  target: number,
+  layouts: CantonLayout[],
+  economy: EconomyState,
+  sector: SectorType,
+): number[] {
+  const weights = layouts.map((layout) =>
+    computeSectorWeight(layout, economy.cantons[layout.id], sector),
+  );
+  const allocations = new Array(layouts.length).fill(0);
+  if (target <= 0) return allocations;
+  let totalWeight = weights.reduce((sum, w) => sum + w, 0);
+  if (totalWeight <= 0) {
+    totalWeight = layouts.length;
+    for (let i = 0; i < layouts.length; i++) weights[i] = 1;
+  }
+  const fractional: Array<{ index: number; frac: number; id: string }> = [];
+  let remaining = target;
+  for (let i = 0; i < layouts.length; i++) {
+    const raw = (weights[i] / totalWeight) * target;
+    const base = Math.floor(raw);
+    allocations[i] = base;
+    remaining -= base;
+    fractional.push({ index: i, frac: raw - base, id: layouts[i].id });
+  }
+  fractional.sort((a, b) => {
+    if (b.frac !== a.frac) return b.frac - a.frac;
+    return a.id.localeCompare(b.id);
+  });
+  let cursor = 0;
+  while (remaining > 0 && fractional.length > 0) {
+    const entry = fractional[cursor % fractional.length];
+    allocations[entry.index] += 1;
+    remaining -= 1;
+    cursor += 1;
+  }
+  return allocations;
+}
+
+function assignLaborToCanton(
+  canton: CantonEconomy,
+  sectorStates: Partial<
+    Record<SectorType, { capacity: number; funded: number; idle: number; utilization?: number }>
+  >,
+  localMix: Record<string, number>,
+  available: LaborPool,
+): LaborPool {
+  const remaining: LaborPool = { ...available };
+  const assigned: LaborPool = { general: 0, skilled: 0, specialist: 0 };
+  canton.laborDemand = {};
+  canton.laborAssigned = {};
+  const laborSectors = Object.entries(localMix)
+    .filter(([, funded]) => (funded ?? 0) > 0)
+    .map(([sectorKey, funded]) => [sectorKey as SectorType, funded ?? 0] as [SectorType, number])
+    .sort((a, b) => {
+      const sa = canton.suitability[a[0]] ?? 0;
+      const sb = canton.suitability[b[0]] ?? 0;
+      if (sa !== sb) return sb - sa;
+      return a[0].localeCompare(b[0]);
+    });
+
+  for (const [sector, funded] of laborSectors) {
+    const laborType = SECTOR_LABOR_TYPES[sector];
+    if (!laborType) continue;
+    const demandPool: LaborPool = { general: 0, skilled: 0, specialist: 0 };
+    demandPool[laborType] = funded;
+    canton.laborDemand[sector] = { ...demandPool };
+    const give = Math.min(remaining[laborType], demandPool[laborType]);
+    const assignedPool: LaborPool = { general: 0, skilled: 0, specialist: 0 };
+    assignedPool[laborType] = give;
+    canton.laborAssigned[sector] = assignedPool;
+    remaining[laborType] -= give;
+    assigned[laborType] += give;
+    if (give < demandPool[laborType]) {
+      const shortage = demandPool[laborType] - give;
+      const state = sectorStates[sector];
+      if (state) {
+        state.idle += shortage;
+        state.funded = give;
+      }
+    }
+  }
+
+  return assigned;
+}
 
 const PROFILES: Record<NationPreset, NationProfile> = {
   'Industrializing Exporter': {
@@ -235,31 +827,6 @@ const PROFILES: Record<NationPreset, NationProfile> = {
   },
 };
 
-interface CantonInfo {
-  cantonId: string;
-  capital: number;
-  coastal: boolean;
-}
-
-function computeCoastal(
-  capital: number,
-  biomes: Uint8Array,
-  neighbors: Int32Array,
-  offsets: Uint32Array,
-): boolean {
-  const start = offsets[capital];
-  const end = offsets[capital + 1];
-  for (let i = start; i < end; i++) {
-    const nb = neighbors[i];
-    if (nb < 0) continue;
-    const biome = biomes[nb];
-    if (biome === 6 || biome === 7) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function computeLogisticsDemand(mix: Record<string, number>): number {
   let demand = 0;
   for (const [sector, funded] of Object.entries(mix)) {
@@ -418,29 +985,6 @@ function resolveWelfare(
   }
   return { tiers, cost, downshifted };
 }
-function ensureCanton(
-  game: Game,
-  playerId: PlayerId,
-  biomes: Uint8Array,
-  neighbors: Int32Array,
-  offsets: Uint32Array,
-): CantonInfo | null {
-  const cells = game.state.playerCells[playerId] ?? [];
-  if (cells.length === 0) {
-    return null;
-  }
-  const capital = cells[0];
-  const cantonId = String(capital);
-  if (!game.state.economy.cantons[cantonId]) {
-    EconomyManager.addCanton(game.state.economy, cantonId);
-  }
-  return {
-    cantonId,
-    capital,
-    coastal: computeCoastal(capital, biomes, neighbors, offsets),
-  };
-}
-
 function cloneSectorStates(
   sectors: Partial<Record<SectorType, { capacity: number; funded: number; idle: number; utilization?: number }>>,
 ): Partial<Record<SectorType, { capacity: number; funded: number; idle: number; utilization?: number }>> {
@@ -533,6 +1077,23 @@ export class InMediaResInitializer {
       projectId: 1,
     };
 
+    ensureSuitabilityDefaults();
+    const layoutsByPlayer: Record<PlayerId, NationLayout> = {};
+    players.forEach((playerId, index) => {
+      const input = inputs[index];
+      layoutsByPlayer[playerId] = buildNationLayout(
+        game,
+        playerId,
+        input.preset,
+        biomes,
+        neighbors,
+        offsets,
+        rng,
+      );
+    });
+
+    SuitabilityManager.run(economy);
+
     const nationStates: Record<PlayerId, NationState> = {};
     const metas: NationMeta[] = [];
 
@@ -542,107 +1103,290 @@ export class InMediaResInitializer {
       if (!profile) {
         throw new Error(`Unknown preset for nation ${input.name}`);
       }
-      const cantonInfo = ensureCanton(game, playerId, biomes, neighbors, offsets);
-      if (!cantonInfo) {
+
+      const layout = layoutsByPlayer[playerId];
+      if (!layout || layout.cantons.length === 0) {
         return;
       }
-      const { cantonId, coastal } = cantonInfo;
-      const canton = economy.cantons[cantonId];
 
-      // Generate a working mix of funded slots per sector with slight variation.
-      const mix: Record<string, number> = {};
-      for (const [sector, value] of Object.entries(profile.baseMix)) {
-        const variation = 0.9 + rng.nextRange(0, 0.2);
-        mix[sector] = Math.max(1, Math.round(value * variation));
+      const capitalLayout = layout.cantons.find((c) => c.capital) ?? layout.cantons[0];
+      const capitalId = capitalLayout.id;
+      const nationCoastal = layout.cantons.some((c) => c.coastal);
+
+      const coastalCantons = layout.cantons.filter((c) => c.coastal);
+      if (coastalCantons.length > 0) {
+        const portHostLayout = coastalCantons.find((c) => c.capital) ?? coastalCantons[0];
+        economy.infrastructure.ports[portHostLayout.id] = {
+          owner: 'national',
+          status: 'active',
+          national: true,
+          hp: 100,
+        };
+        economy.infrastructure.national.port = portHostLayout.id;
       }
-      mix.logistics = Math.max(mix.logistics ?? MIN_LOGISTICS_SLOTS, MIN_LOGISTICS_SLOTS);
-      const logistics = scaleMixToLogistics(mix, mix.logistics);
-      mix.logistics = logistics.slots;
 
-      const energyDemand = computeEnergyDemand(mix);
-      const plantPlan = choosePlants(profile, cantonId, energyDemand, rng);
-      const rawEnergyRatio = energyDemand > 0 ? plantPlan.supply / energyDemand : 1;
-      const energyRatio = Math.min(Math.max(rawEnergyRatio, 0.95), 1.05);
-      const effectiveEnergySupply = energyDemand * energyRatio;
+      const sectorTargets: Record<SectorType, number> = {} as any;
+      for (const [sectorKey, baseValue] of Object.entries(profile.baseMix)) {
+        const sector = sectorKey as SectorType;
+        const variation = 0.9 + rng.nextRange(0, 0.2);
+        sectorTargets[sector] = Math.max(1, Math.round(baseValue * variation));
+      }
+      if (sectorTargets.logistics === undefined) {
+        sectorTargets.logistics = layout.cantons.length * MIN_LOGISTICS_SLOTS;
+      } else {
+        sectorTargets.logistics = Math.max(
+          sectorTargets.logistics,
+          layout.cantons.length * MIN_LOGISTICS_SLOTS,
+        );
+      }
 
-      const stableRevenue = Math.max(20, computeStableRevenue(mix, profile.stableRevenueMultiplier, rng));
-      const labor = computeLaborMix(mix);
-      const laborBuffer = {
-        general: labor.demand.general + Math.max(1, Math.round(labor.demand.general * 0.1)),
-        skilled: labor.demand.skilled + Math.max(1, Math.round(labor.demand.skilled * 0.1)),
-        specialist: labor.demand.specialist + Math.max(1, Math.round(labor.demand.specialist * 0.15)),
-      };
-      const lai = 1 + rng.nextRange(0, 0.05);
+      const perCantonMix: Record<string, Record<SectorType, number>> = {};
+      for (const cantonLayout of layout.cantons) {
+        perCantonMix[cantonLayout.id] = {} as Record<SectorType, number>;
+      }
 
+      for (const [sectorKey, target] of Object.entries(sectorTargets)) {
+        if (sectorKey === 'logistics') continue;
+        const sector = sectorKey as SectorType;
+        const allocations = allocateSlots(target, layout.cantons, economy, sector);
+        layout.cantons.forEach((c, idx) => {
+          perCantonMix[c.id][sector] = allocations[idx] ?? 0;
+        });
+      }
+
+      const logisticDemandByCanton: Record<string, number> = {};
+      for (const cantonLayout of layout.cantons) {
+        let demand = 0;
+        for (const [sectorKey, funded] of Object.entries(perCantonMix[cantonLayout.id])) {
+          if (sectorKey === 'logistics') continue;
+          const cost = OPERATING_LP_COST[sectorKey as SectorType] ?? 0;
+          demand += funded * cost;
+        }
+        logisticDemandByCanton[cantonLayout.id] = demand;
+      }
+
+      const logisticTarget =
+        sectorTargets.logistics ?? layout.cantons.length * MIN_LOGISTICS_SLOTS;
+      const logisticAllocations = allocateSlots(logisticTarget, layout.cantons, economy, 'logistics');
+      layout.cantons.forEach((c, idx) => {
+        const required = Math.max(
+          1,
+          Math.ceil((logisticDemandByCanton[c.id] ?? 0) / LP_PER_SLOT),
+        );
+        const assigned = Math.max(required, logisticAllocations[idx] ?? 0, MIN_LOGISTICS_SLOTS);
+        perCantonMix[c.id].logistics = assigned;
+      });
+
+      const mixTotals: Record<string, number> = {};
+      for (const cantonLayout of layout.cantons) {
+        for (const [sectorKey, funded] of Object.entries(perCantonMix[cantonLayout.id])) {
+          mixTotals[sectorKey] = (mixTotals[sectorKey] ?? 0) + funded;
+        }
+      }
+
+      const plantsForNation: PlantRegistryEntry[] = [];
+      const fuelUsedForNation: Partial<Record<ResourceType, number>> = {};
+      let fuelPerTurnTotal = 0;
+      let energyDemandTotal = 0;
+      let energySupplyTotal = 0;
+      let logisticsDemandTotal = 0;
+      let logisticsSupplyTotal = 0;
+      let omCostTotal = 0;
+      let idleCostTotal = 0;
+      const laborAvailableTotal: LaborPool = { general: 0, skilled: 0, specialist: 0 };
+      const laborAssignedTotal: LaborPool = { general: 0, skilled: 0, specialist: 0 };
+      let laborConsumptionFood = 0;
+      let laborConsumptionLuxury = 0;
+      let happinessAccumulator = 0;
+      let laiAccumulator = 0;
+      const sectorStatesByCanton: Record<
+        string,
+        Record<SectorType, { capacity: number; funded: number; idle: number; utilization?: number }>
+      > = {};
+
+      for (const cantonLayout of layout.cantons) {
+        const econCanton = economy.cantons[cantonLayout.id];
+        const localMix = perCantonMix[cantonLayout.id];
+        const sectorStates: Record<
+          SectorType,
+          { capacity: number; funded: number; idle: number; utilization?: number }
+        > = {} as any;
+        let localOmCost = 0;
+        let localIdleCost = 0;
+
+        for (const [sectorKey, fundedValue] of Object.entries(localMix)) {
+          const sector = sectorKey as SectorType;
+          const funded = fundedValue ?? 0;
+          const idle = sector === 'logistics' ? 0 : funded > 0 && rng.nextBoolean() ? 1 : 0;
+          const capacity = funded + idle;
+          sectorStates[sector] = { capacity, funded, idle, utilization: funded };
+          const costPer = OM_COST_PER_SLOT[sector] ?? 1;
+          localOmCost += funded * costPer;
+          localIdleCost += idle * costPer * IDLE_TAX_RATE;
+          if (sector !== 'logistics' && (ENERGY_PER_SLOT[sector] ?? 0)) {
+            aggregate.demandBySector[sector] =
+              (aggregate.demandBySector[sector] ?? 0) + funded * (ENERGY_PER_SLOT[sector] ?? 0);
+          }
+        }
+
+        const logisticDemand = logisticDemandByCanton[cantonLayout.id] ?? 0;
+        const logisticSupply = (localMix.logistics ?? 0) * LP_PER_SLOT;
+        econCanton.logisticsDelivery = logisticSupply;
+        logisticsDemandTotal += logisticDemand;
+        logisticsSupplyTotal += logisticSupply;
+
+        let localEnergyDemand = 0;
+        for (const [sectorKey, funded] of Object.entries(localMix)) {
+          if (sectorKey === 'logistics') continue;
+          const cost = ENERGY_PER_SLOT[sectorKey as SectorType] ?? 0;
+          localEnergyDemand += funded * cost;
+        }
+        const plantPlan = choosePlants(profile, cantonLayout.id, localEnergyDemand, rng);
+        const energyOM = plantPlan.plants.reduce(
+          (sum, plant) => sum + (PLANT_ATTRIBUTES[plant.type].oAndMCost ?? 0),
+          0,
+        );
+        localOmCost += energyOM;
+        aggregate.oAndM += energyOM;
+        const fuelPerTurn = Object.values(plantPlan.fuel).reduce(
+          (sum, value) => sum + (value ?? 0),
+          0,
+        );
+        fuelPerTurnTotal += fuelPerTurn;
+        for (const [resource, amount] of Object.entries(plantPlan.fuel)) {
+          fuelUsedForNation[resource as ResourceType] =
+            (fuelUsedForNation[resource as ResourceType] ?? 0) + (amount ?? 0);
+        }
+        plantsForNation.push(...plantPlan.plants.map((plant) => ({ ...plant })));
+        energyDemandTotal += localEnergyDemand;
+        energySupplyTotal += plantPlan.supply;
+        econCanton.energyDelivery = plantPlan.supply;
+
+        const baseLabor = LABOR_BY_UL[econCanton.urbanizationLevel] ?? {
+          general: 0,
+          skilled: 0,
+          specialist: 0,
+        };
+        econCanton.labor = { ...baseLabor };
+        const assignedLabor = assignLaborToCanton(
+          econCanton,
+          sectorStates,
+          localMix,
+          baseLabor,
+        );
+
+        const totalAssigned =
+          assignedLabor.general + assignedLabor.skilled + assignedLabor.specialist;
+        laborAvailableTotal.general += baseLabor.general;
+        laborAvailableTotal.skilled += baseLabor.skilled;
+        laborAvailableTotal.specialist += baseLabor.specialist;
+        laborAssignedTotal.general += assignedLabor.general;
+        laborAssignedTotal.skilled += assignedLabor.skilled;
+        laborAssignedTotal.specialist += assignedLabor.specialist;
+        laborConsumptionFood += totalAssigned;
+        laborConsumptionLuxury += totalAssigned;
+
+        econCanton.lai = 0.95 + rng.nextRange(0, 0.08);
+        laiAccumulator += econCanton.lai;
+
+        econCanton.consumption = {
+          foodRequired: totalAssigned,
+          foodProvided: totalAssigned,
+          luxuryRequired: totalAssigned,
+          luxuryProvided: totalAssigned,
+        };
+        econCanton.shortages = { food: false, luxury: false };
+
+        const energyRatioLocal =
+          localEnergyDemand > 0 ? Math.min(plantPlan.supply / localEnergyDemand, 1) : 1;
+        const logisticsRatioLocal =
+          logisticDemand > 0 ? Math.min(logisticSupply / logisticDemand, 1) : 1;
+        const happinessBase = 0.55 + rng.nextRange(-0.05, 0.05);
+        const energyBonus = energyRatioLocal >= 0.98 ? 0.12 : -0.08;
+        const logisticsBonus = logisticsRatioLocal >= 0.98 ? 0.08 : -0.06;
+        econCanton.happiness = Math.max(
+          0.3,
+          Math.min(1.2, happinessBase + energyBonus + logisticsBonus + 0.2),
+        );
+        happinessAccumulator += econCanton.happiness;
+
+        econCanton.sectors = sectorStates;
+        sectorStatesByCanton[cantonLayout.id] = sectorStates;
+
+        omCostTotal += localOmCost;
+        idleCostTotal += localIdleCost;
+      }
+
+      const aggregatedSectorStates: Record<
+        SectorType,
+        { capacity: number; funded: number; idle: number; utilization?: number }
+      > = {} as any;
+      for (const states of Object.values(sectorStatesByCanton)) {
+        for (const [sectorKey, state] of Object.entries(states)) {
+          const sector = sectorKey as SectorType;
+          const entry =
+            aggregatedSectorStates[sector] ??
+            (aggregatedSectorStates[sector] = {
+              capacity: 0,
+              funded: 0,
+              idle: 0,
+              utilization: 0,
+            });
+          entry.capacity += state.capacity;
+          entry.funded += state.funded;
+          entry.idle += state.idle;
+          entry.utilization = (entry.utilization ?? 0) + (state.utilization ?? state.funded);
+        }
+      }
+
+      const stableRevenue = Math.max(
+        20,
+        computeStableRevenue(mixTotals, profile.stableRevenueMultiplier, rng),
+      );
+      const laborDemandTotals = computeLaborMix(mixTotals);
+      const laborTotal = laborDemandTotals.total;
       const foodTurns = rng.nextRange(profile.stockpiles.food[0], profile.stockpiles.food[1]);
-      const foodStock = Math.max(labor.total, Math.round(foodTurns * labor.total));
-      const fuelPerTurn = Object.values(plantPlan.fuel).reduce((sum, value) => sum + (value ?? 0), 0);
-      const fuelTurns = profile.stockpiles.fuel[0] + rng.nextRange(0, profile.stockpiles.fuel[1] - profile.stockpiles.fuel[0]);
-      const fuelStock = Math.round(fuelPerTurn * fuelTurns);
+      const foodStock = Math.max(laborTotal, Math.round(foodTurns * laborTotal));
+      const fuelTurns =
+        profile.stockpiles.fuel[0] +
+        rng.nextRange(0, profile.stockpiles.fuel[1] - profile.stockpiles.fuel[0]);
+      const fuelStock = Math.round(fuelPerTurnTotal * fuelTurns);
       const materialsPerTurn = Math.max(
         2,
         Math.round(
-          (mix.manufacturing ?? 0) * 1.3 +
-            (mix.defense ?? 0) * 1.2 +
-            (mix.extraction ?? 0) * 0.6 +
-            (mix.logistics ?? 0) * 0.3,
+          (mixTotals.manufacturing ?? 0) * 1.3 +
+            (mixTotals.defense ?? 0) * 1.2 +
+            (mixTotals.extraction ?? 0) * 0.6 +
+            (mixTotals.logistics ?? 0) * 0.3,
         ),
       );
       const materialTurns = rng.nextRange(profile.stockpiles.materials[0], profile.stockpiles.materials[1]);
       const materialsStock = Math.round(materialsPerTurn * materialTurns);
-      const fxReserves = Math.round(stableRevenue * rng.nextRange(profile.stockpiles.fx[0], profile.stockpiles.fx[1]));
+      const fxReserves = Math.round(
+        stableRevenue * rng.nextRange(profile.stockpiles.fx[0], profile.stockpiles.fx[1]),
+      );
       const luxuryStock = Math.max(
-        labor.total,
-        Math.round(labor.total * rng.nextRange(profile.stockpiles.luxury[0], profile.stockpiles.luxury[1])),
+        laborTotal,
+        Math.round(laborTotal * rng.nextRange(profile.stockpiles.luxury[0], profile.stockpiles.luxury[1])),
       );
       const ordnanceStock = Math.max(
         1,
-        Math.round((mix.defense ?? 0) * rng.nextRange(profile.stockpiles.ordnance[0], profile.stockpiles.ordnance[1])),
+        Math.round(
+          (mixTotals.defense ?? 0) *
+            rng.nextRange(profile.stockpiles.ordnance[0], profile.stockpiles.ordnance[1]),
+        ),
       );
       const productionStock = Math.max(
         1,
-        Math.round((mix.manufacturing ?? 0) * rng.nextRange(profile.stockpiles.production[0], profile.stockpiles.production[1])),
+        Math.round(
+          (mixTotals.manufacturing ?? 0) *
+            rng.nextRange(profile.stockpiles.production[0], profile.stockpiles.production[1]),
+        ),
       );
-
-      const interestRate = economy.finance.interestRate ?? 0.05;
-      const debtSample = Math.round(stableRevenue * rng.nextRange(0.4, 0.7));
-      const startInDebt = rng.nextBoolean();
-      const debt = startInDebt ? debtSample : 0;
-      const interest = Math.round(debt * interestRate * 100) / 100;
-      const creditLimit = Math.max(debtSample + 20, Math.round(stableRevenue * profile.creditLimitMultiplier));
-
-      const sectorStates: Record<SectorType, { capacity: number; funded: number; idle: number; utilization?: number }> = {} as any;
-      let omCost = 0;
-      let idleCost = 0;
-      for (const [sectorKey, funded] of Object.entries(mix)) {
-        const sector = sectorKey as SectorType;
-        const idle = funded > 0 ? (rng.nextBoolean() ? 1 : 0) : 0;
-        const capacity = funded + idle;
-        const state = {
-          capacity,
-          funded,
-          idle,
-          utilization: funded,
-        };
-        sectorStates[sector] = state;
-        const costPer = OM_COST_PER_SLOT[sector] ?? 1;
-        omCost += funded * costPer;
-        idleCost += idle * costPer * IDLE_TAX_RATE;
-        if (ENERGY_PER_SLOT[sector] ?? 0) {
-          aggregate.demandBySector[sector] =
-            (aggregate.demandBySector[sector] ?? 0) + funded * (ENERGY_PER_SLOT[sector] ?? 0);
-        }
-      }
-      const energyOM = plantPlan.plants.reduce(
-        (sum, plant) => sum + (PLANT_ATTRIBUTES[plant.type].oAndMCost ?? 0),
-        0,
-      );
-      omCost += energyOM;
-      aggregate.oAndM += energyOM;
 
       const desiredWelfare = { ...profile.welfare };
       const availableForWelfare = Math.max(0, stableRevenue * 0.6);
-      const welfarePlan = resolveWelfare(desiredWelfare, labor.total, availableForWelfare);
+      const welfarePlan = resolveWelfare(desiredWelfare, laborTotal, availableForWelfare);
       const projectSector = rng.pick(profile.projectSectors);
       const projectTier = rng.pick(['small', 'medium', 'large'] as const);
       const tierWeight = projectTier === 'large' ? 3 : projectTier === 'medium' ? 2 : 1;
@@ -653,19 +1397,35 @@ export class InMediaResInitializer {
 
       const militaryUpkeep = Math.max(
         3,
-        Math.round(((mix.defense ?? 0) * 2.5 + (mix.manufacturing ?? 0) * 0.5 + 4) * profile.militaryFocus),
+        Math.round(
+          ((mixTotals.defense ?? 0) * 2.5 + (mixTotals.manufacturing ?? 0) * 0.5 + 4) *
+            profile.militaryFocus,
+        ),
       );
       const discretionaryMilitary = Math.max(0, Math.round(militaryUpkeep * 0.15));
       const militarySpend = militaryUpkeep + discretionaryMilitary;
 
+      const interestRate = economy.finance.interestRate ?? 0.05;
+      const debtSample = Math.round(stableRevenue * rng.nextRange(0.4, 0.7));
+      const startInDebt = rng.nextBoolean();
+      const debt = startInDebt ? debtSample : 0;
+      const interest = Math.round(debt * interestRate * 100) / 100;
+      const creditLimit = Math.max(debtSample + 20, Math.round(stableRevenue * profile.creditLimitMultiplier));
+      const totalOps = omCostTotal + idleCostTotal;
+      const totalObligations =
+        interest + totalOps + welfarePlan.cost + militarySpend + projectSpendPerTurn;
       const buffer = Math.max(8, Math.round(stableRevenue * 0.25));
-      const totalOps = omCost + idleCost;
-      const totalObligations = interest + totalOps + welfarePlan.cost + militarySpend + projectSpendPerTurn;
       let treasury = startInDebt ? 0 : buffer;
       const initialTreasury = totalObligations + treasury;
-
+      const energyRatio =
+        energyDemandTotal > 0
+          ? Math.min(Math.max(energySupplyTotal / energyDemandTotal, 0.95), 1.05)
+          : 1;
+      const logisticsRatio =
+        logisticsDemandTotal > 0
+          ? Math.min(Math.max(logisticsSupplyTotal / logisticsDemandTotal, 0.95), 1.05)
+          : 1;
       const energyShort = energyRatio < 0.98;
-      const logisticsRatio = logistics.demand > 0 ? logistics.supply / logistics.demand : 1;
       const logisticsShort = logisticsRatio < 0.98;
       const debtStress = creditLimit > 0 ? debt / creditLimit > 0.85 : false;
       const projectDelayed = energyShort || logisticsShort || debtStress;
@@ -673,55 +1433,22 @@ export class InMediaResInitializer {
         projectTurns += 1;
       }
 
-      const plantsEffective = plantPlan.plants.map((plant) => ({ ...plant }));
-      aggregate.plants.push(...plantsEffective);
-      for (const [resource, amount] of Object.entries(plantPlan.fuel)) {
-        aggregate.fuelUsed[resource as ResourceType] =
-          (aggregate.fuelUsed[resource as ResourceType] ?? 0) + amount!;
-      }
+      const averageHappiness =
+        layout.cantons.length > 0 ? happinessAccumulator / layout.cantons.length : 0.6;
+      const averageLai = layout.cantons.length > 0 ? laiAccumulator / layout.cantons.length : 1;
 
-      // Update canton economic details.
-      canton.sectors = sectorStates;
-      canton.labor = { ...laborBuffer };
-      canton.laborDemand = {};
-      canton.laborAssigned = {};
-      for (const [sectorKey, funded] of Object.entries(mix)) {
-        const sector = sectorKey as SectorType;
-        const type = SECTOR_LABOR_TYPES[sector];
-        if (!type) continue;
-        const demand: any = { general: 0, skilled: 0, specialist: 0 };
-        demand[type] = funded;
-        canton.laborDemand[sector] = demand;
-        const assigned: any = { general: 0, skilled: 0, specialist: 0 };
-        assigned[type] = funded;
-        canton.laborAssigned[sector] = assigned;
-      }
-      canton.lai = lai;
-      canton.happiness = rng.nextRange(0.3, 0.8) + (luxuryStock >= labor.total ? 0.4 : 0);
-      canton.consumption = {
-        foodRequired: labor.total,
-        foodProvided: Math.min(foodStock, labor.total),
-        luxuryRequired: labor.total,
-        luxuryProvided: Math.min(luxuryStock, labor.total),
-      };
-      canton.shortages = { food: false, luxury: false };
-      canton.urbanizationLevel = 4 + rng.nextInt(3);
-      canton.nextUrbanizationLevel = canton.urbanizationLevel;
-      canton.development = rng.nextRange(1, 2);
-      canton.geography = coastal
-        ? { plains: 0.5, coast: 0.3, hills: 0.2 }
-        : { plains: 0.6, hills: 0.25, woods: 0.15 };
-      canton.suitability = {};
-      canton.suitabilityMultipliers = {};
-      for (const sector of Object.keys(mix)) {
-        canton.suitability[sector as SectorType] = Math.round((0.75 + rng.nextRange(0, 0.2)) * 100);
-        canton.suitabilityMultipliers[sector as SectorType] = 1 + rng.nextRange(-0.05, 0.05);
-      }
+      const projectHost = layout.cantons.reduce((best, current) => {
+        const bestSuit = economy.cantons[best].suitability[projectSector] ?? -Infinity;
+        const currentSuit = economy.cantons[current.id].suitability[projectSector] ?? -Infinity;
+        if (currentSuit > bestSuit) {
+          return current.id;
+        }
+        return best;
+      }, capitalId);
 
-      // Prepare project entry.
       const project = {
         id: aggregate.projectId++,
-        canton: cantonId,
+        canton: projectHost,
         sector: projectSector,
         tier: projectTier,
         slots: tierWeight,
@@ -737,24 +1464,21 @@ export class InMediaResInitializer {
         id: playerId,
         name: input.name,
         preset: input.preset,
-        canton: cantonId,
-        coastal,
-        signature: `${profile.nonUniformityTag}-${mix.finance ?? 0}-${mix.research ?? 0}-${mix.defense ?? 0}`,
+        canton: capitalId,
+        coastal: nationCoastal,
+        signature: `${profile.nonUniformityTag}-${layout.cantons.length}-${mixTotals.finance ?? 0}-${mixTotals.research ?? 0}`,
         energy: {
-          supply: Math.round(effectiveEnergySupply * 100) / 100,
-          demand: energyDemand,
+          supply: Math.round(energySupplyTotal * 100) / 100,
+          demand: Math.round(energyDemandTotal * 100) / 100,
           ratio: Math.round(energyRatio * 1000) / 1000,
-          plants: plantsEffective,
+          plants: plantsForNation,
           throttledSectors: {},
         },
         logistics: {
-          supply: Math.round(Math.min(logistics.supply, logistics.demand * 1.05) * 100) / 100,
-          demand: Math.round(logistics.demand * 100) / 100,
-          ratio:
-            logistics.demand > 0
-              ? Math.round(Math.min(Math.max(logistics.supply / logistics.demand, 0.95), 1.05) * 1000) / 1000
-              : 1,
-          slots: mix.logistics,
+          supply: Math.round(logisticsSupplyTotal * 100) / 100,
+          demand: Math.round(logisticsDemandTotal * 100) / 100,
+          ratio: Math.round(logisticsRatio * 1000) / 1000,
+          slots: mixTotals.logistics ?? 0,
           throttledSectors: {},
         },
         welfare: {
@@ -781,11 +1505,16 @@ export class InMediaResInitializer {
           },
         },
         labor: {
-          available: laborBuffer,
-          assigned: labor.demand,
-          lai,
-          happiness: canton.happiness,
-          consumption: { ...canton.consumption },
+          available: laborAvailableTotal,
+          assigned: laborAssignedTotal,
+          lai: averageLai,
+          happiness: averageHappiness,
+          consumption: {
+            foodRequired: laborConsumptionFood,
+            foodProvided: laborConsumptionFood,
+            luxuryRequired: laborConsumptionLuxury,
+            luxuryProvided: laborConsumptionLuxury,
+          },
         },
         stockpiles: {
           food: foodStock,
@@ -801,7 +1530,7 @@ export class InMediaResInitializer {
           funded: militarySpend,
           discretionary: discretionaryMilitary,
         },
-        sectors: cloneSectorStates(sectorStates),
+        sectors: cloneSectorStates(aggregatedSectorStates),
         projects: [
           {
             id: project.id,
@@ -811,7 +1540,7 @@ export class InMediaResInitializer {
             delayed: projectDelayed,
           },
         ],
-        idleCost: Math.round(idleCost * 100) / 100,
+        idleCost: Math.round(idleCostTotal * 100) / 100,
         omCost: Math.round(totalOps * 100) / 100,
         status: createEmptyStatusSummary(),
       };
@@ -821,7 +1550,6 @@ export class InMediaResInitializer {
       nationStates[playerId] = nationState;
       metas.push({ id: playerId, name: input.name, preset: input.preset });
 
-      // Aggregate resources across all nations.
       aggregate.gold += treasury;
       aggregate.food += foodStock;
       aggregate.materials += materialsStock;
@@ -829,20 +1557,36 @@ export class InMediaResInitializer {
       aggregate.luxury += luxuryStock;
       aggregate.ordnance += ordnanceStock;
       aggregate.production += productionStock;
-      aggregate.energySupply += effectiveEnergySupply;
-      aggregate.energyDemand += energyDemand;
-      aggregate.logisticsSupply += Math.min(logistics.supply, logistics.demand * 1.05);
-      aggregate.logisticsDemand += logistics.demand;
+      aggregate.energySupply += energySupplyTotal;
+      aggregate.energyDemand += energyDemandTotal;
+      aggregate.logisticsSupply += logisticsSupplyTotal;
+      aggregate.logisticsDemand += logisticsDemandTotal;
       aggregate.revenues += stableRevenue;
       aggregate.expenditures += totalObligations;
       aggregate.interest += interest;
       aggregate.debt += debt;
       aggregate.creditLimit += creditLimit;
 
-      if (plantPlan.fuel.coal) aggregate.coal += Math.round(fuelStock * (plantPlan.fuel.coal / (fuelPerTurn || 1)));
-      if (plantPlan.fuel.oil) aggregate.oil += Math.round(fuelStock * (plantPlan.fuel.oil / (fuelPerTurn || 1)));
-      if (plantPlan.fuel.uranium)
-        aggregate.uranium += Math.round(fuelStock * (plantPlan.fuel.uranium / (fuelPerTurn || 1)));
+      aggregate.plants.push(...plantsForNation);
+      for (const [resource, amount] of Object.entries(fuelUsedForNation)) {
+        aggregate.fuelUsed[resource as ResourceType] =
+          (aggregate.fuelUsed[resource as ResourceType] ?? 0) + (amount ?? 0);
+      }
+      if (fuelUsedForNation.coal) {
+        aggregate.coal += Math.round(
+          fuelStock * ((fuelUsedForNation.coal ?? 0) / (fuelPerTurnTotal || 1)),
+        );
+      }
+      if (fuelUsedForNation.oil) {
+        aggregate.oil += Math.round(
+          fuelStock * ((fuelUsedForNation.oil ?? 0) / (fuelPerTurnTotal || 1)),
+        );
+      }
+      if (fuelUsedForNation.uranium) {
+        aggregate.uranium += Math.round(
+          fuelStock * ((fuelUsedForNation.uranium ?? 0) / (fuelPerTurnTotal || 1)),
+        );
+      }
     });
 
     economy.resources.gold = aggregate.gold;
@@ -900,4 +1644,14 @@ export class InMediaResInitializer {
 
 export const __test = {
   resolveWelfare,
+  computeCantonGeography,
+  detectCoastal,
+  buildNationLayout,
+  allocateSlots,
+  computeSectorWeight,
+  chooseCantonCount,
+  ensureSuitabilityDefaults,
+  DEFAULT_GEOGRAPHY_MODIFIERS,
+  DEFAULT_UL_MODIFIERS,
+  assignLaborToCanton,
 };

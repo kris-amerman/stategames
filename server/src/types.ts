@@ -387,6 +387,14 @@ export interface CantonEconomy {
   suitability: Partial<Record<SectorType, number>>;
   /** Cached suitability multiplier by sector applied after all other gates. */
   suitabilityMultipliers: Partial<Record<SectorType, number>>;
+  /** Firm energy that can reach this canton this turn. */
+  energyDelivery: number;
+  /** Logistics points that can be marshalled locally this turn. */
+  logisticsDelivery: number;
+  /** Adjacent cantons reachable overland. */
+  neighbors: string[];
+  /** Cells that compose the canton territory. */
+  territory: number[];
 }
 
 export type InfrastructureType = 'airport' | 'port' | 'rail';
@@ -459,6 +467,10 @@ export interface TradeState {
 export interface EconomyState {
   resources: Resources;
   cantons: { [cantonId: string]: CantonEconomy };
+  /** Mapping of canton id to owned cell indices. */
+  cantonTerritories: Record<string, number[]>;
+  /** Undirected adjacency between cantons for domestic logistics. */
+  cantonAdjacency: Record<string, string[]>;
   /** Slots undergoing retooling and their timers */
   retoolQueue: RetoolOrder[];
   /** Energy system tracking */

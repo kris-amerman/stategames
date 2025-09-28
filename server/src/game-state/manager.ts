@@ -397,27 +397,7 @@ export class GameStateManager {
         national.rail = cantonId;
       }
 
-      // Check if the capital cell is coastal for port placement
-      let coastal = false;
-      const start = cellOffsets[capital];
-      const end = cellOffsets[capital + 1];
-      for (let i = start; i < end; i++) {
-        const nb = cellNeighbors[i];
-        if (nb < 0) continue;
-        const biome = biomes[nb];
-        if (biome === SHALLOW_OCEAN || biome === DEEP_OCEAN) {
-          coastal = true;
-          break;
-        }
-      }
-
-      if (coastal) {
-        gameState.economy.infrastructure.ports[cantonId] = { ...base };
-        const national = gameState.economy.infrastructure.national as Record<string, string | undefined>;
-        if (!national.port) {
-          national.port = cantonId;
-        }
-      }
+      // Port placement handled during in-media-res setup to respect canton layout
     }
   }
 

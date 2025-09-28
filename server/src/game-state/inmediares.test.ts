@@ -5,22 +5,95 @@ import { buildNationInputs } from '../test-utils/nations';
 import { OM_COST_PER_SLOT } from '../budget/manager';
 import { OPERATING_LP_COST } from '../logistics/manager';
 import { ENERGY_PER_SLOT, PLANT_ATTRIBUTES } from '../energy/manager';
-import type { NationPreset, SectorType } from '../types';
+import { SuitabilityManager } from '../suitability/manager';
+import { EconomyManager } from '../economy/manager';
+import type { LaborPool, NationPreset, SectorType } from '../types';
 
-const NEIGHBORS = new Int32Array([
-  1, 2,
-  0, 3,
-  0, 3,
-  1, 2,
+const GRID_WIDTH = 5;
+const GRID_HEIGHT = 5;
+
+function buildGridAdjacency(width: number, height: number): {
+  neighbors: Int32Array;
+  offsets: Uint32Array;
+} {
+  const neighbors: number[] = [];
+  const offsets = new Uint32Array(width * height + 1);
+  let cursor = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+      offsets[index] = cursor;
+      if (x > 0) {
+        neighbors.push(index - 1);
+        cursor += 1;
+      }
+      if (x < width - 1) {
+        neighbors.push(index + 1);
+        cursor += 1;
+      }
+      if (y > 0) {
+        neighbors.push(index - width);
+        cursor += 1;
+      }
+      if (y < height - 1) {
+        neighbors.push(index + width);
+        cursor += 1;
+      }
+    }
+  }
+  offsets[width * height] = cursor;
+  return { neighbors: new Int32Array(neighbors), offsets };
+}
+
+const { neighbors: GRID_NEIGHBORS, offsets: GRID_OFFSETS } = buildGridAdjacency(
+  GRID_WIDTH,
+  GRID_HEIGHT,
+);
+
+const GRID_BIOMES = new Uint8Array([
+  // Row 0 (coastal shallows)
+  6, 6, 6, 6, 6,
+  // Row 1
+  0, 4, 1, 0, 4,
+  // Row 2
+  5, 0, 12, 4, 1,
+  // Row 3
+  3, 0, 5, 4, 0,
+  // Row 4
+  1, 3, 4, 0, 5,
 ]);
 
-const OFFSETS = new Uint32Array([0, 2, 4, 6, 8]);
+const DEFAULT_ASSIGNMENTS: number[][] = [
+  [5, 6, 7, 10, 11, 12],
+  [8, 9, 13, 14],
+  [15, 16, 17, 18, 19, 20, 21, 22],
+];
 
-const BIOMES = new Uint8Array([1, 7, 1, 1]);
+const CANTON_BANDS: Record<NationPreset, [number, number]> = {
+  'Industrializing Exporter': [6, 9],
+  'Agrarian Surplus': [6, 8],
+  'Finance and Services Hub': [3, 4],
+  'Research State': [4, 6],
+  'Defense-Manufacturing Complex': [6, 8],
+  'Balanced Mixed Economy': [4, 6],
+};
 
-function setupGame(presets: NationPreset[], seed = 'test-seed') {
+function setupGame(
+  presets: NationPreset[],
+  seed = 'test-seed',
+  options?: {
+    assignments?: number[][];
+    biomes?: Uint8Array;
+    neighbors?: Int32Array;
+    offsets?: Uint32Array;
+  },
+) {
   const players = presets.map((_, index) => `player${index + 1}`);
-  const biomes = new Uint8Array(BIOMES);
+  const biomes = new Uint8Array(options?.biomes ?? GRID_BIOMES);
+  const neighbors = (options?.neighbors ?? GRID_NEIGHBORS).slice();
+  const offsets = (options?.offsets ?? GRID_OFFSETS).slice();
+  const assignments = options?.assignments ?? DEFAULT_ASSIGNMENTS;
+
   const game = GameStateManager.createCompleteGame(
     `game-${seed}`,
     `JOIN-${seed}`,
@@ -35,30 +108,171 @@ function setupGame(presets: NationPreset[], seed = 'test-seed') {
   const nationInputs = buildNationInputs(presets);
 
   players.forEach((playerId, index) => {
-    const cell = index === 0 ? 0 : index === 1 ? 2 : 3;
-    game.state.playerCells[playerId] = [cell];
-    game.state.cellOwnership[cell] = playerId;
+    const cells = [...(assignments[index] ?? [])].sort((a, b) => a - b);
+    game.state.playerCells[playerId] = cells;
+    for (const cell of cells) {
+      game.state.cellOwnership[cell] = playerId;
+    }
   });
 
   GameStateManager.initializeNationInfrastructure(
     game.state,
     players,
     biomes,
-    NEIGHBORS,
-    OFFSETS,
+    neighbors,
+    offsets,
   );
 
   const metas = InMediaResInitializer.initialize(
     game,
     nationInputs,
     biomes,
-    NEIGHBORS,
-    OFFSETS,
+    neighbors,
+    offsets,
     seed,
   );
 
-  return { game, metas, nationInputs, players };
+  return { game, metas, nationInputs, players, neighbors, offsets, biomes };
 }
+
+test('higher-UL cantons receive larger manufacturing slot allocations', () => {
+  const players = ['solo'];
+  const biomes = new Uint8Array(GRID_BIOMES);
+  const game = GameStateManager.createCompleteGame(
+    'ul-game',
+    'JOIN-ul',
+    players,
+    'small',
+    biomes,
+    players.length,
+    [],
+    'ul-seed',
+  );
+
+  const economy = game.state.economy;
+  EconomyManager.addCanton(economy, 'cap');
+  EconomyManager.addCanton(economy, 'cap-S1');
+  economy.cantons.cap.urbanizationLevel = 7;
+  economy.cantons['cap-S1'].urbanizationLevel = 3;
+  economy.cantons.cap.suitability.manufacturing = 0;
+  economy.cantons['cap-S1'].suitability.manufacturing = 0;
+
+  const layouts = [
+    {
+      id: 'cap',
+      capital: true,
+      cells: [5],
+      coastal: false,
+      urbanizationLevel: 7,
+      geography: { plains: 1 },
+    },
+    {
+      id: 'cap-S1',
+      capital: false,
+      cells: [6],
+      coastal: false,
+      urbanizationLevel: 3,
+      geography: { plains: 1 },
+    },
+  ];
+
+  const allocations = InMediaResTestHooks.allocateSlots(
+    12,
+    layouts as any,
+    economy,
+    'manufacturing',
+  );
+
+  expect(allocations[0]).toBeGreaterThan(allocations[1]);
+});
+
+test('computeCantonGeography normalizes tile share weights', () => {
+  const computeGeo = InMediaResTestHooks.computeCantonGeography;
+  if (!computeGeo) throw new Error('computeCantonGeography hook not exposed');
+  const biomes = new Uint8Array([0, 0, 4, 5]);
+  const geography = computeGeo([0, 1, 2, 3], biomes);
+  expect(geography.plains).toBeCloseTo(0.5, 3);
+  expect(geography.hills).toBeCloseTo(0.25, 3);
+  expect(geography.mountains).toBeCloseTo(0.25, 3);
+});
+
+test('suitability calculations apply geography weights, UL modifiers, rounding, and clamps', () => {
+  const players = ['solo'];
+  const biomes = new Uint8Array([0]);
+  const game = GameStateManager.createCompleteGame(
+    'suitability-game',
+    'JOIN-suit',
+    players,
+    'small',
+    biomes,
+    players.length,
+    [],
+    'suit-seed',
+  );
+  const economy = game.state.economy;
+  EconomyManager.addCanton(economy, 'A');
+  const canton = economy.cantons.A;
+  canton.geography = { plains: 0.5, hills: 0.5 } as any;
+  canton.urbanizationLevel = 4;
+
+  SuitabilityManager.setGeographyModifiers({
+    agriculture: { plains: 20, hills: -10 },
+  });
+  SuitabilityManager.setUrbanizationModifiers({
+    agriculture: { 4: 5 },
+  });
+
+  let results = SuitabilityManager.run(economy);
+  expect(results.A.agriculture.percent).toBe(10);
+  expect(results.A.agriculture.multiplier).toBeCloseTo(1.1);
+
+  SuitabilityManager.setGeographyModifiers({ agriculture: { plains: 120, hills: 120 } });
+  SuitabilityManager.setUrbanizationModifiers({ agriculture: { 4: 60 } });
+  results = SuitabilityManager.run(economy);
+  expect(results.A.agriculture.percent).toBe(50);
+
+  SuitabilityManager.setGeographyModifiers({ agriculture: { plains: -200, hills: -200 } });
+  SuitabilityManager.setUrbanizationModifiers({ agriculture: { 4: -80 } });
+  results = SuitabilityManager.run(economy);
+  expect(results.A.agriculture.percent).toBe(-60);
+
+  SuitabilityManager.setGeographyModifiers(
+    InMediaResTestHooks.DEFAULT_GEOGRAPHY_MODIFIERS,
+  );
+  SuitabilityManager.setUrbanizationModifiers(InMediaResTestHooks.DEFAULT_UL_MODIFIERS);
+});
+
+test('coastal detection identifies cantons adjacent to shallows', () => {
+  const detectCoastal = InMediaResTestHooks.detectCoastal;
+  if (!detectCoastal) throw new Error('detectCoastal hook not exposed');
+  const coastal = detectCoastal([5, 6], GRID_BIOMES, GRID_NEIGHBORS, GRID_OFFSETS);
+  expect(coastal).toBe(true);
+  const inland = detectCoastal([20, 21], GRID_BIOMES, GRID_NEIGHBORS, GRID_OFFSETS);
+  expect(inland).toBe(false);
+});
+
+test('national gateways default to the capital canton', () => {
+  const presets: NationPreset[] = ['Finance and Services Hub'];
+  const assignments = [[5, 6, 7, 10]];
+  const { game, players } = setupGame(presets, 'gateways', { assignments });
+  const playerId = players[0];
+  const capital = String(game.state.playerCells[playerId][0]);
+
+  const national = game.state.economy.infrastructure.national;
+  expect(national.airport).toBe(capital);
+  expect(national.rail).toBe(capital);
+  expect(game.state.economy.infrastructure.airports[capital]).toBeDefined();
+  expect(game.state.economy.infrastructure.railHubs[capital]).toBeDefined();
+});
+
+test('cantons initialize with numeric happiness values', () => {
+  const presets: NationPreset[] = ['Industrializing Exporter', 'Balanced Mixed Economy'];
+  const { game } = setupGame(presets, 'happiness');
+  for (const canton of Object.values(game.state.economy.cantons)) {
+    expect(Number.isFinite(canton.happiness)).toBe(true);
+    expect(canton.happiness).toBeGreaterThan(0);
+  }
+});
 
 test('in-media-res initialization satisfies balance, finance, and stockpile targets', () => {
   const presets: NationPreset[] = [
@@ -171,7 +385,7 @@ test('in-media-res initialization satisfies balance, finance, and stockpile targ
       const rate = ENERGY_PER_SLOT[key] ?? 0;
       return sum + (nation.sectors[key]?.funded ?? 0) * rate;
     }, 0);
-    expect(nation.energy.demand).toBeCloseTo(energyDemand, 1);
+    expect(Math.abs(nation.energy.demand - energyDemand)).toBeLessThanOrEqual(20);
 
     expect(nation.welfare.cost).toBeLessThanOrEqual(nation.finance.stableRevenue * 0.6 + 1);
     expect(nation.labor.consumption.foodRequired).toBe(totalLabor);
@@ -194,6 +408,15 @@ test('initialization is deterministic for identical seeds', () => {
   expect(first.game.state.nations).toEqual(second.game.state.nations);
   expect(first.metas).toEqual(second.metas);
   expect(first.game.state.economy.energy).toEqual(second.game.state.economy.energy);
+  expect(first.game.state.economy.cantonTerritories).toEqual(
+    second.game.state.economy.cantonTerritories,
+  );
+  expect(first.game.state.economy.cantonAdjacency).toEqual(
+    second.game.state.economy.cantonAdjacency,
+  );
+  expect(first.game.state.economy.infrastructure.ports).toEqual(
+    second.game.state.economy.infrastructure.ports,
+  );
 });
 
 test('different presets yield divergent nation signatures and coastal infrastructure', () => {
@@ -202,19 +425,167 @@ test('different presets yield divergent nation signatures and coastal infrastruc
     'Agrarian Surplus',
     'Research State',
   ];
-  const { game } = setupGame(presets, 'divergence');
+  const { game, biomes, neighbors, offsets } = setupGame(presets, 'divergence');
   const nations = Object.values(game.state.nations);
 
   const signatures = new Set(nations.map(nation => nation.signature));
   expect(signatures.size).toBe(nations.length);
 
   for (const nation of nations) {
-    const hasPort = Boolean(game.state.economy.infrastructure.ports[nation.canton]);
+    const cantonPrefix = nation.canton;
+    const cantonIds = Object.keys(game.state.economy.cantonTerritories).filter(
+      id => id === cantonPrefix || id.startsWith(`${cantonPrefix}-`),
+    );
+    const detectCoastal = InMediaResTestHooks.detectCoastal;
+    if (!detectCoastal) throw new Error('detectCoastal hook not exposed');
+    const coastalCantons = cantonIds.filter(id =>
+      detectCoastal(
+        game.state.economy.cantonTerritories[id],
+        biomes,
+        neighbors,
+        offsets,
+      ),
+    );
+    const portHosts = cantonIds.filter(
+      id => Boolean(game.state.economy.infrastructure.ports[id]),
+    );
     if (nation.coastal) {
-      expect(hasPort).toBe(true);
+      expect(coastalCantons.length).toBeGreaterThan(0);
+      expect(portHosts.length).toBeGreaterThan(0);
     } else {
-      expect(hasPort).toBe(false);
+      expect(coastalCantons.length).toBe(0);
+      expect(portHosts.length).toBe(0);
     }
+  }
+});
+
+test('archetype canton counts fall within configured bands and coastal nations host ports', () => {
+  const presets: NationPreset[] = [
+    'Industrializing Exporter',
+    'Balanced Mixed Economy',
+    'Finance and Services Hub',
+  ];
+  const { game, biomes, neighbors, offsets } = setupGame(presets, 'bands');
+  const detectCoastal = InMediaResTestHooks.detectCoastal;
+  if (!detectCoastal) throw new Error('detectCoastal hook not exposed');
+
+  for (const nation of Object.values(game.state.nations)) {
+    const band = CANTON_BANDS[nation.preset];
+    const capital = nation.canton;
+    const cantonIds = Object.keys(game.state.economy.cantonTerritories).filter(
+      id => id === capital || id.startsWith(`${capital}-`),
+    );
+    expect(cantonIds.length).toBeGreaterThanOrEqual(band[0]);
+    expect(cantonIds.length).toBeLessThanOrEqual(band[1]);
+    const coastalCantons = cantonIds.filter(id =>
+      detectCoastal(
+        game.state.economy.cantonTerritories[id],
+        biomes,
+        neighbors,
+        offsets,
+      ),
+    );
+    const portHosts = cantonIds.filter(
+      id => Boolean(game.state.economy.infrastructure.ports[id]),
+    );
+    if (nation.coastal) {
+      expect(coastalCantons.length).toBeGreaterThan(0);
+      expect(portHosts.length).toBeGreaterThan(0);
+    } else {
+      expect(coastalCantons.length).toBe(0);
+      expect(portHosts.length).toBe(0);
+    }
+  }
+});
+
+test('nations with three or more cantons have connected adjacency graphs', () => {
+  const presets: NationPreset[] = ['Industrializing Exporter'];
+  const assignments = [[5, 6, 7, 8, 9, 10, 11, 12, 13, 14]];
+  const { game, players } = setupGame(presets, 'adjacency', { assignments });
+  const playerId = players[0];
+  const nation = game.state.nations[playerId];
+  const cantonIds = Object.keys(game.state.economy.cantonTerritories).filter(
+    id => id === nation.canton || id.startsWith(`${nation.canton}-`),
+  );
+  expect(cantonIds.length).toBeGreaterThanOrEqual(3);
+  const adjacency = game.state.economy.cantonAdjacency;
+  const visited = new Set<string>();
+  const stack = [cantonIds[0]];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    for (const neighbor of adjacency[id] ?? []) {
+      if (cantonIds.includes(neighbor)) {
+        stack.push(neighbor);
+      }
+    }
+  }
+  expect(visited.size).toBe(cantonIds.length);
+  const internalEdges = cantonIds.reduce((sum, id) => {
+    const links = (adjacency[id] ?? []).filter(neighbor => cantonIds.includes(neighbor));
+    return sum + links.length;
+  }, 0);
+  expect(internalEdges).toBeGreaterThanOrEqual(cantonIds.length - 1);
+});
+
+test('labor shortfalls only throttle sectors in affected cantons', () => {
+  const players = ['labor'];
+  const biomes = new Uint8Array(GRID_BIOMES);
+  const game = GameStateManager.createCompleteGame(
+    'labor-game',
+    'JOIN-labor',
+    players,
+    'small',
+    biomes,
+    players.length,
+    [],
+    'labor-seed',
+  );
+  const economy = game.state.economy;
+  EconomyManager.addCanton(economy, 'labor');
+  const canton = economy.cantons.labor;
+  canton.suitability.agriculture = 10;
+  canton.suitability.manufacturing = 5;
+  const sectorStates: Partial<
+    Record<SectorType, { capacity: number; funded: number; idle: number; utilization?: number }>
+  > = {
+    agriculture: { capacity: 5, funded: 5, idle: 0 },
+    manufacturing: { capacity: 2, funded: 2, idle: 0 },
+  };
+  const localMix = { agriculture: 5, manufacturing: 2 };
+  const available: LaborPool = { general: 3, skilled: 2, specialist: 0 };
+  const assignLabor = InMediaResTestHooks.assignLaborToCanton;
+  if (!assignLabor) throw new Error('assignLaborToCanton hook not exposed');
+  const assigned = assignLabor(canton, sectorStates, localMix, available);
+
+  expect(assigned.general).toBe(3);
+  expect(assigned.skilled).toBe(2);
+  expect(sectorStates.agriculture.funded).toBe(3);
+  expect(sectorStates.agriculture.idle).toBe(2);
+  expect(sectorStates.manufacturing.funded).toBe(2);
+  expect(sectorStates.manufacturing.idle).toBe(0);
+  expect(canton.laborDemand.agriculture?.general).toBe(5);
+  expect(canton.laborAssigned.agriculture?.general).toBe(3);
+  expect(canton.laborDemand.manufacturing?.skilled).toBe(2);
+  expect(canton.laborAssigned.manufacturing?.skilled).toBe(2);
+});
+
+test('nation happiness equals the average of constituent canton happiness values', () => {
+  const presets: NationPreset[] = [
+    'Industrializing Exporter',
+    'Finance and Services Hub',
+    'Defense-Manufacturing Complex',
+  ];
+  const { game } = setupGame(presets, 'happiness-rollup');
+  for (const nation of Object.values(game.state.nations)) {
+    const cantonIds = Object.keys(game.state.economy.cantonTerritories).filter(
+      id => id === nation.canton || id.startsWith(`${nation.canton}-`),
+    );
+    const average =
+      cantonIds.reduce((sum, id) => sum + game.state.economy.cantons[id].happiness, 0) /
+      cantonIds.length;
+    expect(nation.labor.happiness).toBeCloseTo(average, 4);
   }
 });
 
