@@ -27,6 +27,27 @@ export let currentGameEntities: { [entityId: number]: any } = {};
 export let currentTerritoryData: { [cellId: number]: string } = {};
 export let currentGameTerrain: Uint8Array | null = null;
 
+export type MapHighlightMode = 'nation' | 'canton';
+
+interface CantonVisual {
+  id: string;
+  nationId: string;
+  nationName: string;
+  name: string;
+  fillColor: string;
+  strokeColor: string;
+  capital: boolean;
+  urbanization: number | null;
+  capacity: number;
+  happiness: number | null;
+  cells: number[];
+}
+
+let mapHighlightMode: MapHighlightMode = 'nation';
+let cellCantons: Record<number, string> = {};
+let cantonVisuals: Record<string, CantonVisual> = {};
+let cantonTooltip: HTMLDivElement | null = null;
+
 export let currentGameId: string | null = null;
 export let currentPlayerName: string | null = null;
 export let isGameCreator = false;
@@ -37,6 +58,9 @@ export function initGame(gameCanvas: HTMLCanvasElement, context: CanvasRendering
   ctx = context;
 
   canvas.addEventListener('click', handleCellClick);
+  canvas.addEventListener('mousemove', handleCanvasHover);
+  canvas.addEventListener('mouseleave', hideCantonTooltip);
+  ensureCantonTooltip();
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && selectedUnitId !== null) {
@@ -52,6 +76,19 @@ export function handleActionResult(data: any): void {
   if (!data.success) {
     showGameNotification(data.error || 'Action failed', 'error');
   }
+}
+
+export function setMapHighlightMode(mode: MapHighlightMode): void {
+  if (mapHighlightMode === mode) return;
+  mapHighlightMode = mode;
+  if (mode === 'nation') {
+    hideCantonTooltip();
+  }
+  renderGameState();
+}
+
+export function getMapHighlightMode(): MapHighlightMode {
+  return mapHighlightMode;
 }
 
 export function handleGameUpdate(data: any): void {
@@ -77,6 +114,7 @@ export function handleGameUpdate(data: any): void {
       console.log('Updated entities:', currentGameEntities);
     }
 
+    ingestCantonData(gameState);
     renderGameState();
     updatePlannerSnapshot(gameState);
     updateStatusBarFromGameState(gameState, currentPlayerName);
@@ -140,6 +178,7 @@ export function processGameData(gameData: any): void {
       console.log('Initial entities:', currentGameEntities);
     }
 
+    ingestCantonData(gameData.state);
     let terrainData: Uint8Array;
     if (gameData.map.biomes.__typedArray) {
       terrainData = deserializeTypedArrays(gameData.map.biomes);
@@ -172,6 +211,83 @@ export function processGameData(gameData: any): void {
     console.error('Failed to process game data:', error);
     showError(`Failed to process game data: ${error.message}`);
   }
+}
+
+function ingestCantonData(gameState: any): void {
+  cellCantons = {};
+  cantonVisuals = {};
+
+  const cellMap = gameState?.cellCantons ?? {};
+  for (const [cellKey, cantonId] of Object.entries(cellMap)) {
+    const parsed = Number(cellKey);
+    if (!Number.isNaN(parsed) && typeof cantonId === 'string') {
+      cellCantons[parsed] = cantonId;
+    }
+  }
+
+  const economy = gameState?.economy ?? {};
+  const territories: Record<string, number[]> = economy.cantonTerritories ?? {};
+  const cantonStates: Record<string, any> = economy.cantons ?? {};
+  const nations: Record<string, any> = gameState?.nations ?? {};
+
+  const nationIds = Object.keys(nations).sort();
+  nationIds.forEach((nationId, index) => {
+    const nation = nations[nationId];
+    if (!nation) return;
+    const cantonIds: string[] = Array.isArray(nation.cantonIds) ? nation.cantonIds : [];
+    const baseHue = (index * 137 + 23) % 360;
+    let satelliteOrdinal = 1;
+
+    cantonIds.forEach((cantonId, cantonIndex) => {
+      const cantonState = cantonStates[cantonId];
+      const cells = Array.isArray(territories[cantonId])
+        ? [...territories[cantonId]]
+        : [];
+      const isCapital = nation.capitalCanton === cantonId;
+      const fillColor = computeCantonFillColor(baseHue, cantonIndex, cantonIds.length);
+      const strokeColor = computeCantonStrokeColor(baseHue, cantonIndex, cantonIds.length);
+      const capacity = Object.values(cantonState?.sectors ?? {}).reduce(
+        (sum: number, sector: any) => sum + (sector?.capacity ?? 0),
+        0,
+      );
+      const urbanization = typeof cantonState?.urbanizationLevel === 'number'
+        ? cantonState.urbanizationLevel
+        : null;
+      const happiness = typeof cantonState?.happiness === 'number'
+        ? cantonState.happiness
+        : null;
+      const name = isCapital
+        ? `${nation.name} Capital`
+        : `${nation.name} Canton ${satelliteOrdinal++}`;
+
+      cantonVisuals[cantonId] = {
+        id: cantonId,
+        nationId,
+        nationName: nation.name,
+        name,
+        fillColor,
+        strokeColor,
+        capital: isCapital,
+        urbanization,
+        capacity,
+        happiness,
+        cells,
+      };
+    });
+  });
+}
+
+function computeCantonFillColor(baseHue: number, index: number, total: number): string {
+  const hue = (baseHue + (index * 47) % 360) % 360;
+  const saturation = 68;
+  const lightnessBase = 58 - Math.min(18, index * 6);
+  const lightness = Math.max(28, lightnessBase);
+  return `hsla(${hue}, ${saturation}%, ${lightness}%, 0.55)`;
+}
+
+function computeCantonStrokeColor(baseHue: number, index: number, total: number): string {
+  const hue = (baseHue + (index * 47) % 360) % 360;
+  return `hsla(${hue}, 70%, 25%, 0.85)`;
 }
 
 export function renderGameState(): void {
@@ -260,7 +376,16 @@ function drawEntityMarker(cellId: number, owner: string, isSelected: boolean = f
 }
 
 function drawTerritoryOverlay(): void {
-  if (!meshData || Object.keys(currentTerritoryData).length === 0) {
+  if (!meshData) {
+    return;
+  }
+
+  if (mapHighlightMode === 'canton') {
+    drawCantonOverlay();
+    return;
+  }
+
+  if (Object.keys(currentTerritoryData).length === 0) {
     return;
   }
 
@@ -294,6 +419,219 @@ function drawTerritoryOverlay(): void {
     ctx.closePath();
     ctx.fill();
   }
+}
+
+function drawCantonOverlay(): void {
+  if (!meshData) return;
+  if (Object.keys(cantonVisuals).length === 0) return;
+
+  ctx.save();
+  const nCells = meshData.cellCount;
+
+  for (let cellId = 0; cellId < nCells; cellId++) {
+    const cantonId = cellCantons[cellId];
+    if (!cantonId) continue;
+    const visual = cantonVisuals[cantonId];
+    if (!visual) continue;
+
+    const start = meshData.cellOffsets[cellId];
+    const end = meshData.cellOffsets[cellId + 1];
+    if (start >= end) continue;
+
+    ctx.fillStyle = visual.fillColor;
+    ctx.beginPath();
+    const v0 = meshData.cellVertexIndices[start];
+    ctx.moveTo(meshData.allVertices[v0 * 2], meshData.allVertices[v0 * 2 + 1]);
+    for (let idx = start + 1; idx < end; idx++) {
+      const vi = meshData.cellVertexIndices[idx];
+      ctx.lineTo(meshData.allVertices[vi * 2], meshData.allVertices[vi * 2 + 1]);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  for (let cellId = 0; cellId < nCells; cellId++) {
+    const cantonId = cellCantons[cellId];
+    if (!cantonId) continue;
+    const visual = cantonVisuals[cantonId];
+    if (!visual) continue;
+
+    const start = meshData.cellOffsets[cellId];
+    const end = meshData.cellOffsets[cellId + 1];
+    if (start >= end) continue;
+
+    let hasCantonBorder = false;
+    let hasNationBorder = false;
+    for (let idx = start; idx < end; idx++) {
+      const neighbor = meshData.cellNeighbors[idx];
+      if (neighbor < 0) {
+        hasNationBorder = true;
+        continue;
+      }
+      const neighborCanton = cellCantons[neighbor];
+      if (neighborCanton !== cantonId) {
+        if (!neighborCanton) {
+          hasNationBorder = true;
+          continue;
+        }
+        hasCantonBorder = true;
+        const neighborVisual = cantonVisuals[neighborCanton];
+        if (!neighborVisual || neighborVisual.nationId !== visual.nationId) {
+          hasNationBorder = true;
+        }
+      }
+    }
+
+    if (!hasCantonBorder && !hasNationBorder) continue;
+
+    ctx.beginPath();
+    const v0 = meshData.cellVertexIndices[start];
+    ctx.moveTo(meshData.allVertices[v0 * 2], meshData.allVertices[v0 * 2 + 1]);
+    for (let idx = start + 1; idx < end; idx++) {
+      const vi = meshData.cellVertexIndices[idx];
+      ctx.lineTo(meshData.allVertices[vi * 2], meshData.allVertices[vi * 2 + 1]);
+    }
+    ctx.closePath();
+
+    if (hasNationBorder) {
+      ctx.lineWidth = 2.6;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+      ctx.stroke();
+    } else if (hasCantonBorder) {
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = visual.strokeColor;
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  ctx.save();
+  for (const visual of Object.values(cantonVisuals)) {
+    if (!visual.capital) continue;
+    const centroid = computeCantonCentroid(visual.cells);
+    if (!centroid) continue;
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';
+    ctx.fillStyle = '#ffd54f';
+    ctx.strokeText('★', centroid.x, centroid.y);
+    ctx.fillText('★', centroid.x, centroid.y);
+  }
+  ctx.restore();
+}
+
+function computeCantonCentroid(cells: number[]): { x: number; y: number } | null {
+  if (!meshData || cells.length === 0) return null;
+  let sumX = 0;
+  let sumY = 0;
+  for (const cell of cells) {
+    const centerIndex = cell * 2;
+    sumX += meshData.cellTriangleCenters[centerIndex];
+    sumY += meshData.cellTriangleCenters[centerIndex + 1];
+  }
+  return {
+    x: sumX / cells.length,
+    y: sumY / cells.length,
+  };
+}
+
+function ensureCantonTooltip(): void {
+  if (cantonTooltip) return;
+  const tooltip = document.createElement('div');
+  tooltip.id = 'cantonTooltip';
+  tooltip.style.position = 'fixed';
+  tooltip.style.pointerEvents = 'none';
+  tooltip.style.background = 'rgba(20, 20, 20, 0.9)';
+  tooltip.style.color = '#fff';
+  tooltip.style.padding = '8px 10px';
+  tooltip.style.borderRadius = '6px';
+  tooltip.style.fontSize = '12px';
+  tooltip.style.boxShadow = '0 2px 6px rgba(0,0,0,0.4)';
+  tooltip.style.display = 'none';
+  tooltip.style.zIndex = '1000';
+  tooltip.style.maxWidth = '240px';
+  document.body.appendChild(tooltip);
+  cantonTooltip = tooltip;
+}
+
+function handleCanvasHover(event: MouseEvent): void {
+  if (mapHighlightMode !== 'canton') {
+    hideCantonTooltip();
+    return;
+  }
+  if (!meshData) return;
+
+  ensureCantonTooltip();
+  if (!cantonTooltip) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const cellId = findCellAtPosition(x, y);
+  if (cellId === -1) {
+    hideCantonTooltip();
+    return;
+  }
+  const cantonId = cellCantons[cellId];
+  if (!cantonId) {
+    hideCantonTooltip();
+    return;
+  }
+  const visual = cantonVisuals[cantonId];
+  if (!visual) {
+    hideCantonTooltip();
+    return;
+  }
+  updateCantonTooltip(event.clientX, event.clientY, visual);
+}
+
+function hideCantonTooltip(): void {
+  if (cantonTooltip) {
+    cantonTooltip.style.display = 'none';
+  }
+}
+
+function updateCantonTooltip(screenX: number, screenY: number, visual: CantonVisual): void {
+  ensureCantonTooltip();
+  if (!cantonTooltip) return;
+
+  const title = visual.capital ? `${visual.name} (Capital)` : visual.name;
+  const happiness = formatDecimal(visual.happiness);
+  const ul = formatInteger(visual.urbanization);
+  const capacity = visual.capacity;
+
+  cantonTooltip.innerHTML = `
+    <div style="font-weight:600; font-size:13px; margin-bottom:2px;">${title}</div>
+    <div style="font-size:12px; color:#ccc;">${visual.nationName}</div>
+    <div style="font-size:11px; color:#eee; margin-top:6px;">UL: ${ul} · Capacity: ${capacity} · Happiness: ${happiness}</div>
+  `;
+
+  cantonTooltip.style.display = 'block';
+  const offsetX = 14;
+  const offsetY = 18;
+  let left = screenX + offsetX;
+  let top = screenY + offsetY;
+  const tooltipRect = cantonTooltip.getBoundingClientRect();
+  if (left + tooltipRect.width > window.innerWidth - 12) {
+    left = screenX - tooltipRect.width - offsetX;
+  }
+  if (top + tooltipRect.height > window.innerHeight - 12) {
+    top = screenY - tooltipRect.height - offsetY;
+  }
+  cantonTooltip.style.left = `${Math.max(8, left)}px`;
+  cantonTooltip.style.top = `${Math.max(8, top)}px`;
+}
+
+function formatInteger(value: number | null): string {
+  if (value === null || value === undefined) return '—';
+  return Math.round(value).toString();
+}
+
+function formatDecimal(value: number | null): string {
+  if (value === null || value === undefined) return '—';
+  return value.toFixed(1);
 }
 
 function clearTurnIndicator(): void {

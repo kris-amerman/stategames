@@ -54,6 +54,7 @@ export class GameStateManager {
 
       // Initialize empty ownership maps
       cellOwnership: {},
+      cellCantons: {},
       playerCells: Object.fromEntries(players.map(p => [p, []])),
       
       // Initialize empty entity tracking

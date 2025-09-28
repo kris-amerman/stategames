@@ -601,6 +601,12 @@ export interface GameState {
   cellOwnership: { [cellId: CellId]: PlayerId };
 
   /**
+   * Maps each cell to its governing canton.
+   * Key: CellId, Value: canton identifier string.
+   */
+  cellCantons: { [cellId: CellId]: string };
+
+  /**
    * Maps each player to the cells they own.
    * Key: PlayerId, Value: Array of CellIds owned by that player
    */

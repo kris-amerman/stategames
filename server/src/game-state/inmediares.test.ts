@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { GameStateManager } from './manager';
 import { InMediaResInitializer, __test as InMediaResTestHooks } from './inmediares';
+import { validateCantonPartition } from './partition';
 import { buildNationInputs } from '../test-utils/nations';
 import { OM_COST_PER_SLOT } from '../budget/manager';
 import { OPERATING_LP_COST } from '../logistics/manager';
@@ -77,6 +78,26 @@ const CANTON_BANDS: Record<NationPreset, [number, number]> = {
   'Defense-Manufacturing Complex': [6, 8],
   'Balanced Mixed Economy': [4, 6],
 };
+
+function cloneTerritories(source: Record<string, number[]>): Record<string, number[]> {
+  return Object.fromEntries(Object.entries(source).map(([id, cells]) => [id, [...cells]]));
+}
+
+function cellsAdjacent(
+  a: number,
+  b: number,
+  neighbors: Int32Array,
+  offsets: Uint32Array,
+): boolean {
+  const start = offsets[a];
+  const end = offsets[a + 1];
+  for (let idx = start; idx < end; idx++) {
+    if (neighbors[idx] === b) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function setupGame(
   presets: NationPreset[],
@@ -417,6 +438,7 @@ test('initialization is deterministic for identical seeds', () => {
   expect(first.game.state.economy.infrastructure.ports).toEqual(
     second.game.state.economy.infrastructure.ports,
   );
+  expect(first.game.state.cellCantons).toEqual(second.game.state.cellCantons);
 });
 
 test('different presets yield divergent nation signatures and coastal infrastructure', () => {
@@ -525,6 +547,128 @@ test('nations with three or more cantons have connected adjacency graphs', () =>
     return sum + links.length;
   }, 0);
   expect(internalEdges).toBeGreaterThanOrEqual(cantonIds.length - 1);
+});
+
+test('canton partitions cover each nation with no overlaps or holes', () => {
+  const presets: NationPreset[] = [
+    'Industrializing Exporter',
+    'Agrarian Surplus',
+    'Finance and Services Hub',
+  ];
+  const { game, neighbors, offsets, biomes } = setupGame(presets, 'partition-valid');
+  for (const nation of Object.values(game.state.nations)) {
+    const result = validateCantonPartition({
+      nationCells: [...game.state.playerCells[nation.id]],
+      cantonIds: [...nation.cantonIds],
+      cantonTerritories: game.state.economy.cantonTerritories,
+      cellOwnership: game.state.cellOwnership,
+      nationId: nation.id,
+      neighbors,
+      offsets,
+      biomes,
+      capitalCanton: nation.capitalCanton,
+    });
+    expect(result.missingCells).toHaveLength(0);
+    expect(result.overlappingCells).toHaveLength(0);
+    expect(result.outOfNationCells).toHaveLength(0);
+    expect(result.disconnectedCantons).toHaveLength(0);
+    expect(result.holedCantons).toHaveLength(0);
+    expect(result.capitalOk).toBe(true);
+    const coastalCantons = nation.cantonIds.filter(id => result.coastal[id]);
+    if (nation.coastal) {
+      expect(coastalCantons.length).toBeGreaterThan(0);
+    } else {
+      expect(coastalCantons.length).toBe(0);
+    }
+  }
+});
+
+test('partition validator flags coverage, overlap, contiguity, hole, and capital issues', () => {
+  const presets: NationPreset[] = ['Industrializing Exporter', 'Research State'];
+  const { game, neighbors, offsets, biomes, players } = setupGame(
+    presets,
+    'partition-flags',
+  );
+  const nation = game.state.nations[players[0]];
+  const cantonIds = [...nation.cantonIds];
+  expect(cantonIds.length).toBeGreaterThanOrEqual(2);
+
+  const territories = cloneTerritories(game.state.economy.cantonTerritories);
+  const baseArgs = {
+    nationCells: [...game.state.playerCells[nation.id]],
+    cantonIds,
+    cellOwnership: game.state.cellOwnership,
+    nationId: nation.id,
+    neighbors,
+    offsets,
+    biomes,
+  } as const;
+  const nationSet = new Set(baseArgs.nationCells);
+
+  const first = cantonIds[0];
+  const second = cantonIds[1];
+  const removed = territories[first].pop();
+  if (removed === undefined) throw new Error('expected canton territory');
+  let result = validateCantonPartition({
+    ...baseArgs,
+    cantonTerritories: territories,
+    capitalCanton: nation.capitalCanton,
+  });
+  expect(result.missingCells).toContain(removed);
+
+  const overlapTerritories = cloneTerritories(game.state.economy.cantonTerritories);
+  overlapTerritories[second].push(removed);
+  result = validateCantonPartition({
+    ...baseArgs,
+    cantonTerritories: overlapTerritories,
+    capitalCanton: nation.capitalCanton,
+  });
+  expect(result.overlappingCells.some(entry => entry.cell === removed)).toBe(true);
+
+  const disconnectedTerritories = cloneTerritories(game.state.economy.cantonTerritories);
+  const anchor = disconnectedTerritories[first][0];
+  let remote = disconnectedTerritories[first].find(
+    cell => cell !== anchor && !cellsAdjacent(anchor, cell, neighbors, offsets),
+  );
+  if (remote === undefined) {
+    for (const candidate of baseArgs.nationCells) {
+      if (candidate !== anchor && !cellsAdjacent(anchor, candidate, neighbors, offsets)) {
+        remote = candidate;
+        break;
+      }
+    }
+  }
+  if (remote !== undefined) {
+    disconnectedTerritories[first] = [anchor, remote];
+    result = validateCantonPartition({
+      ...baseArgs,
+      cantonTerritories: disconnectedTerritories,
+      capitalCanton: nation.capitalCanton,
+    });
+    expect(result.disconnectedCantons).toContain(first);
+  }
+
+  result = validateCantonPartition({
+    ...baseArgs,
+    cantonTerritories: cloneTerritories(game.state.economy.cantonTerritories),
+    capitalCanton: 'non-existent',
+  });
+  expect(result.capitalOk).toBe(false);
+
+  const holeOwnership: Record<number, string> = { 1: 'hole', 5: 'hole', 6: 'hole', 7: 'hole', 11: 'hole' };
+  const holeResult = validateCantonPartition({
+    nationCells: [1, 5, 6, 7, 11],
+    cantonIds: ['A', 'B'],
+    cantonTerritories: { A: [1, 5, 7, 11], B: [6] },
+    cellOwnership: holeOwnership,
+    nationId: 'hole',
+    neighbors,
+    offsets,
+    biomes,
+    capitalCanton: 'A',
+  });
+  expect(holeResult.holedCantons).toContain('A');
+  expect(holeResult.capitalOk).toBe(true);
 });
 
 test('labor shortfalls only throttle sectors in affected cantons', () => {

@@ -472,6 +472,9 @@ function buildNationLayout(
     canton.geography = geo;
     canton.territory = [...cellsList];
     economy.cantonTerritories[cantonId] = [...cellsList];
+    for (const cell of cellsList) {
+      game.state.cellCantons[cell] = cantonId;
+    }
     const neighborSet = new Set<string>();
     for (const cell of cellsList) {
       for (const nb of adjacency.get(cell) ?? []) {

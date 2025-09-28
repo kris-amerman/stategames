@@ -3,6 +3,7 @@ import { deserializeTypedArrays } from './mesh';
 import { showGameNotification } from './notifications';
 import { updateStatusBarFromGameState } from './statusBar';
 import { updateDebugSidebarFromGameState } from './debugSidebar';
+import { setMapHighlightMode, getMapHighlightMode } from './game';
 
 type PlannerContext = () => {
   gameId: string | null;
@@ -89,6 +90,8 @@ interface PlannerElements {
   container: HTMLElement;
   details: HTMLDetailsElement;
   status: HTMLElement;
+  mapToggleNation: HTMLInputElement;
+  mapToggleCanton: HTMLInputElement;
   militaryInput: HTMLInputElement;
   upkeepSpan: HTMLElement;
   gapSpan: HTMLElement;
@@ -927,8 +930,29 @@ function handleModeChange(newMode: 'custom' | 'pro-rata') {
   renderPlanner();
 }
 
+function syncMapViewToggle() {
+  if (!elements) return;
+  const mode = getMapHighlightMode();
+  elements.mapToggleNation.checked = mode === 'nation';
+  elements.mapToggleCanton.checked = mode === 'canton';
+}
+
 function attachEventListeners() {
   if (!elements) return;
+  elements.mapToggleNation.addEventListener('change', () => {
+    if (elements?.mapToggleNation.checked) {
+      setMapHighlightMode('nation');
+      syncMapViewToggle();
+    }
+  });
+
+  elements.mapToggleCanton.addEventListener('change', () => {
+    if (elements?.mapToggleCanton.checked) {
+      setMapHighlightMode('canton');
+      syncMapViewToggle();
+    }
+  });
+
   elements.details.addEventListener('toggle', () => {
     if (elements?.details.open) {
       fetchPlannerData();
@@ -980,6 +1004,17 @@ function attachEventListeners() {
 
 function buildPlannerMarkup(): string {
   return `
+    <div id="mapViewToggle" style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: rgba(255,255,255,0.05); border-radius: 6px;">
+      <span style="font-size: 11px; color: #ccc; text-transform: uppercase; letter-spacing: 0.5px;">Map Highlight</span>
+      <label for="mapViewMode-nation" style="display: flex; align-items: center; gap: 4px; font-size: 12px; color: #fff;">
+        <input id="mapViewMode-nation" name="mapViewMode" type="radio" value="nation" checked />
+        Nation
+      </label>
+      <label for="mapViewMode-canton" style="display: flex; align-items: center; gap: 4px; font-size: 12px; color: #fff;">
+        <input id="mapViewMode-canton" name="mapViewMode" type="radio" value="canton" />
+        Canton
+      </label>
+    </div>
     <details id="nationPlanner" style="margin-top: 12px; background: rgba(0,0,0,0.25); border-radius: 8px; padding: 10px;">
       <summary id="plannerSummary" style="cursor: pointer; font-weight: 600; color: #4CAF50;">Nation Planner</summary>
       <div id="plannerContent" style="margin-top: 10px; display: flex; flex-direction: column; gap: 14px;">
@@ -1115,6 +1150,8 @@ export function initializePlannerUI(container: HTMLElement, provider: PlannerCon
     container,
     details,
     status: container.querySelector('#plannerStatus') as HTMLElement,
+    mapToggleNation: container.querySelector('#mapViewMode-nation') as HTMLInputElement,
+    mapToggleCanton: container.querySelector('#mapViewMode-canton') as HTMLInputElement,
     militaryInput: container.querySelector('#plannerMilitary') as HTMLInputElement,
     upkeepSpan: container.querySelector('#plannerMilitaryUpkeep') as HTMLElement,
     gapSpan: container.querySelector('#plannerMilitaryGap') as HTMLElement,
@@ -1143,6 +1180,7 @@ export function initializePlannerUI(container: HTMLElement, provider: PlannerCon
   };
 
   elements = elementsMap;
+  syncMapViewToggle();
   attachEventListeners();
   state.initialized = true;
   renderPlanner();
@@ -1150,7 +1188,11 @@ export function initializePlannerUI(container: HTMLElement, provider: PlannerCon
 
 export function setPlannerVisibility(visible: boolean) {
   if (!elements) return;
-  elements.container.style.display = visible ? 'block' : 'none';
+  elements.container.style.display = 'block';
+  elements.details.style.display = visible ? 'block' : 'none';
+  if (!visible) {
+    elements.details.open = false;
+  }
 }
 
 export function updatePlannerSnapshot(snapshot: any) {
