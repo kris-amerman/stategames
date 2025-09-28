@@ -240,6 +240,7 @@ function ingestCantonData(gameState: any): void {
   const economy = gameState?.economy ?? {};
   const territories: Record<string, number[]> = economy.cantonTerritories ?? {};
   const cantonStates: Record<string, any> = economy.cantons ?? {};
+  const owners: Record<string, string | null> = economy.cantonOwners ?? {};
   const nations: Record<string, any> = gameState?.nations ?? {};
 
   const nationIds = Object.keys(nations).sort();
