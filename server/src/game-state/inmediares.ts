@@ -356,29 +356,103 @@ function assignCantons(
   }
 
   const assignment = new Map<number, number>();
-  const queue: number[] = [];
+  const queues: number[][] = Array.from({ length: seeds.length }, () => []);
+  const counts = new Array(seeds.length).fill(0);
+  const totalCells = cells.length;
+  const baseTarget = Math.floor(totalCells / seeds.length);
+  const remainder = totalCells % seeds.length;
+  const targets = new Array(seeds.length).fill(baseTarget).map((value, index) =>
+    index < remainder ? value + 1 : value,
+  );
+
   seeds.forEach((cell, index) => {
     assignment.set(cell, index);
-    queue.push(cell);
+    queues[index].push(cell);
+    counts[index] = 1;
   });
 
+  let assigned = seeds.length;
+
+  const claimNeighbor = (owner: number, neighbor: number) => {
+    assignment.set(neighbor, owner);
+    queues[owner].push(neighbor);
+    counts[owner] += 1;
+    assigned += 1;
+  };
+
+  const needsMore = () =>
+    counts.some((countValue, index) => countValue < targets[index] && queues[index].length > 0);
+
+  while (assigned < totalCells) {
+    let progressed = false;
+    const anyNeeds = needsMore();
+    for (let owner = 0; owner < queues.length; owner++) {
+      const queue = queues[owner];
+      const hasCapacity = counts[owner] < targets[owner] || !anyNeeds;
+      if (!hasCapacity) continue;
+      while (queue.length && (counts[owner] < targets[owner] || !anyNeeds)) {
+        const cell = queue.shift()!;
+        for (const nb of adjacency.get(cell) ?? []) {
+          if (assignment.has(nb)) continue;
+          claimNeighbor(owner, nb);
+          progressed = true;
+          if (counts[owner] >= targets[owner] && anyNeeds) {
+            queue.unshift(cell);
+            break;
+          }
+        }
+        if (counts[owner] >= targets[owner] && anyNeeds) {
+          break;
+        }
+      }
+      if (!queue.length && counts[owner] < targets[owner] && anyNeeds) {
+        // No frontier left to expand even though we still want cells: relax the target.
+        targets[owner] = counts[owner];
+      }
+    }
+
+    if (!progressed) {
+      const unassigned = cells.filter((cell) => !assignment.has(cell));
+      if (unassigned.length === 0) {
+        break;
+      }
+      const seedCell = unassigned.sort((a, b) => a - b)[0];
+      const owner = findNearestAssignedOwner(seedCell, adjacency, assignment);
+      claimNeighbor(owner, seedCell);
+      progressed = true;
+    }
+  }
+
+  for (const cell of cells) {
+    if (!assignment.has(cell)) {
+      const owner = findNearestAssignedOwner(cell, adjacency, assignment);
+      claimNeighbor(owner, cell);
+    }
+  }
+
+  return assignment;
+}
+
+function findNearestAssignedOwner(
+  start: number,
+  adjacency: Map<number, number[]>,
+  assignment: Map<number, number>,
+): number {
+  const visited = new Set<number>([start]);
+  const queue: number[] = [start];
   while (queue.length) {
     const cell = queue.shift()!;
-    const owner = assignment.get(cell)!;
     for (const nb of adjacency.get(cell) ?? []) {
-      if (assignment.has(nb)) continue;
-      assignment.set(nb, owner);
+      if (assignment.has(nb)) {
+        return assignment.get(nb)!;
+      }
+      if (visited.has(nb)) continue;
+      visited.add(nb);
       queue.push(nb);
     }
   }
-
-  // Assign any remaining cells to the capital canton deterministically
-  for (const cell of cells) {
-    if (!assignment.has(cell)) {
-      assignment.set(cell, 0);
-    }
-  }
-  return assignment;
+  // Fallback to the capital canton (index 0) if no assigned neighbor found.
+  return 0;
 }
 
 function computeCantonGeography(cells: number[], biomes: Uint8Array): Record<TileType, number> {

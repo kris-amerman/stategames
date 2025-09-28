@@ -583,6 +583,26 @@ test('canton partitions cover each nation with no overlaps or holes', () => {
   }
 });
 
+test('canton territories are roughly equal in size', () => {
+  const presets: NationPreset[] = [
+    'Industrializing Exporter',
+    'Agrarian Surplus',
+    'Finance and Services Hub',
+  ];
+  const { game } = setupGame(presets, 'partition-valid');
+  for (const nation of Object.values(game.state.nations)) {
+    const cantonIds = [...nation.cantonIds];
+    if (cantonIds.length <= 1) continue;
+    const sizes = cantonIds.map(id => game.state.economy.cantonTerritories[id]?.length ?? 0);
+    const total = sizes.reduce((sum, value) => sum + value, 0);
+    const ideal = total / sizes.length;
+    const max = Math.max(...sizes);
+    const min = Math.min(...sizes);
+    const tolerance = Math.max(2, Math.ceil(ideal * 0.2));
+    expect(max - min).toBeLessThanOrEqual(tolerance);
+  }
+});
+
 test('partition validator flags coverage, overlap, contiguity, hole, and capital issues', () => {
   const presets: NationPreset[] = ['Industrializing Exporter', 'Research State'];
   const { game, neighbors, offsets, biomes, players } = setupGame(
