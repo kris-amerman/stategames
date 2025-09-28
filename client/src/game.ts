@@ -446,33 +446,57 @@ function drawCantonOverlay(): void {
   ctx.save();
   for (const visual of Object.values(cantonVisuals)) {
     if (!visual.capital) continue;
-    const centroid = computeCantonCentroid(visual.cells);
-    if (!centroid) continue;
+    const markerPosition = computeCapitalMarkerPosition(visual.cells);
+    if (!markerPosition) continue;
     ctx.font = 'bold 18px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';
     ctx.fillStyle = '#ffd54f';
-    ctx.strokeText('★', centroid.x, centroid.y);
-    ctx.fillText('★', centroid.x, centroid.y);
+    ctx.strokeText('★', markerPosition.x, markerPosition.y);
+    ctx.fillText('★', markerPosition.x, markerPosition.y);
   }
   ctx.restore();
 }
 
-function computeCantonCentroid(cells: number[]): { x: number; y: number } | null {
+function computeCapitalMarkerPosition(
+  cells: number[],
+): { x: number; y: number } | null {
   if (!meshData || cells.length === 0) return null;
+
   let sumX = 0;
   let sumY = 0;
+  const centers: { x: number; y: number }[] = [];
+
   for (const cell of cells) {
     const centerIndex = cell * 2;
-    sumX += meshData.cellTriangleCenters[centerIndex];
-    sumY += meshData.cellTriangleCenters[centerIndex + 1];
+    const x = meshData.cellTriangleCenters[centerIndex];
+    const y = meshData.cellTriangleCenters[centerIndex + 1];
+    centers.push({ x, y });
+    sumX += x;
+    sumY += y;
   }
-  return {
-    x: sumX / cells.length,
-    y: sumY / cells.length,
-  };
+
+  if (centers.length === 0) return null;
+
+  const targetX = sumX / centers.length;
+  const targetY = sumY / centers.length;
+
+  let best = centers[0];
+  let bestDistanceSq = Infinity;
+
+  for (const center of centers) {
+    const dx = center.x - targetX;
+    const dy = center.y - targetY;
+    const distanceSq = dx * dx + dy * dy;
+    if (distanceSq < bestDistanceSq) {
+      best = center;
+      bestDistanceSq = distanceSq;
+    }
+  }
+
+  return { x: best.x, y: best.y };
 }
 
 function ensureCantonTooltip(): void {
