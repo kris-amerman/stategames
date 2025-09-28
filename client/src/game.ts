@@ -178,7 +178,7 @@ function buildCantonShadePalette(base: HSLColor, count: number): { palette: Cant
   const baseSaturation = clamp(base.s, 35, 90);
   const baseLightness = clamp(base.l, 30, 65);
 
-  const lightSpread = clamp(22 + count * 2.5, 26, 48);
+  const lightSpread = clamp(30 + count * 3.2, 34, 56);
   let lightMin = baseLightness - lightSpread / 2;
   let lightMax = baseLightness + lightSpread / 2;
   if (lightMin < 22) lightMin = 22;
@@ -188,7 +188,7 @@ function buildCantonShadePalette(base: HSLColor, count: number): { palette: Cant
     lightMax = clamp(baseLightness + 12, 32, 82);
   }
 
-  const satSpread = clamp(18 + count * 1.2, 22, 38);
+  const satSpread = clamp(26 + count * 1.6, 30, 44);
   let satMin = baseSaturation - satSpread / 2;
   let satMax = baseSaturation + satSpread / 2;
   if (satMin < 32) satMin = 32;
@@ -217,6 +217,8 @@ function buildCantonShadePalette(base: HSLColor, count: number): { palette: Cant
     });
   }
 
+  enforceShadeSeparation(palette);
+
   return { palette, clampMeta };
 }
 
@@ -224,6 +226,33 @@ function colorDistance(a: CantonShadeCandidate, b: CantonShadeCandidate): number
   const ds = (a.s - b.s) / 100;
   const dl = (a.l - b.l) / 100;
   return Math.sqrt(ds * ds + dl * dl);
+}
+
+const MIN_SHADE_DISTANCE = 0.18;
+
+function enforceShadeSeparation(palette: CantonShadeCandidate[]): void {
+  if (palette.length <= 1) return;
+  let iterations = 0;
+  let adjusted = true;
+  while (adjusted && iterations < 6) {
+    adjusted = false;
+    iterations += 1;
+    for (let i = 0; i < palette.length; i++) {
+      for (let j = i + 1; j < palette.length; j++) {
+        const first = palette[i];
+        const second = palette[j];
+        const distance = colorDistance(first, second);
+        if (distance + 1e-6 >= MIN_SHADE_DISTANCE) continue;
+        const gap = Math.max(0.015, (MIN_SHADE_DISTANCE - distance) * 0.5);
+        const lightDirection = second.l >= first.l ? 1 : -1;
+        const satDirection = second.s >= first.s ? 1 : -1;
+        second.l = clamp(second.l + lightDirection * gap * 120, 20, 86);
+        second.s = clamp(second.s + satDirection * gap * 150, 32, 96);
+        second.color = `hsla(${Math.round(second.h)}, ${Math.round(second.s)}%, ${Math.round(second.l)}%, ${second.alpha})`;
+        adjusted = true;
+      }
+    }
+  }
 }
 
 function assignCantonShades(

@@ -18,6 +18,14 @@ function unique<T>(values: T[]): boolean {
   return new Set(values).size === values.length;
 }
 
+function shadeDistance(a: string, b: string): number {
+  const ca = parseHsla(a);
+  const cb = parseHsla(b);
+  const ds = (ca.s - cb.s) / 100;
+  const dl = (ca.l - cb.l) / 100;
+  return Math.sqrt(ds * ds + dl * dl);
+}
+
 test('generateCantonShades yields distinct deterministic palette', () => {
   const base: HSLColor = { h: 210, s: 62, l: 48 };
   const shades = generateCantonShades(base, 6);
@@ -30,6 +38,13 @@ test('generateCantonShades yields distinct deterministic palette', () => {
   }
   const lights = shades.map(shade => parseHsla(shade).l);
   expect(Math.max(...lights) - Math.min(...lights)).toBeGreaterThan(8);
+  let minDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < shades.length; i++) {
+    for (let j = i + 1; j < shades.length; j++) {
+      minDistance = Math.min(minDistance, shadeDistance(shades[i], shades[j]));
+    }
+  }
+  expect(minDistance).toBeGreaterThan(0.16);
 });
 
 test('assignCantonFillColors respects adjacency uniqueness', () => {

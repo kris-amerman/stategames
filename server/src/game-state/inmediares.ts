@@ -401,10 +401,12 @@ class FrontierQueue {
 function computeLoadPenalty(
   owner: number,
   counts: number[],
-  minTarget: number,
-  maxTarget: number,
+  minTargets: number[],
+  maxTargets: number[],
 ): number {
   const size = counts[owner] ?? 0;
+  const minTarget = minTargets[owner] ?? 0;
+  const maxTarget = Math.max(minTarget + 1, maxTargets[owner] ?? minTarget + 1);
   if (size < minTarget) return 0;
   if (size < maxTarget) {
     const span = Math.max(1, maxTarget - minTarget);
@@ -478,18 +480,26 @@ function assignCantons(
   const idealTargets = new Array(seeds.length)
     .fill(baseTarget)
     .map((value, index) => (index < remainder ? value + 1 : value));
-  const averageTarget = Math.max(1, Math.floor(idealTargets.reduce((a, b) => a + b, 0) / seeds.length));
-  const minTarget = Math.max(minArea, Math.floor(averageTarget * 0.9));
-  const maxTarget = Math.max(minTarget + 1, Math.ceil(averageTarget * 1.15));
+  const minTargets = idealTargets.map((target) => {
+    const base = Math.max(1, Math.floor(target * 0.9));
+    const areaFloor = Math.min(target, Math.max(1, minArea));
+    return Math.max(base, areaFloor);
+  });
+  const maxTargets = idealTargets.map((target, index) => {
+    const slack = Math.max(target, Math.ceil(target * 1.08));
+    return Math.max(slack, minTargets[index] + 1);
+  });
 
-  const hasUnderfilled = () => counts.some((countValue) => countValue < minTarget);
+  const totalDeficit = () =>
+    idealTargets.reduce((sum, target, index) => sum + Math.max(0, target - counts[index]), 0);
+  const hasUnderfilled = () => idealTargets.some((target, index) => counts[index] < target);
 
   const pushNeighbor = (owner: number, neighbor: number, distance: number) => {
     if (assignment.has(neighbor)) return;
     const key = `${owner}:${neighbor}`;
     if (seenPairs.has(key)) return;
     seenPairs.add(key);
-    const priority = distance + computeLoadPenalty(owner, counts, minTarget, maxTarget);
+    const priority = distance + computeLoadPenalty(owner, counts, minTargets, maxTargets);
     queue.push({ cell: neighbor, owner, distance, priority });
   };
 
@@ -512,7 +522,7 @@ function assignCantons(
       const entries = deferred[owner];
       while (entries.length) {
         const entry = entries.pop()!;
-        entry.priority = entry.distance + computeLoadPenalty(owner, counts, minTarget, maxTarget);
+        entry.priority = entry.distance + computeLoadPenalty(owner, counts, minTargets, maxTargets);
         queue.push(entry);
       }
     }
@@ -527,7 +537,13 @@ function assignCantons(
     if (assignment.has(cell)) {
       continue;
     }
-    if (counts[owner] >= maxTarget && hasUnderfilled()) {
+    const remainingCells = totalCells - assigned;
+    const deficit = totalDeficit();
+    if (
+      counts[owner] >= idealTargets[owner] &&
+      deficit > 0 &&
+      deficit <= remainingCells
+    ) {
       deferred[owner].push(entry);
       continue;
     }
