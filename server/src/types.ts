@@ -272,7 +272,6 @@ export interface NationState {
   name: string;
   preset: NationPreset;
   capitalCanton: string;
-  cantonIds: string[];
   coastal: boolean;
   signature: string;
   energy: NationEnergySnapshot;

@@ -246,7 +246,20 @@ function ingestCantonData(gameState: any): void {
   nationIds.forEach((nationId, index) => {
     const nation = nations[nationId];
     if (!nation) return;
-    const cantonIds: string[] = Array.isArray(nation.cantonIds) ? nation.cantonIds : [];
+    const capitalId = typeof nation.capitalCanton === 'string' ? nation.capitalCanton : null;
+    const cantonIds = Object.entries(owners)
+      .filter(([, owner]) => owner === nationId)
+      .map(([id]) => id)
+      .sort();
+    if (capitalId) {
+      const index = cantonIds.indexOf(capitalId);
+      if (index >= 0) {
+        cantonIds.splice(index, 1);
+        cantonIds.unshift(capitalId);
+      } else {
+        cantonIds.unshift(capitalId);
+      }
+    }
     const baseHue = (index * 137 + 23) % 360;
     let satelliteOrdinal = 1;
     const nationCells: number[] = [];
@@ -256,7 +269,7 @@ function ingestCantonData(gameState: any): void {
       const cells = Array.isArray(territories[cantonId])
         ? [...territories[cantonId]]
         : [];
-      const isCapital = nation.capitalCanton === cantonId;
+      const isCapital = capitalId === cantonId;
       const fillColor = computeCantonFillColor(baseHue, cantonIndex, cantonIds.length);
       const capacity = Object.values(cantonState?.sectors ?? {}).reduce(
         (sum: number, sector: any) => sum + (sector?.capacity ?? 0),

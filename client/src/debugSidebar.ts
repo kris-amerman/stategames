@@ -99,7 +99,6 @@ interface NationSnapshot {
   logistics?: { ratio?: number; supply?: number; demand?: number; throttledSectors?: Partial<Record<SectorKey, number>> };
   labor?: { available?: LaborPool; assigned?: LaborPool; happiness?: number; lai?: number } & LaborBreakdown;
   capitalCanton?: string;
-  cantonIds?: string[];
   sectors?: Partial<Record<SectorKey, { capacity?: number; funded?: number; idle?: number; utilization?: number }>>;
   idleCost?: number;
   omCost?: number;
@@ -675,23 +674,20 @@ function deriveCantons(
   if (!snapshot?.economy?.cantons) return [];
   const rawCantons = snapshot.economy.cantons;
   const owners = snapshot.economy.cantonOwners ?? {};
-  const candidateIds = new Set<string>();
-  if (nation?.capitalCanton) {
-    candidateIds.add(nation.capitalCanton);
-  }
-  if (nation?.cantonIds) {
-    for (const id of nation.cantonIds) {
-      candidateIds.add(id);
+  const capitalId = nation?.capitalCanton;
+  const ids = Object.entries(owners)
+    .filter(([, owner]) => owner === nationId)
+    .map(([id]) => id)
+    .sort();
+  if (capitalId) {
+    const index = ids.indexOf(capitalId);
+    if (index >= 0) {
+      ids.splice(index, 1);
+      ids.unshift(capitalId);
+    } else {
+      ids.unshift(capitalId);
     }
   }
-  if (nationId) {
-    for (const [id, owner] of Object.entries(owners)) {
-      if (owner === nationId) {
-        candidateIds.add(id);
-      }
-    }
-  }
-  const ids = Array.from(candidateIds);
   return ids
     .map((id) => {
       const canton = rawCantons[id];

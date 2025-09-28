@@ -1543,7 +1543,6 @@ export class InMediaResInitializer {
         name: input.name,
         preset: input.preset,
         capitalCanton: capitalId,
-        cantonIds: layout.cantons.map((c) => c.id),
         coastal: nationCoastal,
         signature: `${profile.nonUniformityTag}-${layout.cantons.length}-${mixTotals.finance ?? 0}-${mixTotals.research ?? 0}`,
         energy: {

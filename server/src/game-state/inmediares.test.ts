@@ -8,7 +8,7 @@ import { OPERATING_LP_COST } from '../logistics/manager';
 import { ENERGY_PER_SLOT, PLANT_ATTRIBUTES } from '../energy/manager';
 import { SuitabilityManager } from '../suitability/manager';
 import { EconomyManager } from '../economy/manager';
-import type { LaborPool, NationPreset, SectorType } from '../types';
+import type { Game, LaborPool, NationPreset, SectorType } from '../types';
 
 const GRID_WIDTH = 5;
 const GRID_HEIGHT = 5;
@@ -154,6 +154,25 @@ function setupGame(
   );
 
   return { game, metas, nationInputs, players, neighbors, offsets, biomes };
+}
+
+function getNationCantonIds(game: Game, nationId: string): string[] {
+  const owners = game.state.economy.cantonOwners;
+  const capital = game.state.nations[nationId]?.capitalCanton;
+  const ids = Object.entries(owners)
+    .filter(([, owner]) => owner === nationId)
+    .map(([id]) => id)
+    .sort();
+  if (capital) {
+    const index = ids.indexOf(capital);
+    if (index >= 0) {
+      ids.splice(index, 1);
+      ids.unshift(capital);
+    } else {
+      ids.unshift(capital);
+    }
+  }
+  return ids;
 }
 
 test('higher-UL cantons receive larger manufacturing slot allocations', () => {
@@ -454,7 +473,7 @@ test('different presets yield divergent nation signatures and coastal infrastruc
   expect(signatures.size).toBe(nations.length);
 
   for (const nation of nations) {
-    const cantonIds = nation.cantonIds;
+    const cantonIds = getNationCantonIds(game, nation.id);
     expect(cantonIds.length).toBeGreaterThan(0);
     expect(
       cantonIds.every(
@@ -496,7 +515,7 @@ test('archetype canton counts fall within configured bands and coastal nations h
 
   for (const nation of Object.values(game.state.nations)) {
     const band = CANTON_BANDS[nation.preset];
-    const cantonIds = nation.cantonIds;
+    const cantonIds = getNationCantonIds(game, nation.id);
     expect(cantonIds.length).toBeGreaterThanOrEqual(band[0]);
     expect(cantonIds.length).toBeLessThanOrEqual(band[1]);
     const coastalCantons = cantonIds.filter(id =>
@@ -526,7 +545,7 @@ test('nations with three or more cantons have connected adjacency graphs', () =>
   const { game, players } = setupGame(presets, 'adjacency', { assignments });
   const playerId = players[0];
   const nation = game.state.nations[playerId];
-  const cantonIds = nation.cantonIds;
+  const cantonIds = getNationCantonIds(game, nation.id);
   expect(cantonIds.length).toBeGreaterThanOrEqual(3);
   const adjacency = game.state.economy.cantonAdjacency;
   const visited = new Set<string>();
@@ -557,9 +576,10 @@ test('canton partitions cover each nation with no overlaps or holes', () => {
   ];
   const { game, neighbors, offsets, biomes } = setupGame(presets, 'partition-valid');
   for (const nation of Object.values(game.state.nations)) {
+    const cantonIds = getNationCantonIds(game, nation.id);
     const result = validateCantonPartition({
       nationCells: [...game.state.playerCells[nation.id]],
-      cantonIds: [...nation.cantonIds],
+      cantonIds,
       cantonTerritories: game.state.economy.cantonTerritories,
       cellOwnership: game.state.cellOwnership,
       nationId: nation.id,
@@ -574,7 +594,7 @@ test('canton partitions cover each nation with no overlaps or holes', () => {
     expect(result.disconnectedCantons).toHaveLength(0);
     expect(result.holedCantons).toHaveLength(0);
     expect(result.capitalOk).toBe(true);
-    const coastalCantons = nation.cantonIds.filter(id => result.coastal[id]);
+    const coastalCantons = cantonIds.filter(id => result.coastal[id]);
     if (nation.coastal) {
       expect(coastalCantons.length).toBeGreaterThan(0);
     } else {
@@ -591,7 +611,7 @@ test('canton territories are roughly equal in size', () => {
   ];
   const { game } = setupGame(presets, 'partition-valid');
   for (const nation of Object.values(game.state.nations)) {
-    const cantonIds = [...nation.cantonIds];
+    const cantonIds = getNationCantonIds(game, nation.id);
     if (cantonIds.length <= 1) continue;
     const sizes = cantonIds.map(id => game.state.economy.cantonTerritories[id]?.length ?? 0);
     const total = sizes.reduce((sum, value) => sum + value, 0);
@@ -610,7 +630,7 @@ test('partition validator flags coverage, overlap, contiguity, hole, and capital
     'partition-flags',
   );
   const nation = game.state.nations[players[0]];
-  const cantonIds = [...nation.cantonIds];
+  const cantonIds = getNationCantonIds(game, nation.id);
   expect(cantonIds.length).toBeGreaterThanOrEqual(2);
 
   const territories = cloneTerritories(game.state.economy.cantonTerritories);
@@ -741,7 +761,7 @@ test('nation happiness equals the average of constituent canton happiness values
   ];
   const { game } = setupGame(presets, 'happiness-rollup');
   for (const nation of Object.values(game.state.nations)) {
-    const cantonIds = nation.cantonIds;
+    const cantonIds = getNationCantonIds(game, nation.id);
     const average =
       cantonIds.reduce((sum, id) => sum + game.state.economy.cantons[id].happiness, 0) /
       cantonIds.length;
