@@ -84,9 +84,11 @@ export async function submitPlan(gameId: string, req: Request) {
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       });
     }
-    TurnManager.submitPlan(gameState, plan);
-    gameState.planSubmittedBy = playerId;
-    await GameService.saveGameState(gameState, gameId);
+    await GameService.updateGameState(gameId, state => {
+      TurnManager.submitPlan(state, plan);
+      state.planSubmittedBy = playerId;
+      return null;
+    });
     broadcastPlanSubmitted(gameId, playerId);
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,

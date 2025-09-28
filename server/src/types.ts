@@ -382,11 +382,21 @@ export interface CantonEconomy {
    */
   nextUrbanizationLevel: number;
   /** Geography mix for the canton; shares should sum to 1.0. */
-  geography: Record<TileType, number>;
+  geography: Partial<Record<TileType, number>>;
   /** Cached suitability percent by sector for ordering labor priority. */
   suitability: Partial<Record<SectorType, number>>;
   /** Cached suitability multiplier by sector applied after all other gates. */
   suitabilityMultipliers: Partial<Record<SectorType, number>>;
+}
+
+export interface CantonTerritoryMeta {
+  owner: PlayerId;
+  capital: boolean;
+  coastal: boolean;
+  area: number;
+  centroid: { x: number; y: number };
+  perimeter: number;
+  tileShares: Partial<Record<TileType, number>>;
 }
 
 export type InfrastructureType = 'airport' | 'port' | 'rail';
@@ -590,6 +600,31 @@ export interface GameState {
    * Key: PlayerId, Value: Array of CellIds owned by that player
    */
   playerCells: { [playerId: PlayerId]: CellId[] };
+
+  /**
+   * Records the designated capital cell for each player.
+   */
+  playerCapitals: { [playerId: PlayerId]: CellId | undefined };
+
+  /**
+   * Maps each cell to its assigned canton identifier.
+   */
+  cellCantons: { [cellId: CellId]: string | undefined };
+
+  /**
+   * Lists the cells that compose each canton region.
+   */
+  cantonCells: { [cantonId: string]: CellId[] };
+
+  /**
+   * Canton membership for each nation in initialization order.
+   */
+  nationCantons: { [playerId: PlayerId]: string[] };
+
+  /**
+   * Precomputed territorial metadata for each canton.
+   */
+  cantonMeta: Record<string, CantonTerritoryMeta>;
 
   /**
    * Maps entity IDs to their full entity data.

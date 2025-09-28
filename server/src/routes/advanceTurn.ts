@@ -4,6 +4,7 @@ import { GameService } from "../game-state";
 import { TurnManager } from "../turn";
 import { broadcastTurnCompleted, broadcastStateChanges } from "../index";
 import { collectStateChanges } from "../events";
+import type { GameState } from "../types";
 
 export async function advanceTurn(gameId: string, req: Request) {
   try {
@@ -27,21 +28,22 @@ export async function advanceTurn(gameId: string, req: Request) {
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       });
     }
-    // determine next player from meta
-    const meta = await GameService.getGameMeta(gameId);
-    const players = meta?.players || [];
-    const currentIdx = players.indexOf(gameState.currentPlayer!);
-    const nextPlayer = players[(currentIdx + 1) % players.length] || gameState.currentPlayer!;
+    const { state: updatedState, result } = await GameService.updateGameState(gameId, (state, game) => {
+      const players = game.meta.players;
+      const currentIdx = players.indexOf(state.currentPlayer!);
+      const resolvedNextPlayer = players[(currentIdx + 1) % players.length] || state.currentPlayer!;
+      const prevEconomy = structuredClone(state.economy);
+      TurnManager.advanceTurn(state);
+      state.currentPlayer = resolvedNextPlayer;
+      const events = collectStateChanges(prevEconomy, state.economy);
+      return { events, nextPlayer: resolvedNextPlayer };
+    });
 
-    const prevEconomy = JSON.parse(JSON.stringify(gameState.economy));
-    TurnManager.advanceTurn(gameState);
-    gameState.currentPlayer = nextPlayer;
-    const events = collectStateChanges(prevEconomy, gameState.economy);
+    const { events, nextPlayer: resolvedNextPlayer } = result;
 
-    await GameService.saveGameState(gameState, gameId);
     broadcastStateChanges(gameId, events);
-    broadcastTurnCompleted(gameId, gameState, nextPlayer, events);
-    return new Response(JSON.stringify({ ok: true, nextPlayer }), {
+    broadcastTurnCompleted(gameId, updatedState as unknown as GameState, resolvedNextPlayer, events);
+    return new Response(JSON.stringify({ ok: true, nextPlayer: resolvedNextPlayer }), {
       status: 200,
       headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });

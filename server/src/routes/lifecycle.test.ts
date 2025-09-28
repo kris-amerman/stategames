@@ -57,8 +57,10 @@ test('submitted planner payload persists and executes next turn', async () => {
   const state = await GameService.getGameState(gameId);
   expect(state).not.toBeNull();
   if (!state) return;
-  state.economy.resources.gold = 100;
-  await GameService.saveGameState(state, gameId);
+  await GameService.updateGameState(gameId, nextState => {
+    nextState.economy.resources.gold = 1000;
+    return null;
+  });
 
   const plan: TurnPlan = {
     budgets: { military: 30, welfare: 0, sectorOM: {} },
@@ -82,7 +84,7 @@ test('submitted planner payload persists and executes next turn', async () => {
   expect(updated?.nextPlan?.policies?.welfare?.education).toBe(1);
 
   // Execute turns directly with manager to check one-turn lag
-  const execState = updated!;
+  const execState = structuredClone(updated!);
   const goldBefore = execState.economy.resources.gold;
   TurnManager.advanceTurn(execState); // move plan into currentPlan
   const goldAfterFirst = execState.economy.resources.gold;

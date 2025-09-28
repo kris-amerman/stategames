@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
 import { encode, decode } from '../serialization';
 import { GameStateManager } from './manager';
+import { authoritativeStore, type UpdateResult } from './authority';
 import type {
   Game,
   GameState,
@@ -14,27 +15,29 @@ import type {
   NationMeta,
 } from '../types';
 import { InMediaResInitializer } from './inmediares';
+import { initializeCantons } from './cantons';
 import { SeededRandom } from '../utils/random';
 
-// In-memory game store (replace with database later)
-const games = new Map<string, Game>();
-
 export class GameService {
-  
+
   // === PERSISTENCE ===
-  
+
   private static async ensureMapsDir(): Promise<void> {
     if (!existsSync('maps')) {
       await mkdir('maps', { recursive: true });
     }
   }
 
-  static async saveGame(game: Game): Promise<void> {
+  private static async saveGame(gameId: string): Promise<void> {
     await this.ensureMapsDir();
-    
-    // JSON storage with TypedArray support
-    const filePath = `maps/${game.meta.gameId}.game.json`;
-    const jsonData = encode(game);
+
+    const canonical = authoritativeStore.getMutableGame(gameId);
+    if (!canonical) {
+      throw new Error(`Cannot save missing game ${gameId}`);
+    }
+
+    const filePath = `maps/${canonical.meta.gameId}.game.json`;
+    const jsonData = encode(canonical);
     await writeFile(filePath, jsonData, 'utf-8');
   }
 
@@ -74,7 +77,7 @@ export class GameService {
     try {
       const jsonData = await readFile(filePath, 'utf-8');
       const game = decode<Game>(jsonData);
-      
+      authoritativeStore.register(game);
       return game;
     } catch (error) {
       console.error(`Failed to load game for ${gameId}:`, error);
@@ -128,6 +131,20 @@ export class GameService {
       () => territoryRandom.next(),
     );
 
+    const presetMap = Object.fromEntries(
+      players.map((playerId, index) => [playerId, nationInputs[index].preset]),
+    );
+
+    initializeCantons(
+      game.state,
+      presetMap,
+      meshData.cellNeighbors,
+      meshData.cellOffsets,
+      meshData.cellTriangleCenters,
+      biomes,
+      normalizedSeed,
+    );
+
     GameStateManager.initializeNationInfrastructure(
       game.state,
       players,
@@ -150,73 +167,99 @@ export class GameService {
     // Only the creator is in the lobby initially
     game.meta.players = ['player1'];
 
-    // Store in memory
-    games.set(gameId, game);
+    // Store as authoritative canonical state
+    authoritativeStore.register(game);
 
     // Persist to disk
-    await this.saveGame(game);
+    await this.saveGame(gameId);
     await this.saveGameMap(gameId, game.map);
 
     console.log(
       `Created game ${gameId} with join code ${joinCode} (${mapSize}, ${cellCount} cells, ${nationCount} nations)`
     );
 
-    return game;
+    const snapshot = authoritativeStore.getGame(gameId);
+    if (!snapshot) {
+      throw new Error('Failed to materialize authoritative game snapshot after creation');
+    }
+    return snapshot as Game;
   }
 
   static async getGame(gameId: string): Promise<Game | null> {
-    // Check in-memory first
-    if (games.has(gameId)) {
-      return games.get(gameId)!;
+    const snapshot = authoritativeStore.getGame(gameId);
+    if (snapshot) {
+      return snapshot as Game;
     }
 
-    // Try to load from disk
-    const game = await this.loadGame(gameId);
-    if (game) {
-      // Load the map separately
-      const gameMap = await this.loadGameMap(gameId);
-      if (gameMap) {
-        game.map = gameMap;
-      }
-      
-      // Cache in memory for future requests
-      games.set(gameId, game);
-      return game;
+    // Try to load from disk and register
+    const loaded = await this.loadGame(gameId);
+    if (!loaded) {
+      return null;
     }
 
-    return null;
+    const map = await this.loadGameMap(gameId);
+    if (map) {
+      loaded.map = map;
+    }
+
+    // loadGame registers canonical; fetch snapshot for return
+    const view = authoritativeStore.getGame(gameId);
+    return view ? (view as Game) : null;
   }
 
   static async getGameState(gameId: string): Promise<GameState | null> {
-    const game = await this.getGame(gameId);
-    return game ? game.state : null;
+    const state = authoritativeStore.getState(gameId);
+    if (state) {
+      return state as GameState;
+    }
+    await this.getGame(gameId);
+    const refreshed = authoritativeStore.getState(gameId);
+    return refreshed ? (refreshed as GameState) : null;
   }
 
   static async getGameMeta(gameId: string): Promise<GameMeta | null> {
-    const game = await this.getGame(gameId);
-    return game ? game.meta : null;
+    const meta = authoritativeStore.getMeta(gameId);
+    if (meta) {
+      return meta as GameMeta;
+    }
+    await this.getGame(gameId);
+    const refreshed = authoritativeStore.getMeta(gameId);
+    return refreshed ? (refreshed as GameMeta) : null;
   }
 
   static async getGameMap(gameId: string): Promise<GameMap | null> {
-    const game = await this.getGame(gameId);
-    return game ? game.map : null;
-  }
-
-  static async saveGameState(gameState: GameState, gameId: string): Promise<void> {
-    const game = games.get(gameId);
-    if (game) {
-      game.state = gameState;
-      await this.saveGame(game);
+    const map = authoritativeStore.getMap(gameId);
+    if (map) {
+      return map as GameMap;
     }
+    await this.getGame(gameId);
+    const refreshed = authoritativeStore.getMap(gameId);
+    return refreshed ? (refreshed as GameMap) : null;
   }
 
-  static async findGameByJoinCode(joinCode: string): Promise<Game | null> {
+  static async updateGame<T>(
+    gameId: string,
+    mutator: (game: Game) => T | Promise<T>,
+  ): Promise<UpdateResult<T>> {
+    const result = await authoritativeStore.update(gameId, mutator);
+    await this.saveGame(gameId);
+    return result;
+  }
+
+  static async updateGameState<T>(
+    gameId: string,
+    mutator: (state: GameState, game: Game) => T | Promise<T>,
+  ): Promise<UpdateResult<T>> {
+    return this.updateGame(gameId, game => mutator(game.state, game));
+  }
+
+  static async findGameByJoinCode(joinCode: string): Promise<string | null> {
     const upperJoinCode = joinCode.toUpperCase();
 
-    // Search in-memory games first
-    for (const game of games.values()) {
-      if (game.meta.joinCode === upperJoinCode) {
-        return game;
+    // Search authoritative in-memory games first
+    for (const snapshot of authoritativeStore.listSnapshots()) {
+      if (snapshot.meta.joinCode === upperJoinCode) {
+        return snapshot.meta.gameId;
       }
     }
 
@@ -225,15 +268,13 @@ export class GameService {
       if (existsSync('maps')) {
         const fileExtension = '.game.json';
         const files = readdirSync('maps').filter(f => f.endsWith(fileExtension));
-        
+
         for (const file of files) {
           const gameId = file.replace(fileExtension, '');
           const game = await this.loadGame(gameId);
-          
+
           if (game && game.meta.joinCode === upperJoinCode) {
-            // Cache in memory for future requests
-            games.set(gameId, game);
-            return game;
+            return gameId;
           }
         }
       }
@@ -245,110 +286,112 @@ export class GameService {
   }
 
   static async joinGame(joinCode: string): Promise<{ game: Game; playerName: string } | null> {
-    const game = await this.findGameByJoinCode(joinCode);
-    
-    if (!game) {
+    const gameId = await this.findGameByJoinCode(joinCode);
+
+    if (!gameId) {
       return null;
     }
 
-    if (!GameStateManager.canPlayerJoin(game.state)) {
-      throw new Error(`Game is no longer accepting players (status: ${game.state.status})`);
-    }
-
-    if (game.meta.players.length >= game.meta.nationCount) {
-      throw new Error('Game is full');
-    }
-
-    // Generate new player name
-    const playerNumber = game.meta.players.length + 1;
-    const newPlayerName = `player${playerNumber}`;
-
-    // Update meta with new player
-    game.meta.players.push(newPlayerName);
-
-    // Add player to game state if not pre-generated
-    if (!game.state.playerCells[newPlayerName]) {
-      const success = GameStateManager.addPlayer(game.state, newPlayerName);
-      if (!success) {
-        throw new Error('Failed to add player to game');
+    const { game, result } = await this.updateGame(gameId, canonical => {
+      if (!GameStateManager.canPlayerJoin(canonical.state)) {
+        throw new Error(`Game is no longer accepting players (status: ${canonical.state.status})`);
       }
-    }
 
-    // Persist updated state
-    await this.saveGame(game);
+      if (canonical.meta.players.length >= canonical.meta.nationCount) {
+        throw new Error('Game is full');
+      }
+
+      const playerNumber = canonical.meta.players.length + 1;
+      const newPlayerName = `player${playerNumber}`;
+
+      canonical.meta.players.push(newPlayerName);
+
+      if (!canonical.state.playerCells[newPlayerName]) {
+        const success = GameStateManager.addPlayer(canonical.state, newPlayerName);
+        if (!success) {
+          throw new Error('Failed to add player to game');
+        }
+      }
+
+      return newPlayerName;
+    });
+
+    const newPlayerName = result;
 
     console.log(`Player ${newPlayerName} joined game ${game.meta.gameId} (${game.meta.players.length} total players)`);
 
-    return { game, playerName: newPlayerName };
+    return { game: game as Game, playerName: newPlayerName };
   }
 
   static async startGame(gameId: string): Promise<Game | null> {
-    const game = await this.getGame(gameId);
-    
-    if (!game) {
+    const snapshot = await this.getGame(gameId);
+    if (!snapshot) {
       return null;
     }
 
-    if (game.state.status !== "waiting") {
-      throw new Error(`Game cannot be started (current status: ${game.state.status})`);
-    }
+    const { game } = await this.updateGame(gameId, canonical => {
+      if (canonical.state.status !== 'waiting') {
+        throw new Error(`Game cannot be started (current status: ${canonical.state.status})`);
+      }
 
-    if (game.meta.players.length < game.meta.nationCount) {
-      throw new Error(`Not enough players to start game (${game.meta.players.length}/${game.meta.nationCount} joined)`);
-    }
+      if (canonical.meta.players.length < canonical.meta.nationCount) {
+        throw new Error(
+          `Not enough players to start game (${canonical.meta.players.length}/${canonical.meta.nationCount} joined)`,
+        );
+      }
 
-    // Update game state to started
-    GameStateManager.startGame(game.state, game.meta.players);
-
-    // Persist updated state
-    await this.saveGame(game);
+      GameStateManager.startGame(canonical.state, canonical.meta.players);
+      return null;
+    });
 
     console.log(`Game ${gameId} started with ${game.meta.players.length} players`);
 
-    return game;
+    return game as Game;
   }
 
   static async leaveGame(gameId: string, playerId: PlayerId): Promise<Game | null> {
-    const game = await this.getGame(gameId);
-    if (!game) return null;
+    const snapshot = await this.getGame(gameId);
+    if (!snapshot) return null;
 
-    const idx = game.meta.players.indexOf(playerId);
-    if (idx === -1) throw new Error('Player not in game');
+    const { game } = await this.updateGame(gameId, canonical => {
+      const idx = canonical.meta.players.indexOf(playerId);
+      if (idx === -1) throw new Error('Player not in game');
 
-    // Remove from meta players
-    game.meta.players.splice(idx, 1);
+      canonical.meta.players.splice(idx, 1);
 
-    // Clean up game state collections
-    delete game.state.playerCells[playerId];
-    delete game.state.playerEntities[playerId];
+      delete canonical.state.playerCells[playerId];
+      delete canonical.state.playerEntities[playerId];
 
-    // Remove ownership and entities
-    for (const [cell, owner] of Object.entries(game.state.cellOwnership)) {
-      if (owner === playerId) {
-        delete game.state.cellOwnership[cell as any];
-        delete game.state.cellEntities[cell as any];
+      for (const [cell, owner] of Object.entries(canonical.state.cellOwnership)) {
+        if (owner === playerId) {
+          delete canonical.state.cellOwnership[cell as any];
+          delete canonical.state.cellEntities[cell as any];
+        }
       }
-    }
-    for (const [id, ent] of Object.entries(game.state.entities)) {
-      if (ent.owner === playerId) {
-        delete game.state.entities[id as any];
+      for (const [id, ent] of Object.entries(canonical.state.entities)) {
+        if (ent.owner === playerId) {
+          delete canonical.state.entities[id as any];
+        }
       }
-    }
 
-    if (game.state.currentPlayer === playerId) {
-      game.state.currentPlayer = game.meta.players[0] ?? null;
-    }
+      if (canonical.state.currentPlayer === playerId) {
+        canonical.state.currentPlayer = canonical.meta.players[0] ?? null;
+      }
 
-    await this.saveGame(game);
-    return game;
+      return null;
+    });
+
+    return game as Game;
   }
 
   static async endGame(gameId: string): Promise<Game | null> {
-    const game = await this.getGame(gameId);
-    if (!game) return null;
-    GameStateManager.finishGame(game.state);
-    await this.saveGame(game);
-    return game;
+    const snapshot = await this.getGame(gameId);
+    if (!snapshot) return null;
+    const { game } = await this.updateGame(gameId, canonical => {
+      GameStateManager.finishGame(canonical.state);
+      return null;
+    });
+    return game as Game;
   }
 
   // === TERRAIN DATA (LEGACY METHODS - DEPRECATED) ===
@@ -375,10 +418,10 @@ export class GameService {
   }
 
   static getAllGames(): Game[] {
-    return Array.from(games.values());
+    return authoritativeStore.listSnapshots().map(snapshot => snapshot.game as Game);
   }
 
   static getGameCount(): number {
-    return games.size;
+    return authoritativeStore.size;
   }
 }
