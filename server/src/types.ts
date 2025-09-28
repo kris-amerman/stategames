@@ -272,6 +272,8 @@ export interface NationState {
   name: string;
   preset: NationPreset;
   canton: string;
+  cantons?: string[];
+  shades?: string[];
   coastal: boolean;
   signature: string;
   energy: NationEnergySnapshot;
@@ -387,6 +389,55 @@ export interface CantonEconomy {
   suitability: Partial<Record<SectorType, number>>;
   /** Cached suitability multiplier by sector applied after all other gates. */
   suitabilityMultipliers: Partial<Record<SectorType, number>>;
+}
+
+export interface CantonDefinition {
+  /** Globally unique canton identifier (stable across the game). */
+  id: string;
+  /** Nation/player that owns the canton. */
+  nationId: PlayerId;
+  /** 1-based index within the owning nation. */
+  index: number;
+  /** Whether this canton hosts the national capital. */
+  capital: boolean;
+  /** Whether the canton touches an ocean tile. */
+  coastal: boolean;
+  /** Cells that compose the canton. */
+  cells: CellId[];
+  /** Number of cells (area) contained in the canton. */
+  area: number;
+  /** Boundary edge count used to approximate perimeter. */
+  perimeter: number;
+  /** Compactness metric perimeter^2/(4π·area). */
+  compactness: number;
+  /** Geography mix used for suitability computations. */
+  geography: Record<TileType, number>;
+  /** Adjacent canton ids within the same nation. */
+  neighbors: string[];
+  /** Centroid (mesh coordinate average) for hover placement and logistics. */
+  centroid: { x: number; y: number };
+  /** Assigned shade index within the nation's palette. */
+  shadeIndex: number;
+}
+
+export interface CantonValidationSnapshot {
+  ok: boolean;
+  issues: string[];
+}
+
+export interface CantonPartitionsState {
+  /** Lookup of canton metadata by canton id. */
+  byId: Record<string, CantonDefinition>;
+  /** Nation-local canton ordering. */
+  byNation: Record<PlayerId, string[]>;
+  /** Cell -> canton lookup; -1 indicates unassigned (e.g., deep ocean). */
+  cellToCanton: Int32Array;
+  /** Canton shade palettes keyed by nation id. */
+  shades: Record<PlayerId, string[]>;
+  /** Result of most recent validation audit. */
+  validation: CantonValidationSnapshot;
+  /** Index -> canton id mapping for fast lookup from cell array values. */
+  orderedIds: string[];
 }
 
 export type InfrastructureType = 'airport' | 'port' | 'rail';
@@ -629,6 +680,9 @@ export interface GameState {
 
   /** Per-nation initialization snapshots for in-media-res starts */
   nations: Record<PlayerId, NationState>;
+
+  /** Partitioned canton metadata and lookup tables. */
+  partitions: CantonPartitionsState;
 }
 
 /**

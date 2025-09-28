@@ -16,6 +16,13 @@ const OFFSETS = new Uint32Array([0, 2, 4, 6, 8]);
 
 const BIOMES = new Uint8Array([1, 7, 1, 1]);
 
+const TRI_CENTERS = new Float64Array([
+  0, 0,
+  1, 0,
+  0, 1,
+  1, 1,
+]);
+
 function initializeGame(presets: NationPreset[], seed = 'status-test') {
   const players = presets.map((_, index) => `player${index + 1}`);
   const biomes = new Uint8Array(BIOMES);
@@ -37,6 +44,19 @@ function initializeGame(presets: NationPreset[], seed = 'status-test') {
     game.state.playerCells[playerId] = [cell];
     game.state.cellOwnership[cell] = playerId;
   });
+
+  GameStateManager.initializeCantons(
+    game.state,
+    players,
+    nationInputs,
+    NEIGHBORS,
+    OFFSETS,
+    TRI_CENTERS,
+    biomes,
+    7,
+    seed,
+    1,
+  );
 
   GameStateManager.initializeNationInfrastructure(
     game.state,

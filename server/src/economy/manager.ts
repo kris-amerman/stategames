@@ -4,6 +4,7 @@ import type {
   SectorState,
   SectorType,
   CantonEconomy,
+  TileType,
 } from '../types';
 import {
   SECTOR_BASE_OUTPUT,
@@ -128,8 +129,65 @@ export class EconomyManager {
   }
 
   /** Register a new canton with empty sector and labor data. */
-  static addCanton(state: EconomyState, cantonId: string): void {
-    state.cantons[cantonId] = {
+  static addCanton(state: EconomyState, cantonId: string, initial?: Partial<CantonEconomy>): void {
+    const normalizeGeography = (geo?: Record<TileType, number>): Record<TileType, number> => {
+      if (!geo) return { plains: 1 } as Record<TileType, number>;
+      let total = 0;
+      for (const value of Object.values(geo)) {
+        if (Number.isFinite(value)) {
+          total += Math.max(0, value);
+        }
+      }
+      if (total <= 0) {
+        return { plains: 1 } as Record<TileType, number>;
+      }
+      const normalized: Record<TileType, number> = {} as any;
+      for (const [key, value] of Object.entries(geo)) {
+        const numeric = Math.max(0, value ?? 0);
+        if (numeric > 0) {
+          normalized[key as TileType] = numeric / total;
+        }
+      }
+      return Object.keys(normalized).length > 0 ? normalized : ({ plains: 1 } as Record<TileType, number>);
+    };
+
+    if (state.cantons[cantonId]) {
+      if (!initial) return;
+      const canton = state.cantons[cantonId];
+      if (initial.sectors) {
+        canton.sectors = { ...canton.sectors, ...initial.sectors };
+      }
+      if (initial.labor) {
+        canton.labor = { ...canton.labor, ...initial.labor };
+      }
+      if (initial.laborDemand) {
+        canton.laborDemand = { ...initial.laborDemand };
+      }
+      if (initial.laborAssigned) {
+        canton.laborAssigned = { ...initial.laborAssigned };
+      }
+      if (initial.geography) {
+        canton.geography = normalizeGeography(initial.geography);
+      }
+      if (initial.suitability) {
+        canton.suitability = { ...initial.suitability };
+      }
+      if (initial.suitabilityMultipliers) {
+        canton.suitabilityMultipliers = { ...initial.suitabilityMultipliers };
+      }
+      if (initial.urbanizationLevel !== undefined) {
+        canton.urbanizationLevel = initial.urbanizationLevel;
+      }
+      if (initial.nextUrbanizationLevel !== undefined) {
+        canton.nextUrbanizationLevel = initial.nextUrbanizationLevel;
+      }
+      if (initial.development !== undefined) {
+        canton.development = initial.development;
+      }
+      return;
+    }
+
+    const canton: CantonEconomy = {
       sectors: {} as Record<SectorType, SectorState>,
       labor: { general: 0, skilled: 0, specialist: 0 },
       laborDemand: {},
@@ -146,10 +204,42 @@ export class EconomyManager {
       urbanizationLevel: 1,
       development: 0,
       nextUrbanizationLevel: 1,
-      geography: { plains: 1 },
+      geography: normalizeGeography(initial?.geography as Record<TileType, number> | undefined),
       suitability: {},
       suitabilityMultipliers: {},
     };
+
+    if (initial) {
+      if (initial.sectors) {
+        canton.sectors = { ...initial.sectors } as Record<SectorType, SectorState>;
+      }
+      if (initial.labor) {
+        canton.labor = { ...canton.labor, ...initial.labor };
+      }
+      if (initial.laborDemand) {
+        canton.laborDemand = { ...initial.laborDemand };
+      }
+      if (initial.laborAssigned) {
+        canton.laborAssigned = { ...initial.laborAssigned };
+      }
+      if (initial.suitability) {
+        canton.suitability = { ...initial.suitability };
+      }
+      if (initial.suitabilityMultipliers) {
+        canton.suitabilityMultipliers = { ...initial.suitabilityMultipliers };
+      }
+      if (initial.urbanizationLevel !== undefined) {
+        canton.urbanizationLevel = initial.urbanizationLevel;
+      }
+      if (initial.nextUrbanizationLevel !== undefined) {
+        canton.nextUrbanizationLevel = initial.nextUrbanizationLevel;
+      }
+      if (initial.development !== undefined) {
+        canton.development = initial.development;
+      }
+    }
+
+    state.cantons[cantonId] = canton;
   }
 
   /** Placeholder for slot retooling logic. */

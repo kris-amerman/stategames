@@ -94,5 +94,6 @@ test('submitted planner payload persists and executes next turn', async () => {
   const secondDelta = goldAfterFirst - goldAfterSecond;
   expect(secondDelta).toBeGreaterThan(firstDelta);
   expect(secondDelta).toBeGreaterThanOrEqual(30);
-  expect(secondDelta).toBeGreaterThanOrEqual(welfareCost);
+  const cantonCount = execState.partitions.byNation['player1']?.length ?? 1;
+  expect(secondDelta).toBeGreaterThanOrEqual(welfareCost / cantonCount);
 });

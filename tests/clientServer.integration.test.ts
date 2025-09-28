@@ -66,7 +66,11 @@ test('client and server integrate on game creation', async () => {
   // Capital cell for player1 should start with airport and rail hub
   const playerId = data.players[0];
   const capital = data.game.state.playerCells[playerId][0];
-  const cantonId = String(capital);
+  const partitions = data.game.state.partitions;
+  const cantonId =
+    partitions?.byNation?.[playerId]?.find((id: string) => partitions?.byId?.[id]?.capital) ??
+    partitions?.byNation?.[playerId]?.[0] ??
+    String(capital);
   expect(data.game.state.economy.infrastructure.airports[cantonId]).toBeDefined();
   expect(data.game.state.economy.infrastructure.railHubs[cantonId]).toBeDefined();
 

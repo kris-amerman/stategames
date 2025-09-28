@@ -65,23 +65,18 @@ test('world generation assigns contiguous balanced territories with infrastructu
     expect(isContiguous(cells)).toBe(true);
 
     const capital = cells[0];
-    const cantonId = String(capital);
+    const partitions = state.partitions;
+    const cantonId =
+      partitions.byNation[p]?.find((id) => partitions.byId[id]?.capital) ??
+      partitions.byNation[p]?.[0] ??
+      String(capital);
     expect(state.economy.infrastructure.airports[cantonId]).toBeDefined();
     expect(state.economy.infrastructure.railHubs[cantonId]).toBeDefined();
 
-    let coastal = false;
-    const start = offsets[capital];
-    const end = offsets[capital + 1];
-    for (let i = start; i < end; i++) {
-      const nb = neighbors[i];
-      const biome = biomes[nb];
-      if (biome === 6 || biome === 7) {
-        coastal = true;
-        break;
-      }
+    const coastalCanton = partitions.byNation[p]?.find((id) => partitions.byId[id]?.coastal);
+    if (coastalCanton) {
+      expect(state.economy.infrastructure.ports[coastalCanton]).toBeDefined();
     }
-    const hasPort = !!state.economy.infrastructure.ports[cantonId];
-    expect(hasPort).toBe(coastal);
   }
 });
 

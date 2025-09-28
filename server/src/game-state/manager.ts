@@ -13,8 +13,10 @@ import type {
   InfrastructureData,
   NationMeta,
   NationState,
+  NationCreationInput,
 } from '../types';
 import { EconomyManager } from '../economy';
+import { initializeCantons as generateCantons, buildPartitionsState } from './cantons';
 
 export class GameStateManager {
   
@@ -66,6 +68,14 @@ export class GameStateManager {
       economy: EconomyManager.createInitialState(),
       nextEntityId: 1,
       nations: {} as Record<PlayerId, NationState>,
+      partitions: {
+        byId: {},
+        byNation: Object.fromEntries(players.map(player => [player, []])),
+        cellToCanton: new Int32Array(0),
+        shades: {},
+        validation: { ok: true, issues: [] },
+        orderedIds: [],
+      },
     };
   }
 
@@ -147,6 +157,16 @@ export class GameStateManager {
 
   static getPlayerCellCount(gameState: GameState, playerId: PlayerId): number {
     return gameState.playerCells[playerId]?.length || 0;
+  }
+
+  static getCantonForCell(gameState: GameState, cellId: CellId): string | null {
+    const index = gameState.partitions.cellToCanton[cellId];
+    if (index === undefined || index < 0) return null;
+    return gameState.partitions.orderedIds[index] ?? null;
+  }
+
+  static getNationCantons(gameState: GameState, nationId: PlayerId): string[] {
+    return [...(gameState.partitions.byNation[nationId] ?? [])];
   }
 
   // === ENTITY MANAGEMENT ===
@@ -360,24 +380,76 @@ export class GameStateManager {
     }
   }
 
+  static initializeCantons(
+    gameState: GameState,
+    players: PlayerId[],
+    nationInputs: NationCreationInput[],
+    cellNeighbors: Int32Array,
+    cellOffsets: Uint32Array,
+    cellCenters: Float64Array,
+    biomes: Uint8Array,
+    deepOceanBiome: number,
+    seed: string | null,
+    minArea = 30,
+  ): void {
+    const partitionInputs = players.map((playerId, index) => {
+      const cells = this.getPlayerCells(gameState, playerId);
+      const capital = cells[0] ?? -1;
+      const preset = nationInputs[index]?.preset ?? 'Balanced Mixed Economy';
+      return { nationId: playerId, preset, cells, capital };
+    }).filter(entry => entry.capital >= 0 && entry.cells.length > 0);
+
+    if (partitionInputs.length === 0) {
+      return;
+    }
+
+    const result = generateCantons(partitionInputs, {
+      mesh: { neighbors: cellNeighbors, offsets: cellOffsets, cellCenters },
+      biomes,
+      deepOceanBiome,
+      minArea,
+      seed,
+    });
+
+    const partitionsState = buildPartitionsState(result, biomes.length);
+
+    // Ensure byNation contains entries for all players even if they received no canton.
+    for (const player of players) {
+      if (!partitionsState.byNation[player]) {
+        partitionsState.byNation[player] = [];
+      }
+    }
+
+    gameState.partitions = partitionsState;
+
+    // Seed the economy with canton stubs using computed geography.
+    for (const canton of result.partitions) {
+      EconomyManager.addCanton(gameState.economy, canton.id, {
+        geography: canton.geography,
+        urbanizationLevel: 1,
+        nextUrbanizationLevel: 1,
+      });
+    }
+  }
+
   static initializeNationInfrastructure(
     gameState: GameState,
     players: PlayerId[],
-    biomes: Uint8Array,
-    cellNeighbors: Int32Array,
-    cellOffsets: Uint32Array,
+    _biomes: Uint8Array,
+    _cellNeighbors: Int32Array,
+    _cellOffsets: Uint32Array,
   ): void {
-    const SHALLOW_OCEAN = 6;
-    const DEEP_OCEAN = 7;
-
     for (const player of players) {
-      const cells = this.getPlayerCells(gameState, player);
-      if (cells.length === 0) continue;
-      const capital = cells[0];
-      const cantonId = String(capital);
+      const cantonIds = gameState.partitions.byNation[player] ?? [];
+      if (cantonIds.length === 0) continue;
+      const partitions = gameState.partitions.byId;
+      const capitalCantonId =
+        cantonIds.find(id => partitions[id]?.capital) ?? cantonIds[0];
+      if (!capitalCantonId) continue;
+      const capitalCanton = partitions[capitalCantonId];
 
-      // Ensure a canton exists for this capital cell
-      EconomyManager.addCanton(gameState.economy, cantonId);
+      // Ensure the canton exists in the economy registry.
+      EconomyManager.addCanton(gameState.economy, capitalCantonId);
 
       const base: InfrastructureData = {
         owner: 'national',
@@ -387,35 +459,27 @@ export class GameStateManager {
       };
 
       // National Airport and Rail Hub
-      gameState.economy.infrastructure.airports[cantonId] = { ...base };
-      gameState.economy.infrastructure.railHubs[cantonId] = { ...base };
+      gameState.economy.infrastructure.airports[capitalCantonId] = { ...base };
+      gameState.economy.infrastructure.railHubs[capitalCantonId] = { ...base };
       const national = gameState.economy.infrastructure.national as Record<string, string | undefined>;
       if (!national.airport) {
-        national.airport = cantonId;
+        national.airport = capitalCantonId;
       }
       if (!national.rail) {
-        national.rail = cantonId;
+        national.rail = capitalCantonId;
       }
 
-      // Check if the capital cell is coastal for port placement
-      let coastal = false;
-      const start = cellOffsets[capital];
-      const end = cellOffsets[capital + 1];
-      for (let i = start; i < end; i++) {
-        const nb = cellNeighbors[i];
-        if (nb < 0) continue;
-        const biome = biomes[nb];
-        if (biome === SHALLOW_OCEAN || biome === DEEP_OCEAN) {
-          coastal = true;
-          break;
-        }
-      }
+      const coastalCantonId =
+        capitalCanton.coastal
+          ? capitalCantonId
+          : cantonIds.find(id => partitions[id]?.coastal);
 
-      if (coastal) {
-        gameState.economy.infrastructure.ports[cantonId] = { ...base };
+      if (coastalCantonId) {
+        EconomyManager.addCanton(gameState.economy, coastalCantonId);
+        gameState.economy.infrastructure.ports[coastalCantonId] = { ...base };
         const national = gameState.economy.infrastructure.national as Record<string, string | undefined>;
         if (!national.port) {
-          national.port = cantonId;
+          national.port = coastalCantonId;
         }
       }
     }

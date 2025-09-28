@@ -237,8 +237,10 @@ const PROFILES: Record<NationPreset, NationProfile> = {
 
 interface CantonInfo {
   cantonId: string;
-  capital: number;
   coastal: boolean;
+  share: number;
+  capital: boolean;
+  cells: number[];
 }
 
 function computeCoastal(
@@ -418,27 +420,52 @@ function resolveWelfare(
   }
   return { tiers, cost, downshifted };
 }
-function ensureCanton(
+function ensureCantons(
   game: Game,
   playerId: PlayerId,
   biomes: Uint8Array,
   neighbors: Int32Array,
   offsets: Uint32Array,
-): CantonInfo | null {
+): CantonInfo[] {
+  const partitions = game.state.partitions;
+  const cantonIds = partitions.byNation[playerId] ?? [];
+  if (cantonIds.length > 0) {
+    const totalArea = cantonIds.reduce((sum, id) => sum + (partitions.byId[id]?.area ?? 0), 0);
+    return cantonIds.map((id) => {
+      const info = partitions.byId[id];
+      const area = info?.area ?? 0;
+      const share = totalArea > 0 ? area / totalArea : 1 / cantonIds.length;
+      if (!game.state.economy.cantons[id]) {
+        EconomyManager.addCanton(game.state.economy, id, { geography: info?.geography });
+      }
+      return {
+        cantonId: id,
+        coastal: info?.coastal ?? false,
+        share: share > 0 ? share : 1 / cantonIds.length,
+        capital: info?.capital ?? false,
+        cells: info?.cells ?? [],
+      };
+    });
+  }
+
   const cells = game.state.playerCells[playerId] ?? [];
   if (cells.length === 0) {
-    return null;
+    return [];
   }
   const capital = cells[0];
   const cantonId = String(capital);
   if (!game.state.economy.cantons[cantonId]) {
     EconomyManager.addCanton(game.state.economy, cantonId);
   }
-  return {
-    cantonId,
-    capital,
-    coastal: computeCoastal(capital, biomes, neighbors, offsets),
-  };
+  return [
+    {
+      cantonId,
+      coastal: computeCoastal(capital, biomes, neighbors, offsets),
+      share: 1,
+      capital: true,
+      cells,
+    },
+  ];
 }
 
 function cloneSectorStates(
@@ -446,6 +473,16 @@ function cloneSectorStates(
 ): Partial<Record<SectorType, { capacity: number; funded: number; idle: number; utilization?: number }>> {
   const clone: typeof sectors = {};
   for (const [key, value] of Object.entries(sectors)) {
+    clone[key as SectorType] = value ? { ...value } : undefined;
+  }
+  return clone;
+}
+
+function cloneLaborMap(
+  map: Partial<Record<SectorType, { general?: number; skilled?: number; specialist?: number }>>,
+): Partial<Record<SectorType, { general?: number; skilled?: number; specialist?: number }>> {
+  const clone: typeof map = {};
+  for (const [key, value] of Object.entries(map)) {
     clone[key as SectorType] = value ? { ...value } : undefined;
   }
   return clone;
@@ -542,12 +579,14 @@ export class InMediaResInitializer {
       if (!profile) {
         throw new Error(`Unknown preset for nation ${input.name}`);
       }
-      const cantonInfo = ensureCanton(game, playerId, biomes, neighbors, offsets);
-      if (!cantonInfo) {
+      const cantonInfos = ensureCantons(game, playerId, biomes, neighbors, offsets);
+      if (cantonInfos.length === 0) {
         return;
       }
-      const { cantonId, coastal } = cantonInfo;
-      const canton = economy.cantons[cantonId];
+      const capitalInfo = cantonInfos.find(info => info.capital) ?? cantonInfos[0];
+      const canton = economy.cantons[capitalInfo.cantonId];
+      const anyCoastal = cantonInfos.some(info => info.coastal);
+      const cantonCount = cantonInfos.length;
 
       // Generate a working mix of funded slots per sector with slight variation.
       const mix: Record<string, number> = {};
@@ -560,7 +599,7 @@ export class InMediaResInitializer {
       mix.logistics = logistics.slots;
 
       const energyDemand = computeEnergyDemand(mix);
-      const plantPlan = choosePlants(profile, cantonId, energyDemand, rng);
+      const plantPlan = choosePlants(profile, capitalInfo.cantonId, energyDemand, rng);
       const rawEnergyRatio = energyDemand > 0 ? plantPlan.supply / energyDemand : 1;
       const energyRatio = Math.min(Math.max(rawEnergyRatio, 0.95), 1.05);
       const effectiveEnergySupply = energyDemand * energyRatio;
@@ -628,9 +667,10 @@ export class InMediaResInitializer {
         const costPer = OM_COST_PER_SLOT[sector] ?? 1;
         omCost += funded * costPer;
         idleCost += idle * costPer * IDLE_TAX_RATE;
-        if (ENERGY_PER_SLOT[sector] ?? 0) {
-          aggregate.demandBySector[sector] =
-            (aggregate.demandBySector[sector] ?? 0) + funded * (ENERGY_PER_SLOT[sector] ?? 0);
+        const energyPerSlot = ENERGY_PER_SLOT[sector] ?? 0;
+        if (energyPerSlot) {
+          const contribution = funded * energyPerSlot * cantonCount;
+          aggregate.demandBySector[sector] = (aggregate.demandBySector[sector] ?? 0) + contribution;
         }
       }
       const energyOM = plantPlan.plants.reduce(
@@ -673,11 +713,14 @@ export class InMediaResInitializer {
         projectTurns += 1;
       }
 
-      const plantsEffective = plantPlan.plants.map((plant) => ({ ...plant }));
+      const plantsEffective = cantonInfos.flatMap((info) =>
+        plantPlan.plants.map((plant) => ({ ...plant, canton: info.cantonId })),
+      );
       aggregate.plants.push(...plantsEffective);
       for (const [resource, amount] of Object.entries(plantPlan.fuel)) {
-        aggregate.fuelUsed[resource as ResourceType] =
-          (aggregate.fuelUsed[resource as ResourceType] ?? 0) + amount!;
+        const key = resource as ResourceType;
+        const contribution = (amount ?? 0) * cantonCount;
+        aggregate.fuelUsed[key] = (aggregate.fuelUsed[key] ?? 0) + contribution;
       }
 
       // Update canton economic details.
@@ -708,9 +751,11 @@ export class InMediaResInitializer {
       canton.urbanizationLevel = 4 + rng.nextInt(3);
       canton.nextUrbanizationLevel = canton.urbanizationLevel;
       canton.development = rng.nextRange(1, 2);
-      canton.geography = coastal
-        ? { plains: 0.5, coast: 0.3, hills: 0.2 }
-        : { plains: 0.6, hills: 0.25, woods: 0.15 };
+      if (!canton.geography || Object.keys(canton.geography).length === 0) {
+        canton.geography = capitalInfo.coastal
+          ? { plains: 0.5, coast: 0.3, hills: 0.2 }
+          : { plains: 0.6, hills: 0.25, woods: 0.15 };
+      }
       canton.suitability = {};
       canton.suitabilityMultipliers = {};
       for (const sector of Object.keys(mix)) {
@@ -718,10 +763,44 @@ export class InMediaResInitializer {
         canton.suitabilityMultipliers[sector as SectorType] = 1 + rng.nextRange(-0.05, 0.05);
       }
 
+      const baseSnapshot = {
+        sectors: cloneSectorStates(canton.sectors),
+        labor: { ...canton.labor },
+        laborDemand: cloneLaborMap(canton.laborDemand),
+        laborAssigned: cloneLaborMap(canton.laborAssigned),
+        lai: canton.lai,
+        happiness: canton.happiness,
+        consumption: { ...canton.consumption },
+        shortages: { ...canton.shortages },
+        urbanizationLevel: canton.urbanizationLevel,
+        development: canton.development,
+        nextUrbanizationLevel: canton.nextUrbanizationLevel,
+        suitability: { ...canton.suitability },
+        suitabilityMultipliers: { ...canton.suitabilityMultipliers },
+      };
+
+      for (const info of cantonInfos) {
+        if (info.cantonId === capitalInfo.cantonId) continue;
+        const target = economy.cantons[info.cantonId];
+        target.sectors = cloneSectorStates(baseSnapshot.sectors);
+        target.labor = { ...baseSnapshot.labor };
+        target.laborDemand = cloneLaborMap(baseSnapshot.laborDemand);
+        target.laborAssigned = cloneLaborMap(baseSnapshot.laborAssigned);
+        target.lai = baseSnapshot.lai;
+        target.happiness = baseSnapshot.happiness;
+        target.consumption = { ...baseSnapshot.consumption };
+        target.shortages = { ...baseSnapshot.shortages };
+        target.urbanizationLevel = baseSnapshot.urbanizationLevel;
+        target.development = baseSnapshot.development;
+        target.nextUrbanizationLevel = baseSnapshot.nextUrbanizationLevel;
+        target.suitability = { ...baseSnapshot.suitability };
+        target.suitabilityMultipliers = { ...baseSnapshot.suitabilityMultipliers };
+      }
+
       // Prepare project entry.
       const project = {
         id: aggregate.projectId++,
-        canton: cantonId,
+        canton: capitalInfo.cantonId,
         sector: projectSector,
         tier: projectTier,
         slots: tierWeight,
@@ -733,75 +812,99 @@ export class InMediaResInitializer {
       economy.projects.projects.push(project);
       economy.projects.nextId = aggregate.projectId;
 
+      const logisticsSupply = Math.min(logistics.supply, logistics.demand * 1.05) * cantonCount;
+      const logisticsDemand = logistics.demand * cantonCount;
       const nationState: NationState = {
         id: playerId,
         name: input.name,
         preset: input.preset,
-        canton: cantonId,
-        coastal,
+        canton: capitalInfo.cantonId,
+        cantons: cantonInfos.map((info) => info.cantonId),
+        shades: game.state.partitions.shades[playerId] ?? [],
+        coastal: anyCoastal,
         signature: `${profile.nonUniformityTag}-${mix.finance ?? 0}-${mix.research ?? 0}-${mix.defense ?? 0}`,
         energy: {
-          supply: Math.round(effectiveEnergySupply * 100) / 100,
-          demand: energyDemand,
+          supply: Math.round(effectiveEnergySupply * cantonCount * 100) / 100,
+          demand: energyDemand * cantonCount,
           ratio: Math.round(energyRatio * 1000) / 1000,
           plants: plantsEffective,
           throttledSectors: {},
         },
         logistics: {
-          supply: Math.round(Math.min(logistics.supply, logistics.demand * 1.05) * 100) / 100,
-          demand: Math.round(logistics.demand * 100) / 100,
+          supply: Math.round(logisticsSupply * 100) / 100,
+          demand: Math.round(logisticsDemand * 100) / 100,
           ratio:
             logistics.demand > 0
               ? Math.round(Math.min(Math.max(logistics.supply / logistics.demand, 0.95), 1.05) * 1000) / 1000
               : 1,
-          slots: mix.logistics,
+          slots: (mix.logistics ?? 0) * cantonCount,
           throttledSectors: {},
         },
         welfare: {
           education: welfarePlan.tiers.education,
           healthcare: welfarePlan.tiers.healthcare,
           socialSupport: welfarePlan.tiers.socialSupport,
-          cost: Math.round(welfarePlan.cost * 100) / 100,
+          cost: Math.round(welfarePlan.cost * cantonCount * 100) / 100,
           autoDownshifted: welfarePlan.downshifted,
         },
         finance: {
-          treasury,
-          stableRevenue,
-          creditLimit,
-          debt,
-          interest,
+          treasury: treasury * cantonCount,
+          stableRevenue: stableRevenue * cantonCount,
+          creditLimit: creditLimit * cantonCount,
+          debt: debt * cantonCount,
+          interest: interest * cantonCount,
           waterfall: {
-            initial: initialTreasury,
-            interest,
-            operations: Math.round(totalOps * 100) / 100,
-            welfare: Math.round(welfarePlan.cost * 100) / 100,
-            military: militarySpend,
-            projects: projectSpendPerTurn,
-            surplus: treasury,
+            initial: initialTreasury * cantonCount,
+            interest: interest * cantonCount,
+            operations: Math.round(totalOps * cantonCount * 100) / 100,
+            welfare: Math.round(welfarePlan.cost * cantonCount * 100) / 100,
+            military: militarySpend * cantonCount,
+            projects: projectSpendPerTurn * cantonCount,
+            surplus: treasury * cantonCount,
           },
         },
         labor: {
-          available: laborBuffer,
-          assigned: labor.demand,
+          available: {
+            general: laborBuffer.general * cantonCount,
+            skilled: laborBuffer.skilled * cantonCount,
+            specialist: laborBuffer.specialist * cantonCount,
+          },
+          assigned: {
+            general: labor.demand.general * cantonCount,
+            skilled: labor.demand.skilled * cantonCount,
+            specialist: labor.demand.specialist * cantonCount,
+          },
           lai,
           happiness: canton.happiness,
           consumption: { ...canton.consumption },
         },
         stockpiles: {
-          food: foodStock,
-          fuel: fuelStock,
-          materials: materialsStock,
-          fx: fxReserves,
-          luxury: luxuryStock,
-          ordnance: ordnanceStock,
-          production: productionStock,
+          food: foodStock * cantonCount,
+          fuel: fuelStock * cantonCount,
+          materials: materialsStock * cantonCount,
+          fx: fxReserves * cantonCount,
+          luxury: luxuryStock * cantonCount,
+          ordnance: ordnanceStock * cantonCount,
+          production: productionStock * cantonCount,
         },
         military: {
-          upkeep: militaryUpkeep,
-          funded: militarySpend,
-          discretionary: discretionaryMilitary,
+          upkeep: militaryUpkeep * cantonCount,
+          funded: militarySpend * cantonCount,
+          discretionary: discretionaryMilitary * cantonCount,
         },
-        sectors: cloneSectorStates(sectorStates),
+        sectors: (() => {
+          const scaled = cloneSectorStates(sectorStates);
+          for (const state of Object.values(scaled)) {
+            if (!state) continue;
+            state.capacity *= cantonCount;
+            state.funded *= cantonCount;
+            state.idle *= cantonCount;
+            if (state.utilization !== undefined) {
+              state.utilization *= cantonCount;
+            }
+          }
+          return scaled;
+        })(),
         projects: [
           {
             id: project.id,
@@ -811,8 +914,8 @@ export class InMediaResInitializer {
             delayed: projectDelayed,
           },
         ],
-        idleCost: Math.round(idleCost * 100) / 100,
-        omCost: Math.round(totalOps * 100) / 100,
+        idleCost: Math.round(idleCost * cantonCount * 100) / 100,
+        omCost: Math.round(totalOps * cantonCount * 100) / 100,
         status: createEmptyStatusSummary(),
       };
 

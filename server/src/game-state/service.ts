@@ -128,6 +128,18 @@ export class GameService {
       () => territoryRandom.next(),
     );
 
+    GameStateManager.initializeCantons(
+      game.state,
+      players,
+      nationInputs,
+      meshData.cellNeighbors,
+      meshData.cellOffsets,
+      meshData.cellTriangleCenters,
+      biomes,
+      7,
+      normalizedSeed,
+    );
+
     GameStateManager.initializeNationInfrastructure(
       game.state,
       players,
