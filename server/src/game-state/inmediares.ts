@@ -464,8 +464,10 @@ function rebalanceCantonSizes(
   if (total === 0) return;
 
   const average = total / cantonCount;
-  const minTarget = Math.max(minimum, Math.floor(average * 0.65));
-  const maxIterations = total * 2;
+  const minTarget = Math.max(minimum, Math.floor(average * 0.85));
+  const maxTarget = Math.max(minTarget + 1, Math.ceil(average * 1.2));
+  const spreadTarget = Math.max(2, Math.ceil(average * 0.15));
+  const maxIterations = total * 3;
 
   const ownerCells = () => {
     const groups = new Map<number, Set<number>>();
@@ -477,6 +479,38 @@ function rebalanceCantonSizes(
     return groups;
   };
 
+  const collectNeighborOwners = (owner: number, groups: Map<number, Set<number>>) => {
+    const ownerSet = groups.get(owner);
+    if (!ownerSet) return [] as number[];
+    const neighborOwners = new Set<number>();
+    for (const cell of ownerSet) {
+      for (const nb of adjacency.get(cell) ?? []) {
+        const nbOwner = assignment.get(nb);
+        if (nbOwner === undefined || nbOwner === owner) continue;
+        neighborOwners.add(nbOwner);
+      }
+    }
+    return [...neighborOwners];
+  };
+
+  const transfer = (
+    donor: number,
+    recipient: number,
+    groups: Map<number, Set<number>>,
+  ): boolean => {
+    const donorSet = groups.get(donor);
+    const recipientSet = groups.get(recipient);
+    if (!donorSet || !recipientSet) return false;
+    const donorSize = donorSet.size;
+    if (donorSize <= minTarget) return false;
+    const candidate = findTransferCandidate(donorSet, recipient, adjacency, assignment);
+    if (candidate === null) return false;
+    donorSet.delete(candidate);
+    recipientSet.add(candidate);
+    assignment.set(candidate, recipient);
+    return true;
+  };
+
   let iterations = 0;
   while (iterations < maxIterations) {
     iterations += 1;
@@ -485,6 +519,8 @@ function rebalanceCantonSizes(
     const sizes = new Map<number, number>();
     let minOwner: number | null = null;
     let minSize = Number.POSITIVE_INFINITY;
+    let maxOwner: number | null = null;
+    let maxSize = 0;
     for (const [owner, set] of groups.entries()) {
       const size = set.size;
       sizes.set(owner, size);
@@ -492,41 +528,49 @@ function rebalanceCantonSizes(
         minSize = size;
         minOwner = owner;
       }
-    }
-
-    if (minOwner === null || minSize >= minTarget) {
-      break;
-    }
-
-    const recipientSet = groups.get(minOwner);
-    if (!recipientSet) break;
-    const neighborOwners = new Set<number>();
-    for (const cell of recipientSet) {
-      for (const nb of adjacency.get(cell) ?? []) {
-        const owner = assignment.get(nb);
-        if (owner === undefined || owner === minOwner) continue;
-        neighborOwners.add(owner);
+      if (size > maxSize) {
+        maxSize = size;
+        maxOwner = owner;
       }
+    }
+
+    if (minOwner === null || maxOwner === null) break;
+
+    const balanced =
+      minSize >= minTarget && maxSize <= maxTarget && maxSize - minSize <= spreadTarget;
+    if (balanced) {
+      break;
     }
 
     let moved = false;
-    const donorList = [...neighborOwners].sort((a, b) => (sizes.get(b) ?? 0) - (sizes.get(a) ?? 0));
-    for (const donor of donorList) {
-      const donorSize = sizes.get(donor) ?? 0;
-      if (donorSize <= minTarget) {
-        continue;
+
+    if (minSize < minTarget || maxSize - minSize > spreadTarget) {
+      const neighborOwners = collectNeighborOwners(minOwner, groups).sort(
+        (a, b) => (sizes.get(b) ?? 0) - (sizes.get(a) ?? 0),
+      );
+      for (const donor of neighborOwners) {
+        const donorSize = sizes.get(donor) ?? 0;
+        if (donorSize <= minTarget) continue;
+        if (transfer(donor, minOwner, groups)) {
+          moved = true;
+          break;
+        }
       }
-      const donorSet = groups.get(donor);
-      if (!donorSet) continue;
-      const candidate = findTransferCandidate(donorSet, minOwner, adjacency, assignment);
-      if (candidate === null) {
-        continue;
+    }
+
+    if (!moved && (maxSize > maxTarget || maxSize - minSize > spreadTarget)) {
+      const neighborOwners = collectNeighborOwners(maxOwner, groups).sort(
+        (a, b) => (sizes.get(a) ?? 0) - (sizes.get(b) ?? 0),
+      );
+      for (const recipient of neighborOwners) {
+        const recipientSize = sizes.get(recipient) ?? 0;
+        if (recipientSize >= maxSize) continue;
+        if (recipientSize + 1 > maxTarget && recipient !== minOwner) continue;
+        if (transfer(maxOwner, recipient, groups)) {
+          moved = true;
+          break;
+        }
       }
-      donorSet.delete(candidate);
-      recipientSet.add(candidate);
-      assignment.set(candidate, minOwner);
-      moved = true;
-      break;
     }
 
     if (!moved) {
