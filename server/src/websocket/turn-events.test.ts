@@ -40,29 +40,31 @@ test('websocket turn flow emits ordered events and survives reconnect', async ()
 
   const state = await GameService.getGameState(gameId);
   if (!state) throw new Error('state missing');
-  state.economy.infrastructure.ports['A'] = { owner:'national', status:'inactive', national:false, hp:100, toggle:{ target:'active', turns:1 } } as any;
-  state.economy.cantons['C1'] = {
-    sectors: { agriculture: { capacity: 5, funded: 0, idle: 0, utilization: 0 } },
-    labor: { general: 0, skilled: 0, specialist: 0 },
-    laborDemand: {},
-    laborAssigned: {},
-    lai: 0,
-    happiness: 0,
-    consumption: { foodRequired: 0, foodProvided: 0, luxuryRequired: 0, luxuryProvided: 0 },
-    shortages: { food: false, luxury: false },
-    urbanizationLevel: 1,
-    development: 0,
-    nextUrbanizationLevel: 2,
-    geography: {},
-    suitability: { agriculture: 0 },
-    suitabilityMultipliers: {},
-  } as any;
-  state.economy.finance.creditLimit = 10;
-  state.economy.finance.debt = 0;
-  state.economy.finance.defaulted = false;
-  state.economy.resources.gold = 20;
-  state.currentPlan = { budgets:{ military:50, welfare:0, sectorOM:{ agriculture:5 } }, policies:{}, slotPriorities:{}, tradeOrders:{}, projects:{} } as any;
-  await GameService.saveGameState(state, gameId);
+  await GameService.updateGameState(gameId, gameState => {
+    gameState.economy.infrastructure.ports['A'] = { owner:'national', status:'inactive', national:false, hp:100, toggle:{ target:'active', turns:1 } } as any;
+    gameState.economy.cantons['C1'] = {
+      sectors: { agriculture: { capacity: 5, funded: 0, idle: 0, utilization: 0 } },
+      labor: { general: 0, skilled: 0, specialist: 0 },
+      laborDemand: {},
+      laborAssigned: {},
+      lai: 0,
+      happiness: 0,
+      consumption: { foodRequired: 0, foodProvided: 0, luxuryRequired: 0, luxuryProvided: 0 },
+      shortages: { food: false, luxury: false },
+      urbanizationLevel: 1,
+      development: 0,
+      nextUrbanizationLevel: 2,
+      geography: {},
+      suitability: { agriculture: 0 },
+      suitabilityMultipliers: {},
+    } as any;
+    gameState.economy.finance.creditLimit = 10;
+    gameState.economy.finance.debt = 0;
+    gameState.economy.finance.defaulted = false;
+    gameState.economy.resources.gold = 20;
+    gameState.currentPlan = { budgets:{ military:50, welfare:0, sectorOM:{ agriculture:5 } }, policies:{}, slotPriorities:{}, tradeOrders:{}, projects:{} } as any;
+    return null;
+  });
 
   const advReq = new Request('http://localhost', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ playerId:'player1' }) });
   const advRes = await advanceTurn(gameId, advReq);
@@ -71,8 +73,10 @@ test('websocket turn flow emits ordered events and survives reconnect', async ()
 
   const post = await GameService.getGameState(gameId);
   if (post) {
-    post.economy.resources.gold = 0;
-    await GameService.saveGameState(post, gameId);
+    await GameService.updateGameState(gameId, state => {
+      state.economy.resources.gold = 0;
+      return null;
+    });
   }
 
   ws1.close();

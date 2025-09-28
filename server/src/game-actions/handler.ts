@@ -2,6 +2,7 @@
 import type { ServerWebSocket } from "bun";
 import { GameService } from "../game-state";
 import { GameStateManager } from "../game-state";
+import type { UpdateResult } from "../game-state/authority";
 import { meshService } from "../mesh-service";
 import type { Entity, Game, GameState } from "../types";
 import { broadcastGameStateUpdate } from "../index";
@@ -11,65 +12,80 @@ import { collectStateChanges } from "../events";
 
 export async function handleGameAction(ws: ServerWebSocket<any>, data: any) {
   const { actionType, gameId, playerId, ...actionData } = data;
-  
+
   console.log(`Processing ${actionType} action from ${playerId} in game ${gameId}`);
-  
+
   try {
-    const gameState = await GameService.getGameState(gameId);
-    
-    if (!gameState) {
+    const stateView = await GameService.getGameState(gameId);
+
+    if (!stateView) {
       sendActionResult(ws, false, 'Game not found');
       return;
     }
-    
-    if (gameState.status !== 'in_progress') {
+
+    if (stateView.status !== 'in_progress') {
       sendActionResult(ws, false, 'Game is not in progress');
       return;
     }
-    
+
     // Check if it's the player's turn (except for non-turn actions if any)
-    if (gameState.currentPlayer !== playerId) {
+    if (stateView.currentPlayer !== playerId) {
       sendActionResult(ws, false, 'It is not your turn');
       return;
     }
-    
+
     // Process the action based on type
-    let actionResult;
+    let actionResult: UpdateResult<
+      | { success: true; message: string; entityId?: number }
+      | { success: false; error: string }
+    > | null = null;
     switch (actionType) {
       case 'place_entity':
-        actionResult = await handlePlaceEntityAction(gameId, gameState, playerId, actionData);
+        actionResult = await GameService.updateGame(gameId, game =>
+          handlePlaceEntityAction(gameId, game, playerId, actionData),
+        );
         break;
       case 'move_unit':
-        actionResult = await handleMoveUnitAction(gameId, gameState, playerId, actionData);
+        actionResult = await GameService.updateGame(gameId, game =>
+          handleMoveUnitAction(gameId, game, playerId, actionData),
+        );
         break;
       case 'end_turn':
-        actionResult = await handleEndTurnAction(gameId, gameState, playerId, actionData);
+        actionResult = await GameService.updateGame(gameId, game =>
+          handleEndTurnAction(gameId, game, playerId, actionData),
+        );
         break;
       default:
         sendActionResult(ws, false, `Unknown action type: ${actionType}`);
         return;
     }
-    
-    if (actionResult.success) {
-      await GameService.saveGameState(gameState, gameId);
-      sendActionResult(ws, true, actionResult.message);
-      
-      broadcastGameStateUpdate(gameId, gameState, {
+
+    if (!actionResult) {
+      sendActionResult(ws, false, 'Unsupported action');
+      return;
+    }
+
+    const outcome = actionResult.result;
+
+    if (outcome.success) {
+      sendActionResult(ws, true, outcome.message);
+
+      broadcastGameStateUpdate(gameId, actionResult.state as unknown as GameState, {
         actionType,
         playerId,
         details: actionData
       });
     } else {
-      sendActionResult(ws, false, actionResult.error);
+      sendActionResult(ws, false, outcome.error);
     }
-    
+
   } catch (error) {
     console.error('Error processing game action:', error);
     sendActionResult(ws, false, 'Internal server error');
   }
 }
 
-export async function handlePlaceEntityAction(gameId: string, gameState: GameState, playerId: string, actionData: any): Promise<{
+export async function handlePlaceEntityAction(gameId: string, game: Game, playerId: string, actionData: any): Promise<{ 
   success: true;
   message: string;
   entityId: number;
@@ -77,6 +93,7 @@ export async function handlePlaceEntityAction(gameId: string, gameState: GameSta
   success: false;
   error: string;
 }> {
+  const gameState = game.state;
   const { cellId, entityType } = actionData;
   
   // Validate the action
@@ -127,13 +144,14 @@ export async function handlePlaceEntityAction(gameId: string, gameState: GameSta
   };
 }
 
-export async function handleMoveUnitAction(gameId: string, gameState: GameState, playerId: string, actionData: any): Promise<{
+export async function handleMoveUnitAction(gameId: string, game: Game, playerId: string, actionData: any): Promise<{
   success: true;
   message: string;
 } | {
   success: false;
   error: string;
 }> {
+  const gameState = game.state;
   const { unitId, fromCellId, toCellId } = actionData;
   
   // Add debugging to see what we're receiving
@@ -199,12 +217,7 @@ export async function handleMoveUnitAction(gameId: string, gameState: GameState,
   }
   
   // Get mesh data to validate adjacency
-  const gameMeta = await GameService.getGameMeta(gameId);
-  if (!gameMeta) {
-    return { success: false, error: 'Game not found' };
-  }
-  
-  const meshData = await meshService.getMeshData(gameMeta.mapSize);
+  const meshData = await meshService.getMeshData(game.meta.mapSize);
   
   // Check if movement is within unit's range
   const moveDistance = calculateCellDistance(parsedFromCellId, parsedToCellId, meshData);
@@ -288,13 +301,14 @@ function calculateCellDistance(cellId1: number, cellId2: number, meshData: any):
   return Infinity; // Not reachable
 }
 
-export async function handleEndTurnAction(gameId: string, gameState: GameState, playerId: string, actionData: any): Promise<{
+export async function handleEndTurnAction(gameId: string, game: Game, playerId: string, actionData: any): Promise<{
   success: true;
   message: string;
 } | {
   success: false;
   error: string;
 }> {
+  const gameState = game.state;
   console.log(`Player ${playerId} ending turn ${gameState.turnNumber}`);
   
   // Validate that it's actually the player's turn
@@ -306,22 +320,17 @@ export async function handleEndTurnAction(gameId: string, gameState: GameState, 
   resetPlayerUnitMovement(gameState, playerId);
 
   // Get the game to access player list from meta
-  const gameMeta = await GameService.getGameMeta(gameId);
-  if (!gameMeta) {
-    return { success: false, error: 'Game not found' };
-  }
-
   // Advance to next player
-  const currentPlayerIndex = gameMeta.players.indexOf(playerId);
-  const nextPlayerIndex = (currentPlayerIndex + 1) % gameMeta.players.length;
-  const nextPlayer = gameMeta.players[nextPlayerIndex];
+  const currentPlayerIndex = game.meta.players.indexOf(playerId);
+  const nextPlayerIndex = (currentPlayerIndex + 1) % game.meta.players.length;
+  const nextPlayer = game.meta.players[nextPlayerIndex];
   
   // Update game state
   gameState.currentPlayer = nextPlayer;
 
   // If we've cycled back to the first player, resolve the turn and increment
   if (nextPlayerIndex === 0) {
-    const prevEconomy = JSON.parse(JSON.stringify(gameState.economy));
+    const prevEconomy = structuredClone(gameState.economy);
     TurnManager.advanceTurn(gameState);
     const events = collectStateChanges(prevEconomy, gameState.economy);
     gameState.turnNumber += 1;
