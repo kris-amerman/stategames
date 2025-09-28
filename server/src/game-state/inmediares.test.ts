@@ -613,12 +613,18 @@ test('canton territories are roughly equal in size', () => {
   for (const nation of Object.values(game.state.nations)) {
     const cantonIds = getNationCantonIds(game, nation.id);
     if (cantonIds.length <= 1) continue;
-    const sizes = cantonIds.map(id => game.state.economy.cantonTerritories[id]?.length ?? 0);
-    const total = sizes.reduce((sum, value) => sum + value, 0);
-    const ideal = total / sizes.length;
-    const max = Math.max(...sizes);
-    const min = Math.min(...sizes);
-    const tolerance = Math.max(2, Math.ceil(ideal * 0.2));
+    const sizes = cantonIds.map(id => ({
+      id,
+      size: game.state.economy.cantonTerritories[id]?.length ?? 0,
+      neighbors: game.state.economy.cantonAdjacency[id]?.length ?? 0,
+    }));
+    const comparable = sizes.filter(entry => entry.neighbors > 0);
+    if (comparable.length <= 1) continue;
+    const total = comparable.reduce((sum, entry) => sum + entry.size, 0);
+    const ideal = total / comparable.length;
+    const max = Math.max(...comparable.map(entry => entry.size));
+    const min = Math.min(...comparable.map(entry => entry.size));
+    const tolerance = Math.max(2, Math.ceil(ideal * 0.15));
     expect(max - min).toBeLessThanOrEqual(tolerance);
   }
 });

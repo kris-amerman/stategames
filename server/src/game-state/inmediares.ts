@@ -430,7 +430,139 @@ function assignCantons(
     }
   }
 
+  rebalanceCantonSizes(cells, adjacency, assignment, seeds.length);
+
   return assignment;
+}
+
+function rebalanceCantonSizes(
+  cells: number[],
+  adjacency: Map<number, number[]>,
+  assignment: Map<number, number>,
+  cantonCount: number,
+): void {
+  if (cantonCount <= 1) return;
+  const total = cells.length;
+  if (total === 0) return;
+
+  const average = total / cantonCount;
+  const minTarget = Math.max(2, Math.floor(average * 0.6));
+  const maxIterations = total * 2;
+
+  const ownerCells = () => {
+    const groups = new Map<number, Set<number>>();
+    for (const [cell, owner] of assignment.entries()) {
+      const set = groups.get(owner) ?? new Set<number>();
+      set.add(cell);
+      groups.set(owner, set);
+    }
+    return groups;
+  };
+
+  let iterations = 0;
+  while (iterations < maxIterations) {
+    iterations += 1;
+    const groups = ownerCells();
+    if (groups.size <= 1) break;
+    const sizes = new Map<number, number>();
+    let minOwner: number | null = null;
+    let minSize = Number.POSITIVE_INFINITY;
+    for (const [owner, set] of groups.entries()) {
+      const size = set.size;
+      sizes.set(owner, size);
+      if (size < minSize) {
+        minSize = size;
+        minOwner = owner;
+      }
+    }
+
+    if (minOwner === null || minSize >= minTarget) {
+      break;
+    }
+
+    const recipientSet = groups.get(minOwner);
+    if (!recipientSet) break;
+    const neighborOwners = new Set<number>();
+    for (const cell of recipientSet) {
+      for (const nb of adjacency.get(cell) ?? []) {
+        const owner = assignment.get(nb);
+        if (owner === undefined || owner === minOwner) continue;
+        neighborOwners.add(owner);
+      }
+    }
+
+    let moved = false;
+    const donorList = [...neighborOwners].sort((a, b) => (sizes.get(b) ?? 0) - (sizes.get(a) ?? 0));
+    for (const donor of donorList) {
+      const donorSize = sizes.get(donor) ?? 0;
+      if (donorSize <= minTarget) {
+        continue;
+      }
+      const donorSet = groups.get(donor);
+      if (!donorSet) continue;
+      const candidate = findTransferCandidate(donorSet, minOwner, adjacency, assignment);
+      if (candidate === null) {
+        continue;
+      }
+      donorSet.delete(candidate);
+      recipientSet.add(candidate);
+      assignment.set(candidate, minOwner);
+      moved = true;
+      break;
+    }
+
+    if (!moved) {
+      break;
+    }
+  }
+}
+
+function findTransferCandidate(
+  donorSet: Set<number>,
+  recipientOwner: number,
+  adjacency: Map<number, number[]>,
+  assignment: Map<number, number>,
+): number | null {
+  for (const cell of donorSet) {
+    let touchesRecipient = false;
+    for (const nb of adjacency.get(cell) ?? []) {
+      if (assignment.get(nb) === recipientOwner) {
+        touchesRecipient = true;
+        break;
+      }
+    }
+    if (!touchesRecipient) continue;
+    if (!isRemovalSafe(donorSet, cell, adjacency)) continue;
+    return cell;
+  }
+  return null;
+}
+
+function isRemovalSafe(
+  donorSet: Set<number>,
+  cell: number,
+  adjacency: Map<number, number[]>,
+): boolean {
+  if (!donorSet.has(cell)) return true;
+  if (donorSet.size <= 1) return false;
+  const neighbors = (adjacency.get(cell) ?? []).filter(nb => donorSet.has(nb));
+  if (neighbors.length === 0) {
+    return donorSet.size === 1;
+  }
+  const start = neighbors[0];
+  const visited = new Set<number>([start]);
+  const stack: number[] = [start];
+  while (stack.length) {
+    const current = stack.pop()!;
+    for (const nb of adjacency.get(current) ?? []) {
+      if (nb === cell) continue;
+      if (!donorSet.has(nb)) continue;
+      if (visited.has(nb)) continue;
+      visited.add(nb);
+      stack.push(nb);
+    }
+  }
+  return visited.size === donorSet.size - 1;
 }
 
 function findNearestAssignedOwner(
