@@ -98,7 +98,8 @@ interface NationSnapshot {
   energy?: { ratio?: number; supply?: number; demand?: number; plants?: Array<{ type: PlantType; status: string }>; throttledSectors?: Partial<Record<SectorKey, number>> };
   logistics?: { ratio?: number; supply?: number; demand?: number; throttledSectors?: Partial<Record<SectorKey, number>> };
   labor?: { available?: LaborPool; assigned?: LaborPool; happiness?: number; lai?: number } & LaborBreakdown;
-  canton?: string;
+  capitalCanton?: string;
+  cantonIds?: string[];
   sectors?: Partial<Record<SectorKey, { capacity?: number; funded?: number; idle?: number; utilization?: number }>>;
   idleCost?: number;
   omCost?: number;
@@ -109,6 +110,7 @@ interface NationSnapshot {
 
 interface EconomySnapshot {
   cantons?: Record<string, any>;
+  cantonOwners?: Record<string, string | null>;
   energy?: { state?: { supply?: number; demand?: number; ratio?: number }; fuelUsed?: Record<string, number>; oAndMSpent?: number };
   finance?: { summary?: { expenditures?: number; interest?: number; netBorrowing?: number }; creditLimit?: number; debt?: number };
   infrastructure?: { national?: { airport?: string; port?: string; rail?: string }; airports?: Record<string, any>; ports?: Record<string, any>; railHubs?: Record<string, any> };
@@ -509,7 +511,7 @@ function deriveFinance(
 
 function computeRunningCost(nation: NationSnapshot | null, snapshot: GameSnapshot | null): number | null {
   if (!nation) return null;
-  const cantonId = nation.canton;
+  const cantonId = nation.capitalCanton;
   const canton = cantonId ? snapshot?.economy?.cantons?.[cantonId] : undefined;
   let total = 0;
   let any = false;
@@ -526,7 +528,7 @@ function computeRunningCost(nation: NationSnapshot | null, snapshot: GameSnapsho
 }
 
 function deriveSectorDebug(snapshot: GameSnapshot | null, nation: NationSnapshot | null, nationId: string | null): SectorDebugEntry[] {
-  const cantonId = nation?.canton;
+  const cantonId = nation?.capitalCanton;
   const canton = cantonId ? snapshot?.economy?.cantons?.[cantonId] : undefined;
   return SECTORS.map((sector) => {
     const title = SECTOR_TITLES[sector];
@@ -672,13 +674,19 @@ function deriveCantons(
 ): CantonEntry[] {
   if (!snapshot?.economy?.cantons) return [];
   const rawCantons = snapshot.economy.cantons;
+  const owners = snapshot.economy.cantonOwners ?? {};
   const candidateIds = new Set<string>();
-  if (nation?.canton) {
-    candidateIds.add(nation.canton);
+  if (nation?.capitalCanton) {
+    candidateIds.add(nation.capitalCanton);
+  }
+  if (nation?.cantonIds) {
+    for (const id of nation.cantonIds) {
+      candidateIds.add(id);
+    }
   }
   if (nationId) {
-    for (const [id, canton] of Object.entries(rawCantons)) {
-      if ((canton as any)?.owner === nationId) {
+    for (const [id, owner] of Object.entries(owners)) {
+      if (owner === nationId) {
         candidateIds.add(id);
       }
     }

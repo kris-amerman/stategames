@@ -457,9 +457,10 @@ function buildNationLayout(
       ? String(capital)
       : `${capital}-S${index}`;
     if (!economy.cantons[cantonId]) {
-      EconomyManager.addCanton(economy, cantonId);
+      EconomyManager.addCanton(economy, cantonId, playerId);
     }
     const canton = economy.cantons[cantonId];
+    economy.cantonOwners[cantonId] = playerId;
     const geo = computeCantonGeography(cellsList, biomes);
     const coastal = detectCoastal(cellsList, biomes, neighbors, offsets);
     let ul = isCapital ? capitalUL : pickInRange(satelliteRange, rng);
@@ -1464,7 +1465,8 @@ export class InMediaResInitializer {
         id: playerId,
         name: input.name,
         preset: input.preset,
-        canton: capitalId,
+        capitalCanton: capitalId,
+        cantonIds: layout.cantons.map((c) => c.id),
         coastal: nationCoastal,
         signature: `${profile.nonUniformityTag}-${layout.cantons.length}-${mixTotals.finance ?? 0}-${mixTotals.research ?? 0}`,
         energy: {

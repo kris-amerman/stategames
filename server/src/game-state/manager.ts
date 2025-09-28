@@ -377,7 +377,7 @@ export class GameStateManager {
       const cantonId = String(capital);
 
       // Ensure a canton exists for this capital cell
-      EconomyManager.addCanton(gameState.economy, cantonId);
+      EconomyManager.addCanton(gameState.economy, cantonId, player);
 
       const base: InfrastructureData = {
         owner: 'national',

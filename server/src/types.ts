@@ -271,7 +271,8 @@ export interface NationState {
   id: PlayerId;
   name: string;
   preset: NationPreset;
-  canton: string;
+  capitalCanton: string;
+  cantonIds: string[];
   coastal: boolean;
   signature: string;
   energy: NationEnergySnapshot;
@@ -467,6 +468,8 @@ export interface TradeState {
 export interface EconomyState {
   resources: Resources;
   cantons: { [cantonId: string]: CantonEconomy };
+  /** Owner lookup for each canton id. */
+  cantonOwners: Record<string, PlayerId | null>;
   /** Mapping of canton id to owned cell indices. */
   cantonTerritories: Record<string, number[]>;
   /** Undirected adjacency between cantons for domestic logistics. */

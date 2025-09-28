@@ -432,10 +432,13 @@ test('different presets yield divergent nation signatures and coastal infrastruc
   expect(signatures.size).toBe(nations.length);
 
   for (const nation of nations) {
-    const cantonPrefix = nation.canton;
-    const cantonIds = Object.keys(game.state.economy.cantonTerritories).filter(
-      id => id === cantonPrefix || id.startsWith(`${cantonPrefix}-`),
-    );
+    const cantonIds = nation.cantonIds;
+    expect(cantonIds.length).toBeGreaterThan(0);
+    expect(
+      cantonIds.every(
+        id => game.state.economy.cantonOwners[id] === nation.id,
+      ),
+    ).toBe(true);
     const detectCoastal = InMediaResTestHooks.detectCoastal;
     if (!detectCoastal) throw new Error('detectCoastal hook not exposed');
     const coastalCantons = cantonIds.filter(id =>
@@ -471,10 +474,7 @@ test('archetype canton counts fall within configured bands and coastal nations h
 
   for (const nation of Object.values(game.state.nations)) {
     const band = CANTON_BANDS[nation.preset];
-    const capital = nation.canton;
-    const cantonIds = Object.keys(game.state.economy.cantonTerritories).filter(
-      id => id === capital || id.startsWith(`${capital}-`),
-    );
+    const cantonIds = nation.cantonIds;
     expect(cantonIds.length).toBeGreaterThanOrEqual(band[0]);
     expect(cantonIds.length).toBeLessThanOrEqual(band[1]);
     const coastalCantons = cantonIds.filter(id =>
@@ -504,9 +504,7 @@ test('nations with three or more cantons have connected adjacency graphs', () =>
   const { game, players } = setupGame(presets, 'adjacency', { assignments });
   const playerId = players[0];
   const nation = game.state.nations[playerId];
-  const cantonIds = Object.keys(game.state.economy.cantonTerritories).filter(
-    id => id === nation.canton || id.startsWith(`${nation.canton}-`),
-  );
+  const cantonIds = nation.cantonIds;
   expect(cantonIds.length).toBeGreaterThanOrEqual(3);
   const adjacency = game.state.economy.cantonAdjacency;
   const visited = new Set<string>();
@@ -579,9 +577,7 @@ test('nation happiness equals the average of constituent canton happiness values
   ];
   const { game } = setupGame(presets, 'happiness-rollup');
   for (const nation of Object.values(game.state.nations)) {
-    const cantonIds = Object.keys(game.state.economy.cantonTerritories).filter(
-      id => id === nation.canton || id.startsWith(`${nation.canton}-`),
-    );
+    const cantonIds = nation.cantonIds;
     const average =
       cantonIds.reduce((sum, id) => sum + game.state.economy.cantons[id].happiness, 0) /
       cantonIds.length;

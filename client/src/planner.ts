@@ -363,7 +363,7 @@ function aggregateSectorStats(
     return stats;
   }
 
-  const cantonId = nation.canton;
+  const cantonId = nation.capitalCanton;
   const canton = cantonId ? economy.cantons?.[cantonId] : null;
 
   for (const sectorKey of SECTORS) {
@@ -416,8 +416,8 @@ function computeIdleTaxFromStats(stats: Record<SectorKey, SectorStats>): number 
 }
 
 function computeIdleTax(economy: any, nation: any = state.nation): number {
-  if (!economy || !nation?.canton) return 0;
-  const canton = economy.cantons?.[nation.canton];
+  if (!economy || !nation?.capitalCanton) return 0;
+  const canton = economy.cantons?.[nation.capitalCanton];
   if (!canton?.sectors) return 0;
 
   return SECTORS.reduce((sum, sector) => {

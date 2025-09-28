@@ -4,6 +4,7 @@ import type {
   SectorState,
   SectorType,
   CantonEconomy,
+  PlayerId,
 } from '../types';
 import {
   SECTOR_BASE_OUTPUT,
@@ -76,6 +77,7 @@ export class EconomyManager {
         labor: 0,
       },
       cantons: {},
+      cantonOwners: {},
       cantonTerritories: {},
       cantonAdjacency: {},
       retoolQueue: [],
@@ -130,7 +132,7 @@ export class EconomyManager {
   }
 
   /** Register a new canton with empty sector and labor data. */
-  static addCanton(state: EconomyState, cantonId: string): void {
+  static addCanton(state: EconomyState, cantonId: string, owner: PlayerId | null = null): void {
     state.cantons[cantonId] = {
       sectors: {} as Record<SectorType, SectorState>,
       labor: { general: 0, skilled: 0, specialist: 0 },
@@ -156,6 +158,7 @@ export class EconomyManager {
       neighbors: [],
       territory: [],
     };
+    state.cantonOwners[cantonId] = owner;
     state.cantonTerritories[cantonId] = [];
     state.cantonAdjacency[cantonId] = [];
   }
