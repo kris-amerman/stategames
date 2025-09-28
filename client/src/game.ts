@@ -40,8 +40,6 @@ interface CantonVisual {
   capacity: number;
   happiness: number | null;
   cells: number[];
-  labelX: number | null;
-  labelY: number | null;
 }
 
 let mapHighlightMode: MapHighlightMode = 'nation';
@@ -260,8 +258,6 @@ function ingestCantonData(gameState: any): void {
         ? `${nation.name} Capital`
         : `${nation.name} Canton ${satelliteOrdinal++}`;
 
-      const labelPosition = computeCantonLabelPosition(cells);
-
       cantonVisuals[cantonId] = {
         id: cantonId,
         nationId,
@@ -273,8 +269,6 @@ function ingestCantonData(gameState: any): void {
         capacity,
         happiness,
         cells,
-        labelX: labelPosition?.x ?? null,
-        labelY: labelPosition?.y ?? null,
       };
     });
   });
@@ -448,7 +442,6 @@ function drawCantonOverlay(): void {
     ctx.fill();
   }
 
-  drawCantonLabels();
   ctx.restore();
 
 }
@@ -466,68 +459,6 @@ function getCellPolygon(cellId: number): { x: number; y: number }[] {
     });
   }
   return polygon;
-}
-
-function computeCantonLabelPosition(cells: number[]): { x: number; y: number } | null {
-  if (!meshData || cells.length === 0) return null;
-
-  let sumX = 0;
-  let sumY = 0;
-  let counted = 0;
-
-  for (const cellId of cells) {
-    if (cellId < 0 || cellId >= meshData.cellCount) continue;
-    const centerIndex = cellId * 2;
-    const x = meshData.cellTriangleCenters[centerIndex];
-    const y = meshData.cellTriangleCenters[centerIndex + 1];
-    if (Number.isFinite(x) && Number.isFinite(y)) {
-      sumX += x;
-      sumY += y;
-      counted++;
-    }
-  }
-
-  if (counted === 0) return null;
-
-  return {
-    x: sumX / counted,
-    y: sumY / counted,
-  };
-}
-
-function drawCantonLabels(): void {
-  ctx.font = 'bold 12px "Inter", "Helvetica Neue", Arial, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  for (const visual of Object.values(cantonVisuals)) {
-    if (visual.labelX === null || visual.labelY === null) {
-      const computed = computeCantonLabelPosition(visual.cells);
-      if (!computed) continue;
-      visual.labelX = computed.x;
-      visual.labelY = computed.y;
-    }
-
-    const x = visual.labelX;
-    const y = visual.labelY;
-    if (x === null || y === null) continue;
-
-    const text = visual.name;
-    const metrics = ctx.measureText(text);
-    const paddingX = 6;
-    const paddingY = 4;
-    const ascent = metrics.actualBoundingBoxAscent ?? 8;
-    const descent = metrics.actualBoundingBoxDescent ?? 4;
-    const textHeight = ascent + descent;
-    const boxWidth = metrics.width + paddingX * 2;
-    const boxHeight = textHeight + paddingY * 2;
-
-    ctx.fillStyle = 'rgba(15, 15, 20, 0.65)';
-    ctx.fillRect(x - boxWidth / 2, y - boxHeight / 2, boxWidth, boxHeight);
-
-    ctx.fillStyle = '#f5f5f5';
-    ctx.fillText(text, x, y);
-  }
 }
 
 function ensureCantonTooltip(): void {
