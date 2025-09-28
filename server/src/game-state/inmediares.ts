@@ -339,6 +339,80 @@ function computeDistancesFromSeeds(
   return dist;
 }
 
+
+interface FrontierEntry {
+  cell: number;
+  owner: number;
+  distance: number;
+  priority: number;
+}
+
+class FrontierQueue {
+  private heap: FrontierEntry[] = [];
+
+  push(entry: FrontierEntry): void {
+    this.heap.push(entry);
+    this.bubbleUp(this.heap.length - 1);
+  }
+
+  pop(): FrontierEntry | undefined {
+    if (this.heap.length === 0) return undefined;
+    const top = this.heap[0];
+    const last = this.heap.pop()!;
+    if (this.heap.length > 0) {
+      this.heap[0] = last;
+      this.bubbleDown(0);
+    }
+    return top;
+  }
+
+  get size(): number {
+    return this.heap.length;
+  }
+
+  private bubbleUp(index: number): void {
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (this.heap[parent].priority <= this.heap[index].priority) break;
+      [this.heap[parent], this.heap[index]] = [this.heap[index], this.heap[parent]];
+      index = parent;
+    }
+  }
+
+  private bubbleDown(index: number): void {
+    const length = this.heap.length;
+    while (true) {
+      let smallest = index;
+      const left = index * 2 + 1;
+      const right = left + 1;
+      if (left < length && this.heap[left].priority < this.heap[smallest].priority) {
+        smallest = left;
+      }
+      if (right < length && this.heap[right].priority < this.heap[smallest].priority) {
+        smallest = right;
+      }
+      if (smallest === index) break;
+      [this.heap[smallest], this.heap[index]] = [this.heap[index], this.heap[smallest]];
+      index = smallest;
+    }
+  }
+}
+
+function computeLoadPenalty(
+  owner: number,
+  counts: number[],
+  minTarget: number,
+  maxTarget: number,
+): number {
+  const size = counts[owner] ?? 0;
+  if (size < minTarget) return 0;
+  if (size < maxTarget) {
+    const span = Math.max(1, maxTarget - minTarget);
+    return (size - minTarget + 1) / (span + 1);
+  }
+  return 5 + (size - maxTarget);
+}
+
 function assignCantons(
   cells: number[],
   count: number,
@@ -347,284 +421,142 @@ function assignCantons(
   rng: SeededRandom,
   minArea: number,
 ): Map<number, number> {
-  const seeds: number[] = [capital];
-  const remaining = cells.filter((c) => c !== capital);
-  for (let i = 1; i < count; i++) {
+  const uniqueCells = Array.from(new Set(cells));
+  const totalCells = uniqueCells.length;
+  if (totalCells === 0) {
+    return new Map();
+  }
+
+  const cantonCount = Math.max(1, Math.min(count, totalCells));
+  const sortedCells = [...uniqueCells].sort((a, b) => a - b);
+  const seeds: number[] = [];
+  const capitalCell = sortedCells.includes(capital) ? capital : sortedCells[0];
+  seeds.push(capitalCell);
+
+  for (let i = 1; i < cantonCount; i++) {
     const dist = computeDistancesFromSeeds(adjacency, seeds);
     let bestCell: number | null = null;
     let bestDist = -1;
-    for (const cell of remaining) {
+    for (const cell of sortedCells) {
       if (seeds.includes(cell)) continue;
       const d = dist.get(cell);
       if (d === undefined) continue;
       if (d > bestDist) {
         bestDist = d;
         bestCell = cell;
-      } else if (d === bestDist && bestCell !== null && cell < bestCell) {
-        bestCell = cell;
+      } else if (d === bestDist && bestCell !== null) {
+        if (cell < bestCell) {
+          bestCell = cell;
+        } else if (cell > bestCell && rng.nextInt(2) === 0) {
+          bestCell = cell;
+        }
       }
     }
     if (bestCell === null) {
-      const candidates = remaining.filter((c) => !seeds.includes(c));
-      if (candidates.length === 0) break;
-      bestCell = candidates.sort((a, b) => a - b)[0];
+      const fallback = sortedCells.filter((cell) => !seeds.includes(cell));
+      if (fallback.length === 0) break;
+      const choice = rng.nextInt(fallback.length);
+      bestCell = fallback[choice];
     }
     seeds.push(bestCell);
   }
 
+  while (seeds.length < cantonCount) {
+    const remaining = sortedCells.filter((cell) => !seeds.includes(cell));
+    if (remaining.length === 0) break;
+    seeds.push(remaining[0]);
+  }
+
   const assignment = new Map<number, number>();
-  const queues: number[][] = Array.from({ length: seeds.length }, () => []);
   const counts = new Array(seeds.length).fill(0);
-  const totalCells = cells.length;
+  const queue = new FrontierQueue();
+  const deferred: FrontierEntry[][] = Array.from({ length: seeds.length }, () => []);
+  const seenPairs = new Set<string>();
+
   const baseTarget = Math.floor(totalCells / seeds.length);
   const remainder = totalCells % seeds.length;
-  const targets = new Array(seeds.length).fill(baseTarget).map((value, index) =>
-    index < remainder ? value + 1 : value,
-  );
+  const idealTargets = new Array(seeds.length)
+    .fill(baseTarget)
+    .map((value, index) => (index < remainder ? value + 1 : value));
+  const averageTarget = Math.max(1, Math.floor(idealTargets.reduce((a, b) => a + b, 0) / seeds.length));
+  const minTarget = Math.max(minArea, Math.floor(averageTarget * 0.9));
+  const maxTarget = Math.max(minTarget + 1, Math.ceil(averageTarget * 1.15));
+
+  const hasUnderfilled = () => counts.some((countValue) => countValue < minTarget);
+
+  const pushNeighbor = (owner: number, neighbor: number, distance: number) => {
+    if (assignment.has(neighbor)) return;
+    const key = `${owner}:${neighbor}`;
+    if (seenPairs.has(key)) return;
+    seenPairs.add(key);
+    const priority = distance + computeLoadPenalty(owner, counts, minTarget, maxTarget);
+    queue.push({ cell: neighbor, owner, distance, priority });
+  };
 
   seeds.forEach((cell, index) => {
     assignment.set(cell, index);
-    queues[index].push(cell);
     counts[index] = 1;
   });
 
   let assigned = seeds.length;
+  seeds.forEach((cell, index) => {
+    for (const nb of adjacency.get(cell) ?? []) {
+      if (!assignment.has(nb)) {
+        pushNeighbor(index, nb, 1);
+      }
+    }
+  });
 
-  const claimNeighbor = (owner: number, neighbor: number) => {
-    assignment.set(neighbor, owner);
-    queues[owner].push(neighbor);
-    counts[owner] += 1;
-    assigned += 1;
+  const flushDeferred = () => {
+    for (let owner = 0; owner < deferred.length; owner++) {
+      const entries = deferred[owner];
+      while (entries.length) {
+        const entry = entries.pop()!;
+        entry.priority = entry.distance + computeLoadPenalty(owner, counts, minTarget, maxTarget);
+        queue.push(entry);
+      }
+    }
   };
-
-  const needsMore = () =>
-    counts.some((countValue, index) => countValue < targets[index] && queues[index].length > 0);
 
   while (assigned < totalCells) {
-    let progressed = false;
-    const anyNeeds = needsMore();
-    for (let owner = 0; owner < queues.length; owner++) {
-      const queue = queues[owner];
-      const hasCapacity = counts[owner] < targets[owner] || !anyNeeds;
-      if (!hasCapacity) continue;
-      while (queue.length && (counts[owner] < targets[owner] || !anyNeeds)) {
-        const cell = queue.shift()!;
-        for (const nb of adjacency.get(cell) ?? []) {
-          if (assignment.has(nb)) continue;
-          claimNeighbor(owner, nb);
-          progressed = true;
-          if (counts[owner] >= targets[owner] && anyNeeds) {
-            queue.unshift(cell);
-            break;
-          }
-        }
-        if (counts[owner] >= targets[owner] && anyNeeds) {
-          break;
-        }
-      }
-      if (!queue.length && counts[owner] < targets[owner] && anyNeeds) {
-        // No frontier left to expand even though we still want cells: relax the target.
-        targets[owner] = counts[owner];
+    const entry = queue.pop();
+    if (!entry) {
+      break;
+    }
+    const { cell, owner, distance } = entry;
+    if (assignment.has(cell)) {
+      continue;
+    }
+    if (counts[owner] >= maxTarget && hasUnderfilled()) {
+      deferred[owner].push(entry);
+      continue;
+    }
+
+    assignment.set(cell, owner);
+    counts[owner] += 1;
+    assigned += 1;
+
+    for (const nb of adjacency.get(cell) ?? []) {
+      if (!assignment.has(nb)) {
+        pushNeighbor(owner, nb, distance + 1);
       }
     }
 
-    if (!progressed) {
-      const unassigned = cells.filter((cell) => !assignment.has(cell));
-      if (unassigned.length === 0) {
-        break;
-      }
-      const seedCell = unassigned.sort((a, b) => a - b)[0];
-      const owner = findNearestAssignedOwner(seedCell, adjacency, assignment);
-      claimNeighbor(owner, seedCell);
-      progressed = true;
+    if (!hasUnderfilled()) {
+      flushDeferred();
     }
   }
 
-  for (const cell of cells) {
-    if (!assignment.has(cell)) {
+  if (assigned < totalCells) {
+    const unassigned = sortedCells.filter((cell) => !assignment.has(cell));
+    for (const cell of unassigned) {
       const owner = findNearestAssignedOwner(cell, adjacency, assignment);
-      claimNeighbor(owner, cell);
+      assignment.set(cell, owner);
+      counts[owner] += 1;
     }
   }
-
-  rebalanceCantonSizes(cells, adjacency, assignment, seeds.length, minArea);
 
   return assignment;
-}
-
-function rebalanceCantonSizes(
-  cells: number[],
-  adjacency: Map<number, number[]>,
-  assignment: Map<number, number>,
-  cantonCount: number,
-  minimum: number,
-): void {
-  if (cantonCount <= 1) return;
-  const total = cells.length;
-  if (total === 0) return;
-
-  const average = total / cantonCount;
-  const minTarget = Math.max(minimum, Math.floor(average * 0.85));
-  const maxTarget = Math.max(minTarget + 1, Math.ceil(average * 1.2));
-  const spreadTarget = Math.max(2, Math.ceil(average * 0.15));
-  const maxIterations = total * 3;
-
-  const ownerCells = () => {
-    const groups = new Map<number, Set<number>>();
-    for (const [cell, owner] of assignment.entries()) {
-      const set = groups.get(owner) ?? new Set<number>();
-      set.add(cell);
-      groups.set(owner, set);
-    }
-    return groups;
-  };
-
-  const collectNeighborOwners = (owner: number, groups: Map<number, Set<number>>) => {
-    const ownerSet = groups.get(owner);
-    if (!ownerSet) return [] as number[];
-    const neighborOwners = new Set<number>();
-    for (const cell of ownerSet) {
-      for (const nb of adjacency.get(cell) ?? []) {
-        const nbOwner = assignment.get(nb);
-        if (nbOwner === undefined || nbOwner === owner) continue;
-        neighborOwners.add(nbOwner);
-      }
-    }
-    return [...neighborOwners];
-  };
-
-  const transfer = (
-    donor: number,
-    recipient: number,
-    groups: Map<number, Set<number>>,
-  ): boolean => {
-    const donorSet = groups.get(donor);
-    const recipientSet = groups.get(recipient);
-    if (!donorSet || !recipientSet) return false;
-    const donorSize = donorSet.size;
-    if (donorSize <= minTarget) return false;
-    const candidate = findTransferCandidate(donorSet, recipient, adjacency, assignment);
-    if (candidate === null) return false;
-    donorSet.delete(candidate);
-    recipientSet.add(candidate);
-    assignment.set(candidate, recipient);
-    return true;
-  };
-
-  let iterations = 0;
-  while (iterations < maxIterations) {
-    iterations += 1;
-    const groups = ownerCells();
-    if (groups.size <= 1) break;
-    const sizes = new Map<number, number>();
-    let minOwner: number | null = null;
-    let minSize = Number.POSITIVE_INFINITY;
-    let maxOwner: number | null = null;
-    let maxSize = 0;
-    for (const [owner, set] of groups.entries()) {
-      const size = set.size;
-      sizes.set(owner, size);
-      if (size < minSize) {
-        minSize = size;
-        minOwner = owner;
-      }
-      if (size > maxSize) {
-        maxSize = size;
-        maxOwner = owner;
-      }
-    }
-
-    if (minOwner === null || maxOwner === null) break;
-
-    const balanced =
-      minSize >= minTarget && maxSize <= maxTarget && maxSize - minSize <= spreadTarget;
-    if (balanced) {
-      break;
-    }
-
-    let moved = false;
-
-    if (minSize < minTarget || maxSize - minSize > spreadTarget) {
-      const neighborOwners = collectNeighborOwners(minOwner, groups).sort(
-        (a, b) => (sizes.get(b) ?? 0) - (sizes.get(a) ?? 0),
-      );
-      for (const donor of neighborOwners) {
-        const donorSize = sizes.get(donor) ?? 0;
-        if (donorSize <= minTarget) continue;
-        if (transfer(donor, minOwner, groups)) {
-          moved = true;
-          break;
-        }
-      }
-    }
-
-    if (!moved && (maxSize > maxTarget || maxSize - minSize > spreadTarget)) {
-      const neighborOwners = collectNeighborOwners(maxOwner, groups).sort(
-        (a, b) => (sizes.get(a) ?? 0) - (sizes.get(b) ?? 0),
-      );
-      for (const recipient of neighborOwners) {
-        const recipientSize = sizes.get(recipient) ?? 0;
-        if (recipientSize >= maxSize) continue;
-        if (recipientSize + 1 > maxTarget && recipient !== minOwner) continue;
-        if (transfer(maxOwner, recipient, groups)) {
-          moved = true;
-          break;
-        }
-      }
-    }
-
-    if (!moved) {
-      break;
-    }
-  }
-}
-
-function findTransferCandidate(
-  donorSet: Set<number>,
-  recipientOwner: number,
-  adjacency: Map<number, number[]>,
-  assignment: Map<number, number>,
-): number | null {
-  for (const cell of donorSet) {
-    let touchesRecipient = false;
-    for (const nb of adjacency.get(cell) ?? []) {
-      if (assignment.get(nb) === recipientOwner) {
-        touchesRecipient = true;
-        break;
-      }
-    }
-    if (!touchesRecipient) continue;
-    if (!isRemovalSafe(donorSet, cell, adjacency)) continue;
-    return cell;
-  }
-  return null;
-}
-
-function isRemovalSafe(
-  donorSet: Set<number>,
-  cell: number,
-  adjacency: Map<number, number[]>,
-): boolean {
-  if (!donorSet.has(cell)) return true;
-  if (donorSet.size <= 1) return false;
-  const neighbors = (adjacency.get(cell) ?? []).filter(nb => donorSet.has(nb));
-  if (neighbors.length === 0) {
-    return donorSet.size === 1;
-  }
-  const start = neighbors[0];
-  const visited = new Set<number>([start]);
-  const stack: number[] = [start];
-  while (stack.length) {
-    const current = stack.pop()!;
-    for (const nb of adjacency.get(current) ?? []) {
-      if (nb === cell) continue;
-      if (!donorSet.has(nb)) continue;
-      if (visited.has(nb)) continue;
-      visited.add(nb);
-      stack.push(nb);
-    }
-  }
-  return visited.size === donorSet.size - 1;
 }
 
 function findNearestAssignedOwner(
@@ -637,16 +569,16 @@ function findNearestAssignedOwner(
   while (queue.length) {
     const cell = queue.shift()!;
     for (const nb of adjacency.get(cell) ?? []) {
-      if (assignment.has(nb)) {
-        return assignment.get(nb)!;
+      const owner = assignment.get(nb);
+      if (owner !== undefined) {
+        return owner;
       }
       if (visited.has(nb)) continue;
       visited.add(nb);
       queue.push(nb);
     }
   }
-  // Fallback to the capital canton (index 0) if no assigned neighbor found.
-  return 0;
+  return assignment.get(start) ?? 0;
 }
 
 function computeCantonGeography(cells: number[], biomes: Uint8Array): Record<TileType, number> {
