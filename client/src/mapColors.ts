@@ -30,19 +30,19 @@ interface LabColor {
   b: number;
 }
 
-const SAFE_SATURATION_MIN = 0.45;
-const SAFE_SATURATION_MAX = 0.85;
-const SAFE_LIGHTNESS_MIN = 0.3;
-const SAFE_LIGHTNESS_MAX = 0.72;
+const SAFE_SATURATION_MIN = 0.4;
+const SAFE_SATURATION_MAX = 0.9;
+const SAFE_LIGHTNESS_MIN = 0.26;
+const SAFE_LIGHTNESS_MAX = 0.78;
 const BACKGROUND_COLOR: RgbaColor = { r: 28, g: 46, b: 64, a: 1 };
 const BACKGROUND_HSL = rgbaToHsl(BACKGROUND_COLOR);
 const BACKGROUND_LAB = rgbaToLab(BACKGROUND_COLOR);
 
 export const CANTON_CONTRAST_CONFIG = {
-  minNeighborDeltaE: 20,
-  minNeighborLightness: 0.1,
-  minBackgroundDeltaE: 22,
-  minBackgroundLightness: 0.15,
+  minNeighborDeltaE: 24,
+  minNeighborLightness: 0.14,
+  minBackgroundDeltaE: 26,
+  minBackgroundLightness: 0.18,
   backgroundColor: BACKGROUND_COLOR,
 } as const;
 const FALLBACK_PREFIX = '__fallback__';
@@ -310,8 +310,8 @@ function buildShadePalette(count: number, base: HslColor, rng: () => number): Hs
     return [{ h: base.h, s: soloS, l: soloL, a: base.a }];
   }
 
-  const spanL = Math.min(0.4, 0.22 + count * 0.02);
-  const spanS = Math.min(0.3, 0.16 + count * 0.02);
+  const spanL = Math.min(0.46, 0.28 + count * 0.025);
+  const spanS = Math.min(0.34, 0.18 + count * 0.02);
 
   const minL = clamp(baseL - spanL / 2, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX - 0.01);
   const maxL = clamp(baseL + spanL / 2, minL + 0.01, SAFE_LIGHTNESS_MAX);
@@ -323,7 +323,7 @@ function buildShadePalette(count: number, base: HslColor, rng: () => number): Hs
 
   for (let i = 0; i < count; i++) {
     const fraction = count === 1 ? 0.5 : i / (count - 1);
-    const baseOffset = (rng() - 0.5) * 0.015;
+    const baseOffset = (rng() - 0.5) * 0.02;
     lightnessSteps.push(
       clamp(minL + fraction * (maxL - minL) + baseOffset, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
     );
@@ -469,19 +469,40 @@ function refineShade(
       (backgroundDelta < CANTON_CONTRAST_CONFIG.minBackgroundDeltaE ||
         backgroundLightnessDiff < CANTON_CONTRAST_CONFIG.minBackgroundLightness)
     ) {
-      const direction = current.l <= BACKGROUND_HSL.l ? 1 : -1;
-      const proposedL = clamp(
-        BACKGROUND_HSL.l + direction * (CANTON_CONTRAST_CONFIG.minBackgroundLightness + 0.02),
-        SAFE_LIGHTNESS_MIN,
-        SAFE_LIGHTNESS_MAX,
-      );
-      if (Math.abs(proposedL - current.l) >= 0.002) {
+      const desiredOffsets = [
+        CANTON_CONTRAST_CONFIG.minBackgroundLightness + 0.03,
+        CANTON_CONTRAST_CONFIG.minBackgroundLightness + 0.07,
+      ];
+      const candidateLightness = new Set<number>();
+      for (const offset of desiredOffsets) {
+        candidateLightness.add(
+          clamp(BACKGROUND_HSL.l + offset, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
+        );
+        candidateLightness.add(
+          clamp(BACKGROUND_HSL.l - offset, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
+        );
+      }
+      candidateLightness.add(SAFE_LIGHTNESS_MIN);
+      candidateLightness.add(SAFE_LIGHTNESS_MAX);
+
+      const viable = Array.from(candidateLightness)
+        .filter(
+          (value) =>
+            Math.abs(value - BACKGROUND_HSL.l) >=
+              CANTON_CONTRAST_CONFIG.minBackgroundLightness - 0.002 &&
+            Math.abs(value - current.l) >= 0.002,
+        )
+        .sort((a, b) => Math.abs(a - current.l) - Math.abs(b - current.l));
+
+      if (viable.length > 0) {
+        const proposedL = viable[0];
         notes.push(`background lightness ${current.l.toFixed(3)} -> ${proposedL.toFixed(3)}`);
         current = { ...current, l: proposedL };
         updated = true;
       } else {
+        const direction = current.l <= BACKGROUND_HSL.l ? 1 : -1;
         const proposedS = clamp(
-          current.s + direction * 0.08,
+          current.s + direction * 0.1,
           SAFE_SATURATION_MIN,
           SAFE_SATURATION_MAX,
         );
