@@ -16,7 +16,7 @@ import { updatePlannerSnapshot } from './planner';
 import { updateStatusBarFromGameState } from './statusBar';
 import { updateDebugSidebarFromGameState } from './debugSidebar';
 import { computeCellColors, buildCantonAdjacency, rgbaToCss, RgbaColor } from './mapColors';
-import { computeCantonViewBorders, lightenColor, darkenColor } from './cantonBorders';
+import { computeCantonViewBorders } from './cantonBorders';
 import { getMapViewMode } from './mapViewState';
 
 let canvas: HTMLCanvasElement;
@@ -452,10 +452,9 @@ function drawTerritoryOverlay(): void {
       const base = baseColors[outline.nationId];
       if (!base) continue;
       if (outline.points.length < 2) continue;
-      const strokeColor = lightenColor(base, 0.28);
-      const adjusted = { ...strokeColor, a: Math.min(1, base.a + 0.15) };
-      ctx.strokeStyle = rgbaToCss(adjusted);
-      ctx.lineWidth = 1.5;
+      const strokeColor = { ...base, a: Math.min(1, base.a + 0.15) };
+      ctx.strokeStyle = rgbaToCss(strokeColor);
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
       ctx.moveTo(outline.points[0][0], outline.points[0][1]);
       for (let i = 1; i < outline.points.length; i++) {
@@ -472,10 +471,9 @@ function drawTerritoryOverlay(): void {
       const base = baseColors[outline.nationId];
       if (!base) continue;
       if (outline.points.length < 3) continue;
-      const strokeColor = darkenColor(base, 0.35);
-      const adjusted = { ...strokeColor, a: Math.min(1, base.a + 0.25) };
-      ctx.strokeStyle = rgbaToCss(adjusted);
-      ctx.lineWidth = 2.6;
+      const strokeColor = { ...base, a: Math.min(1, base.a + 0.3) };
+      ctx.strokeStyle = rgbaToCss(strokeColor);
+      ctx.lineWidth = 3.2;
       ctx.beginPath();
       ctx.moveTo(outline.points[0][0], outline.points[0][1]);
       for (let i = 1; i < outline.points.length; i++) {
