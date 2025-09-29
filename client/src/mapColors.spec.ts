@@ -104,8 +104,8 @@ function deltaE(labA: LabColor, labB: LabColor): number {
 }
 
 const BASE_COLORS: Record<string, RgbaColor> = {
-  alpha: { r: 210, g: 70, b: 70, a: 0.4 },
-  beta: { r: 60, g: 135, b: 215, a: 0.4 },
+  alpha: { r: 210, g: 70, b: 70, a: 0.45 },
+  beta: { r: 60, g: 135, b: 215, a: 0.45 },
 };
 
 (runInVitest ? describe : describe.skip)('map color assignments', () => {
