@@ -16,6 +16,7 @@ import { updatePlannerSnapshot } from './planner';
 import { updateStatusBarFromGameState } from './statusBar';
 import { updateDebugSidebarFromGameState } from './debugSidebar';
 import { computeCellColors, buildCantonAdjacency, rgbaToCss, RgbaColor } from './mapColors';
+import { computeCantonViewBorders, lightenColor, darkenColor } from './cantonBorders';
 import { getMapViewMode } from './mapViewState';
 
 let canvas: HTMLCanvasElement;
@@ -428,6 +429,62 @@ function drawTerritoryOverlay(): void {
     ctx.closePath();
     ctx.fillStyle = rgbaToCss(color);
     ctx.fill();
+  }
+
+  if (viewMode === 'canton') {
+    const borders = computeCantonViewBorders({
+      cellOwnership: currentTerritoryData,
+      cellCantons: currentCellCantons,
+      mesh: {
+        allVertices: meshData.allVertices,
+        cellOffsets: meshData.cellOffsets,
+        cellVertexIndices: meshData.cellVertexIndices,
+        cellNeighbors: meshData.cellNeighbors,
+        cellCount: meshData.cellCount,
+      },
+    });
+
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    for (const outline of borders.cantonOutlines) {
+      const base = baseColors[outline.nationId];
+      if (!base) continue;
+      if (outline.points.length < 3) continue;
+      const strokeColor = lightenColor(base, 0.28);
+      const adjusted = { ...strokeColor, a: Math.min(1, base.a + 0.15) };
+      ctx.strokeStyle = rgbaToCss(adjusted);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(outline.points[0][0], outline.points[0][1]);
+      for (let i = 1; i < outline.points.length; i++) {
+        const [x, y] = outline.points[i];
+        ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    for (const outline of borders.nationOutlines) {
+      const base = baseColors[outline.nationId];
+      if (!base) continue;
+      if (outline.points.length < 3) continue;
+      const strokeColor = darkenColor(base, 0.35);
+      const adjusted = { ...strokeColor, a: Math.min(1, base.a + 0.25) };
+      ctx.strokeStyle = rgbaToCss(adjusted);
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(outline.points[0][0], outline.points[0][1]);
+      for (let i = 1; i < outline.points.length; i++) {
+        const [x, y] = outline.points[i];
+        ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    ctx.restore();
   }
 }
 
