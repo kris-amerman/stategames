@@ -1,3 +1,5 @@
+import { CANTON_FALLBACK_PREFIX } from './mapColors';
+
 export interface CantonMetaLike {
   capital?: boolean;
 }
@@ -38,6 +40,10 @@ function sortCantons(
 
 export function deriveCantonLabel(context: CantonLabelContext): CantonLabelResult | null {
   if (!context.nationId || !context.cantonId) {
+    return null;
+  }
+
+  if (context.cantonId.startsWith(CANTON_FALLBACK_PREFIX)) {
     return null;
   }
 
