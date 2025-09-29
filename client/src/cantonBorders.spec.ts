@@ -72,6 +72,7 @@ describe('computeCantonViewBorders', () => {
     const alphaOutlines = borders.nationOutlines.filter((outline) => outline.nationId === 'alpha');
     expect(alphaOutlines).toHaveLength(1);
     const outline = alphaOutlines[0];
+    expect(outline.closed).toBe(true);
     expect(outline.vertices[0]).toBe(outline.vertices[outline.vertices.length - 1]);
     expect(outline.vertices).not.toContain(5);
     const uniqueVertices = new Set(outline.vertices.slice(0, -1));
@@ -93,9 +94,32 @@ describe('computeCantonViewBorders', () => {
     const borders = computeCantonViewBorders({ cellOwnership, cellCantons, mesh });
     expect(borders.cantonOutlines).toHaveLength(1);
     const outline = borders.cantonOutlines[0];
+    expect(outline.closed).toBe(true);
     expect(outline.vertices[0]).toBe(outline.vertices[outline.vertices.length - 1]);
     const uniqueVertices = new Set(outline.vertices.slice(0, -1));
     expect(uniqueVertices).toEqual(new Set([5, 6, 10, 9]));
+  });
+
+  it('keeps shoreline canton borders as open polylines', () => {
+    const mesh = createGridMesh(2, 2);
+    const cellOwnership: Record<string, string> = {};
+    for (let i = 0; i < mesh.cellCount; i++) {
+      cellOwnership[String(i)] = 'alpha';
+    }
+    const cellCantons: Record<string, string> = {
+      '0': 'alpha-west',
+      '2': 'alpha-west',
+      '1': 'alpha-east',
+      '3': 'alpha-east',
+    };
+
+    const borders = computeCantonViewBorders({ cellOwnership, cellCantons, mesh });
+    expect(borders.cantonOutlines).toHaveLength(1);
+    const outline = borders.cantonOutlines[0];
+    expect(outline.closed).toBe(false);
+    expect(outline.vertices[0]).toBe(1);
+    expect(outline.vertices[outline.vertices.length - 1]).toBe(7);
+    expect(new Set(outline.vertices)).toEqual(new Set([1, 4, 7]));
   });
 
   it('returns separate nation hulls for disconnected landmasses', () => {
@@ -111,6 +135,7 @@ describe('computeCantonViewBorders', () => {
     const alphaOutlines = borders.nationOutlines.filter((outline) => outline.nationId === 'alpha');
     expect(alphaOutlines).toHaveLength(2);
     for (const outline of alphaOutlines) {
+      expect(outline.closed).toBe(true);
       expect(outline.vertices[0]).toBe(outline.vertices[outline.vertices.length - 1]);
       expect(new Set(outline.vertices.slice(0, -1)).size).toBe(4);
     }

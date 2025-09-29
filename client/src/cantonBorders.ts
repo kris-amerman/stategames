@@ -14,6 +14,7 @@ export interface OutlinePath {
   nationId: string;
   vertices: number[];
   points: OutlinePoint[];
+  closed: boolean;
 }
 
 export interface CantonOutlinePath extends OutlinePath {
@@ -163,10 +164,11 @@ function toPoints(vertices: Float64Array, ring: number[]): OutlinePoint[] {
   return points;
 }
 
-function minVertex(vertices: number[]): number {
+function minVertex(vertices: number[], closed: boolean): number {
   if (vertices.length === 0) return Number.POSITIVE_INFINITY;
+  const limit = closed && vertices.length > 1 ? vertices.length - 1 : vertices.length;
   let min = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < vertices.length - 1; i++) {
+  for (let i = 0; i < limit; i++) {
     if (vertices[i] < min) min = vertices[i];
   }
   return min;
@@ -174,14 +176,106 @@ function minVertex(vertices: number[]): number {
 
 function compareOutlinePaths(a: OutlinePath, b: OutlinePath): number {
   if (a.nationId !== b.nationId) return a.nationId < b.nationId ? -1 : 1;
-  const aMin = minVertex(a.vertices);
-  const bMin = minVertex(b.vertices);
+  const aMin = minVertex(a.vertices, a.closed);
+  const bMin = minVertex(b.vertices, b.closed);
   if (aMin !== bMin) return aMin - bMin;
   if (a.vertices.length !== b.vertices.length) return a.vertices.length - b.vertices.length;
   const aPoint = a.points[0];
   const bPoint = b.points[0];
   if (aPoint[0] !== bPoint[0]) return aPoint[0] - bPoint[0];
   return aPoint[1] - bPoint[1];
+}
+
+interface PolylinePath {
+  vertices: number[];
+  closed: boolean;
+}
+
+function buildPolylinePaths(edges: Edge[]): PolylinePath[] {
+  if (edges.length === 0) return [];
+
+  const adjacency = new Map<number, { edgeIndex: number; vertex: number }[]>();
+  const pushNeighbor = (from: number, to: number, index: number) => {
+    if (!adjacency.has(from)) adjacency.set(from, []);
+    adjacency.get(from)!.push({ edgeIndex: index, vertex: to });
+  };
+
+  edges.forEach((edge, index) => {
+    pushNeighbor(edge.start, edge.end, index);
+    pushNeighbor(edge.end, edge.start, index);
+  });
+
+  const visited = new Array(edges.length).fill(false);
+  const paths: PolylinePath[] = [];
+
+  const consumePath = (startVertex: number): number[] => {
+    const path: number[] = [startVertex];
+    let current = startVertex;
+    let guard = 0;
+    while (guard < edges.length * 2) {
+      guard++;
+      const neighbors = adjacency.get(current);
+      if (!neighbors) break;
+      let nextInfo: { edgeIndex: number; vertex: number } | undefined;
+      for (const info of neighbors) {
+        if (!visited[info.edgeIndex]) {
+          nextInfo = info;
+          break;
+        }
+      }
+      if (!nextInfo) break;
+      visited[nextInfo.edgeIndex] = true;
+      current = nextInfo.vertex;
+      path.push(current);
+    }
+    return path;
+  };
+
+  for (const [vertex, neighbors] of adjacency.entries()) {
+    if (neighbors.length === 1) {
+      const pathVertices = consumePath(vertex);
+      if (pathVertices.length > 1) {
+        paths.push({ vertices: pathVertices, closed: false });
+      }
+    }
+  }
+
+  for (let i = 0; i < edges.length; i++) {
+    if (visited[i]) continue;
+    const edge = edges[i];
+    const start = edge.start;
+    const path: number[] = [start];
+    visited[i] = true;
+    let currentEdgeIndex = i;
+    let currentVertex = start;
+    let guard = 0;
+
+    while (guard < edges.length * 2) {
+      guard++;
+      const edgeRef = edges[currentEdgeIndex];
+      currentVertex = edgeRef.start === currentVertex ? edgeRef.end : edgeRef.start;
+      path.push(currentVertex);
+      if (currentVertex === start) break;
+      const neighbors = adjacency.get(currentVertex);
+      if (!neighbors) break;
+      let nextIndex = -1;
+      for (const info of neighbors) {
+        if (!visited[info.edgeIndex]) {
+          nextIndex = info.edgeIndex;
+          break;
+        }
+      }
+      if (nextIndex === -1) break;
+      visited[nextIndex] = true;
+      currentEdgeIndex = nextIndex;
+    }
+
+    if (path.length > 2 && path[path.length - 1] === start) {
+      paths.push({ vertices: path, closed: true });
+    }
+  }
+
+  return paths;
 }
 
 export function computeCantonViewBorders(input: CantonViewBorderInput): CantonViewBorders {
@@ -239,19 +333,23 @@ export function computeCantonViewBorders(input: CantonViewBorderInput): CantonVi
         nationId,
         vertices: ring,
         points: toPoints(mesh.allVertices, ring),
+        closed: true,
       });
     }
   }
 
   const cantonOutlines: CantonOutlinePath[] = [];
   for (const group of cantonEdgeGroups.values()) {
-    const rings = buildClosedRings(group.edges);
-    for (const ring of rings) {
+    const paths = buildPolylinePaths(group.edges);
+    for (const path of paths) {
+      const points = toPoints(mesh.allVertices, path.vertices);
+      if (points.length < 2) continue;
       cantonOutlines.push({
         nationId: group.nationId,
         cantonIds: group.cantons,
-        vertices: ring,
-        points: toPoints(mesh.allVertices, ring),
+        vertices: path.vertices,
+        points,
+        closed: path.closed,
       });
     }
   }
@@ -261,8 +359,8 @@ export function computeCantonViewBorders(input: CantonViewBorderInput): CantonVi
     if (a.nationId !== b.nationId) return a.nationId < b.nationId ? -1 : 1;
     if (a.cantonIds[0] !== b.cantonIds[0]) return a.cantonIds[0] < b.cantonIds[0] ? -1 : 1;
     if (a.cantonIds[1] !== b.cantonIds[1]) return a.cantonIds[1] < b.cantonIds[1] ? -1 : 1;
-    const aMin = minVertex(a.vertices);
-    const bMin = minVertex(b.vertices);
+    const aMin = minVertex(a.vertices, a.closed);
+    const bMin = minVertex(b.vertices, b.closed);
     if (aMin !== bMin) return aMin - bMin;
     if (a.vertices.length !== b.vertices.length) return a.vertices.length - b.vertices.length;
     const aPoint = a.points[0];

@@ -451,7 +451,7 @@ function drawTerritoryOverlay(): void {
     for (const outline of borders.cantonOutlines) {
       const base = baseColors[outline.nationId];
       if (!base) continue;
-      if (outline.points.length < 3) continue;
+      if (outline.points.length < 2) continue;
       const strokeColor = lightenColor(base, 0.28);
       const adjusted = { ...strokeColor, a: Math.min(1, base.a + 0.15) };
       ctx.strokeStyle = rgbaToCss(adjusted);
@@ -462,7 +462,9 @@ function drawTerritoryOverlay(): void {
         const [x, y] = outline.points[i];
         ctx.lineTo(x, y);
       }
-      ctx.closePath();
+      if (outline.closed) {
+        ctx.closePath();
+      }
       ctx.stroke();
     }
 
