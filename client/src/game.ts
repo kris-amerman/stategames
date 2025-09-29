@@ -15,9 +15,16 @@ import { showGameNotification } from './notifications';
 import { updatePlannerSnapshot } from './planner';
 import { updateStatusBarFromGameState } from './statusBar';
 import { updateDebugSidebarFromGameState } from './debugSidebar';
-import { computeCellColors, buildCantonAdjacency, rgbaToCss, RgbaColor } from './mapColors';
+import {
+  computeCellColors,
+  buildCantonAdjacency,
+  rgbaToCss,
+  RgbaColor,
+  resolveCantonId,
+} from './mapColors';
 import { computeCantonViewBorders } from './cantonBorders';
 import { getMapViewMode } from './mapViewState';
+import { deriveCantonLabel } from './cantonLabels';
 
 let canvas: HTMLCanvasElement;
 let ctx: CanvasRenderingContext2D;
@@ -30,6 +37,12 @@ export let currentGameEntities: { [entityId: number]: any } = {};
 export let currentTerritoryData: { [cellId: number]: string } = {};
 export let currentCellCantons: Record<string, string | undefined> = {};
 export let currentNationCantons: Record<string, string[]> = {};
+export let currentCantonMeta: Record<string, { owner?: string; capital?: boolean } | undefined> = {};
+export let currentNationNames: Record<string, string> = {};
+
+let cantonTooltip: HTMLDivElement | null = null;
+let activeTooltipKey: string | null = null;
+let lastPointerEvent: { clientX: number; clientY: number } | null = null;
 export let currentGameSeed: string | null = null;
 export let currentGameTerrain: Uint8Array | null = null;
 
@@ -114,6 +127,136 @@ function ensureColorsForPlayers(players: string[]): void {
   }
 }
 
+function ensureCantonTooltip(): HTMLDivElement {
+  if (!cantonTooltip) {
+    const el = document.createElement('div');
+    el.id = 'cantonTooltip';
+    el.style.cssText = `
+      position: fixed;
+      padding: 6px 10px;
+      background: rgba(10, 12, 14, 0.85);
+      color: #f8f9fb;
+      border-radius: 6px;
+      font-family: 'Inter', Arial, sans-serif;
+      font-size: 12px;
+      pointer-events: none;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+      white-space: nowrap;
+      z-index: 1600;
+      display: none;
+    `;
+    document.body.appendChild(el);
+    cantonTooltip = el;
+  }
+  return cantonTooltip;
+}
+
+function hideCantonTooltip(): void {
+  if (cantonTooltip) {
+    cantonTooltip.style.display = 'none';
+  }
+  activeTooltipKey = null;
+}
+
+function updateNationNamesFromMeta(meta: any): void {
+  if (!meta?.nations || !Array.isArray(meta.nations)) return;
+  for (const entry of meta.nations) {
+    if (!entry || typeof entry.id !== 'string') continue;
+    if (typeof entry.name === 'string' && entry.name.trim().length > 0) {
+      currentNationNames[entry.id] = entry.name;
+    }
+  }
+}
+
+function updateNationNamesFromState(nations: Record<string, any> | undefined): void {
+  if (!nations) return;
+  for (const [id, nation] of Object.entries(nations)) {
+    const name = (nation as any)?.name;
+    if (typeof name === 'string' && name.trim().length > 0) {
+      currentNationNames[id] = name;
+    }
+  }
+}
+
+function applyCantonMetadata(meta: Record<string, { owner?: string; capital?: boolean }> | undefined): void {
+  if (!meta) return;
+  currentCantonMeta = { ...meta };
+}
+
+function updateCantonTooltipAt(clientX: number, clientY: number): void {
+  if (!canvas || !meshData) {
+    hideCantonTooltip();
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+
+  if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+    hideCantonTooltip();
+    return;
+  }
+
+  const cellId = findCellAtPosition(x, y);
+  if (cellId < 0) {
+    hideCantonTooltip();
+    return;
+  }
+
+  const owner = currentTerritoryData[cellId];
+  if (!owner) {
+    hideCantonTooltip();
+    return;
+  }
+
+  const cantonId = resolveCantonId(String(cellId), owner, currentCellCantons);
+  if (!cantonId) {
+    hideCantonTooltip();
+    return;
+  }
+
+  const labelResult = deriveCantonLabel({
+    nationId: owner,
+    nationName: currentNationNames[owner],
+    cantonId,
+    cantonOrder: currentNationCantons[owner] ?? [],
+    cantonMeta: currentCantonMeta,
+  });
+
+  if (!labelResult) {
+    hideCantonTooltip();
+    return;
+  }
+
+  const tooltip = ensureCantonTooltip();
+  const key = `${owner}::${cantonId}::${labelResult.index}/${labelResult.total}::${labelResult.isCapital ? '1' : '0'}`;
+
+  if (activeTooltipKey !== key || tooltip.textContent !== labelResult.label) {
+    tooltip.textContent = labelResult.label;
+    activeTooltipKey = key;
+  }
+
+  tooltip.style.display = 'block';
+  tooltip.style.left = `${clientX + 16}px`;
+  tooltip.style.top = `${clientY + 16}px`;
+}
+
+function refreshCantonTooltip(): void {
+  if (!lastPointerEvent) return;
+  updateCantonTooltipAt(lastPointerEvent.clientX, lastPointerEvent.clientY);
+}
+
+function handleCanvasPointerMove(event: PointerEvent): void {
+  lastPointerEvent = { clientX: event.clientX, clientY: event.clientY };
+  updateCantonTooltipAt(event.clientX, event.clientY);
+}
+
+function handleCanvasPointerLeave(): void {
+  lastPointerEvent = null;
+  hideCantonTooltip();
+}
+
 function applyOwnershipColors(ownership: { [cellId: number]: string }): void {
   const owners = new Set(Object.values(ownership));
   for (const owner of owners) {
@@ -136,6 +279,8 @@ export function initGame(gameCanvas: HTMLCanvasElement, context: CanvasRendering
   ctx = context;
 
   canvas.addEventListener('click', handleCellClick);
+  canvas.addEventListener('pointermove', handleCanvasPointerMove);
+  canvas.addEventListener('pointerleave', handleCanvasPointerLeave);
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && selectedUnitId !== null) {
@@ -180,6 +325,14 @@ export function handleGameUpdate(data: any): void {
       currentNationCantons = { ...gameState.nationCantons };
     }
 
+    if (gameState.cantonMeta) {
+      applyCantonMetadata(gameState.cantonMeta);
+    }
+
+    if (gameState.nations) {
+      updateNationNamesFromState(gameState.nations);
+    }
+
     if (gameState.entities) {
       currentGameEntities = gameState.entities;
       console.log('Updated entities:', currentGameEntities);
@@ -189,6 +342,7 @@ export function handleGameUpdate(data: any): void {
     updatePlannerSnapshot(gameState);
     updateStatusBarFromGameState(gameState, currentPlayerName);
     updateDebugSidebarFromGameState(gameState, currentPlayerName);
+    refreshCantonTooltip();
   }
 }
 
@@ -233,11 +387,16 @@ export function dispatchGameAction(actionType: string, actionData: any) {
 export function processGameData(gameData: any): void {
   try {
     resetNationColors();
+    currentNationNames = {};
     currentGameSeed = gameData.meta?.seed ?? null;
     currentGameId = gameData.meta.gameId;
     requiredPlayers = gameData.meta.nationCount ?? gameData.meta.players.length;
     currentCellCantons = gameData.state.cellCantons ? { ...gameData.state.cellCantons } : {};
     currentNationCantons = gameData.state.nationCantons ? { ...gameData.state.nationCantons } : {};
+    currentCantonMeta = {};
+    updateNationNamesFromMeta(gameData.meta);
+    updateNationNamesFromState(gameData.state?.nations);
+    applyCantonMetadata(gameData.state.cantonMeta);
     ensureColorsForPlayers(gameData.meta.players ?? []);
     currentTerritoryData = gameData.state.cellOwnership ? { ...gameData.state.cellOwnership } : {};
     applyOwnershipColors(currentTerritoryData);
@@ -274,12 +433,14 @@ export function processGameData(gameData: any): void {
         updatePlannerSnapshot(gameData.state);
         updateStatusBarFromGameState(gameData.state, currentPlayerName);
         updateDebugSidebarFromGameState(gameData.state, currentPlayerName);
+        refreshCantonTooltip();
       });
     } else {
       renderGameState();
       updatePlannerSnapshot(gameData.state);
       updateStatusBarFromGameState(gameData.state, currentPlayerName);
       updateDebugSidebarFromGameState(gameData.state, currentPlayerName);
+      refreshCantonTooltip();
     }
 
   } catch (error: any) {
