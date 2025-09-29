@@ -1,5 +1,12 @@
 import { MapSize } from './mesh';
-import { loadOrGetMesh, generateTerrain, elevationConfig, biomeConfig, setCurrentMapSize } from './terrain';
+import {
+  loadOrGetMesh,
+  generateTerrain,
+  elevationConfig,
+  biomeConfig,
+  setCurrentMapSize,
+  terrainControls,
+} from './terrain';
 import { initializeStatusBar } from './statusBar';
 import { initializeDebugSidebar } from './debugSidebar';
 
@@ -225,6 +232,13 @@ export function createUI(ctx: CanvasRenderingContext2D) {
       </label>
     </div>
 
+    <div id="riverCountContainer" style="margin-bottom: 15px;">
+      <label for="riverCount">River Count:</label>
+      <input type="number" id="riverCount" min="0" max="64" step="1" value="${
+        terrainControls.riverCount
+      }" style="width: 100%; margin-top: 5px; padding: 4px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
+    </div>
+
     <div id="mapSizeContainer" style="margin-bottom: 15px;">
       <label>Map Size:</label>
       <select id="mapSize" style="width: 100%; margin-top: 5px; background: #333; color: white; border: 1px solid #555; padding: 4px;">
@@ -399,6 +413,15 @@ export function createUI(ctx: CanvasRenderingContext2D) {
     const value = Number(nationCountInput.value) || initialCount;
     setNationCount(value);
     renderNationRows();
+  });
+
+  const riverCountInput = document.getElementById('riverCount') as HTMLInputElement;
+  riverCountInput.addEventListener('input', () => {
+    const raw = Number(riverCountInput.value);
+    const value = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+    riverCountInput.value = value.toString();
+    terrainControls.riverCount = value;
+    generateTerrain(ctx);
   });
 
   // Map size selectors

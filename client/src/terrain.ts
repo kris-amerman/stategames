@@ -3,11 +3,20 @@ import { assignBiomes, BiomeConfig, getBiomeName } from './terrain-gen/biomes';
 import { drawCells } from './drawCells';
 import { loadMesh, preloadAllMeshes, MapSize, MeshData } from './mesh';
 import { WIDTH, HEIGHT, SERVER_BASE_URL } from './config';
+import {
+  generateRivers,
+  RiverGenerationResult,
+  RiverPath,
+  RiverControls,
+} from './terrain-gen/rivers';
 
 export let meshData: MeshData | null = null;
 export let currentMapSize: MapSize = 'xl';
 export let currentCellCount = 0;
 export let currentCellBiomes: Uint8Array = new Uint8Array(0);
+export let currentRiverFlags: Uint8Array = new Uint8Array(0);
+export let currentRivers: RiverPath[] = [];
+export let lastRiverGeneration: RiverGenerationResult | null = null;
 
 export let elevationConfig: ElevationConfig = {
   amplitudes: [0.6, 0.3, 0.15, 0.075],
@@ -30,6 +39,12 @@ export let biomeConfig: BiomeConfig = {
   temperatureAmplitude: 1.0,
   temperatureOctaves: 2,
   smoothColors: true,
+};
+
+export const terrainControls: RiverControls = {
+  riverCount: 8,
+  minRiverLength: 8,
+  allowNewLakes: true,
 };
 
 export function setCurrentCellBiomes(data: Uint8Array) {
@@ -103,6 +118,21 @@ export function generateTerrain(ctx: CanvasRenderingContext2D): void {
   currentCellBiomes = cellBiomes;
   console.timeEnd('assignBiomes');
 
+  console.time('generateRivers');
+  lastRiverGeneration = generateRivers(
+    cellElevations,
+    meshData.cellNeighbors,
+    meshData.cellOffsets,
+    biomeConfig.waterLevel,
+    terrainControls
+  );
+  currentRiverFlags = lastRiverGeneration.riverFlags;
+  currentRivers = lastRiverGeneration.rivers;
+  for (const log of lastRiverGeneration.logs) {
+    console.info(log);
+  }
+  console.timeEnd('generateRivers');
+
   // Calculate stats
   const landCells = cellElevations.filter((e) => e >= biomeConfig.waterLevel).length;
   const waterCells = cellElevations.length - landCells;
@@ -124,9 +154,14 @@ export function generateTerrain(ctx: CanvasRenderingContext2D): void {
     })
     .join('<br>');
 
+  const riverSummary = lastRiverGeneration
+    ? `${lastRiverGeneration.generated}/${lastRiverGeneration.requested}`
+    : '0/0';
+
   document.getElementById('stats')!.innerHTML = `
     Land: ${landPercentage}% (${landCells} cells)<br>
     Water: ${100 - landPercentage}% (${waterCells} cells)<br>
+    Rivers: ${riverSummary}<br>
     Mesh: ${currentMapSize} (${meshData.cellCount} cells)
   `;
 
