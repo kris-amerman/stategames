@@ -22,16 +22,24 @@ import {
   currentPlayerName,
   requiredPlayers,
   isMyTurn,
+  renderGameState,
 } from './game';
 import { initializePlannerUI, setPlannerVisibility } from './planner';
+import { initializeMapViewControl } from './mapViewControl';
+import { onMapViewModeChange } from './mapViewState';
 
 const canvas = document.createElement('canvas');
 const container = document.getElementById('canvas-container')!;
 container.appendChild(canvas);
+initializeMapViewControl(container);
 canvas.width = WIDTH;
 canvas.height = HEIGHT;
 
 const ctx = canvas.getContext('2d')!;
+
+onMapViewModeChange(() => {
+  renderGameState();
+});
 
 // Initialize the application
 async function initializeApp() {
