@@ -1,6 +1,7 @@
 import { assignElevations, assignIslandElevations, ElevationConfig } from './terrain-gen/elevations';
 import { assignBiomes, BiomeConfig, getBiomeName } from './terrain-gen/biomes';
 import { drawCells } from './drawCells';
+import { drawRivers } from './drawRivers';
 import { loadMesh, preloadAllMeshes, MapSize, MeshData } from './mesh';
 import { WIDTH, HEIGHT, SERVER_BASE_URL } from './config';
 import {
@@ -183,6 +184,8 @@ export function generateTerrain(ctx: CanvasRenderingContext2D): void {
     biomeConfig.smoothColors
   );
   console.timeEnd('drawCells');
+
+  drawRivers(ctx, meshData, currentRivers);
 }
 
 export function preloadMeshes(): void {
