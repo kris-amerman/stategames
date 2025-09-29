@@ -24,10 +24,27 @@ interface HslColor {
   a: number;
 }
 
+interface LabColor {
+  l: number;
+  a: number;
+  b: number;
+}
+
 const SAFE_SATURATION_MIN = 0.45;
 const SAFE_SATURATION_MAX = 0.85;
 const SAFE_LIGHTNESS_MIN = 0.3;
 const SAFE_LIGHTNESS_MAX = 0.72;
+const BACKGROUND_COLOR: RgbaColor = { r: 28, g: 46, b: 64, a: 1 };
+const BACKGROUND_HSL = rgbaToHsl(BACKGROUND_COLOR);
+const BACKGROUND_LAB = rgbaToLab(BACKGROUND_COLOR);
+
+export const CANTON_CONTRAST_CONFIG = {
+  minNeighborDeltaE: 20,
+  minNeighborLightness: 0.1,
+  minBackgroundDeltaE: 22,
+  minBackgroundLightness: 0.15,
+  backgroundColor: BACKGROUND_COLOR,
+} as const;
 const FALLBACK_PREFIX = '__fallback__';
 
 function clamp(value: number, min: number, max: number): number {
@@ -44,26 +61,6 @@ function cloneColor(color: RgbaColor): RgbaColor {
 
 function colorKey(color: RgbaColor): string {
   return `${clampByte(color.r)}|${clampByte(color.g)}|${clampByte(color.b)}`;
-}
-
-function enforceDistinctCandidate(base: RgbaColor, used: Set<string>): RgbaColor {
-  const baseHsl = rgbaToHsl(base);
-  let offset = 0.06;
-  for (let i = 0; i < 8; i++) {
-    const candidate = hslToRgba({
-      h: baseHsl.h,
-      s: clamp(baseHsl.s + offset, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX),
-      l: clamp(baseHsl.l + offset, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
-      a: base.a,
-    });
-    const key = colorKey(candidate);
-    if (!used.has(key)) {
-      used.add(key);
-      return candidate;
-    }
-    offset = -offset * 1.2;
-  }
-  return cloneColor(base);
 }
 
 function rgbaToHsl(color: RgbaColor): HslColor {
@@ -125,6 +122,59 @@ function hslToRgba(color: HslColor): RgbaColor {
   const b = hueToRgb(p, q, h / 360 - 1 / 3);
 
   return { r: clampByte(r * 255), g: clampByte(g * 255), b: clampByte(b * 255), a };
+}
+
+function srgbToLinear(channel: number): number {
+  const c = clamp(channel, 0, 255) / 255;
+  if (c <= 0.04045) {
+    return c / 12.92;
+  }
+  return Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function rgbaToLab(color: RgbaColor): LabColor {
+  const r = srgbToLinear(color.r);
+  const g = srgbToLinear(color.g);
+  const b = srgbToLinear(color.b);
+
+  const x = r * 0.4124564 + g * 0.3575761 + b * 0.1804375;
+  const y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750;
+  const z = r * 0.0193339 + g * 0.1191920 + b * 0.9503041;
+
+  const xRef = 0.95047;
+  const yRef = 1.0;
+  const zRef = 1.08883;
+
+  const epsilon = 216 / 24389;
+  const kappa = 24389 / 27;
+
+  function pivot(n: number): number {
+    if (n > epsilon) {
+      return Math.cbrt(n);
+    }
+    return (kappa * n + 16) / 116;
+  }
+
+  const xr = x / xRef;
+  const yr = y / yRef;
+  const zr = z / zRef;
+
+  const fx = pivot(xr);
+  const fy = pivot(yr);
+  const fz = pivot(zr);
+
+  const l = Math.max(0, 116 * fy - 16);
+  const a = 500 * (fx - fy);
+  const bVal = 200 * (fy - fz);
+
+  return { l, a, b: bVal };
+}
+
+function deltaE(labA: LabColor, labB: LabColor): number {
+  const dl = labA.l - labB.l;
+  const da = labA.a - labB.a;
+  const db = labA.b - labB.b;
+  return Math.sqrt(dl * dl + da * da + db * db);
 }
 
 function cyrb128(str: string): [number, number, number, number] {
@@ -218,6 +268,291 @@ function assignFallbackShade(base: RgbaColor, assigned: Record<string, RgbaColor
   return cloneColor(base);
 }
 
+interface ShadeRecord {
+  rgba: RgbaColor;
+  hsl: HslColor;
+  lab: LabColor;
+}
+
+function arrangeExtremes(values: number[]): number[] {
+  const sorted = values.slice().sort((a, b) => a - b);
+  const result: number[] = [];
+  let low = 0;
+  let high = sorted.length - 1;
+  while (low <= high) {
+    if (low === high) {
+      result.push(sorted[high]);
+      break;
+    }
+    if (result.length % 2 === 0) {
+      result.push(sorted[high]);
+      high--;
+    } else {
+      result.push(sorted[low]);
+      low++;
+    }
+  }
+  return result;
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function buildShadePalette(count: number, base: HslColor, rng: () => number): HslColor[] {
+  const baseS = clamp(base.s, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX);
+  const baseL = clamp(base.l, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX);
+
+  if (count === 1) {
+    const soloL = clamp(baseL + 0.1, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX);
+    const soloS = clamp(baseS + 0.08, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX);
+    return [{ h: base.h, s: soloS, l: soloL, a: base.a }];
+  }
+
+  const spanL = Math.min(0.4, 0.22 + count * 0.02);
+  const spanS = Math.min(0.3, 0.16 + count * 0.02);
+
+  const minL = clamp(baseL - spanL / 2, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX - 0.01);
+  const maxL = clamp(baseL + spanL / 2, minL + 0.01, SAFE_LIGHTNESS_MAX);
+  const minS = clamp(baseS - spanS / 2, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX - 0.01);
+  const maxS = clamp(baseS + spanS / 2, minS + 0.01, SAFE_SATURATION_MAX);
+
+  const lightnessSteps: number[] = [];
+  const saturationSteps: number[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const fraction = count === 1 ? 0.5 : i / (count - 1);
+    const baseOffset = (rng() - 0.5) * 0.015;
+    lightnessSteps.push(
+      clamp(minL + fraction * (maxL - minL) + baseOffset, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
+    );
+    saturationSteps.push(
+      clamp(minS + (1 - fraction) * (maxS - minS) - baseOffset, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX),
+    );
+  }
+
+  const arrangedLightness = arrangeExtremes(lightnessSteps);
+  const arrangedSaturation = shuffleWithRng(arrangeExtremes(saturationSteps), rng);
+
+  return arrangedLightness.map((lightness, index) => ({
+    h: base.h,
+    s: arrangedSaturation[index % arrangedSaturation.length],
+    l: lightness,
+    a: base.a,
+  }));
+}
+
+function toShadeRecord(hsl: HslColor): ShadeRecord {
+  const clamped: HslColor = {
+    h: hsl.h,
+    s: clamp(hsl.s, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX),
+    l: clamp(hsl.l, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
+    a: hsl.a,
+  };
+  const rgba = hslToRgba(clamped);
+  return { rgba, hsl: clamped, lab: rgbaToLab(rgba) };
+}
+
+function candidateMeetsConstraints(candidate: HslColor, neighbors: ShadeRecord[]): boolean {
+  const record = toShadeRecord(candidate);
+  const backgroundDelta = deltaE(record.lab, BACKGROUND_LAB);
+  const backgroundLightnessDiff = Math.abs(record.hsl.l - BACKGROUND_HSL.l);
+  if (
+    backgroundDelta < CANTON_CONTRAST_CONFIG.minBackgroundDeltaE ||
+    backgroundLightnessDiff < CANTON_CONTRAST_CONFIG.minBackgroundLightness
+  ) {
+    return false;
+  }
+
+  for (const neighbor of neighbors) {
+    const neighborDelta = deltaE(record.lab, neighbor.lab);
+    const lightnessGap = Math.abs(record.hsl.l - neighbor.hsl.l);
+    if (
+      neighborDelta < CANTON_CONTRAST_CONFIG.minNeighborDeltaE ||
+      lightnessGap < CANTON_CONTRAST_CONFIG.minNeighborLightness
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function refineShade(
+  initial: HslColor,
+  neighbors: ShadeRecord[],
+  notes: string[],
+): HslColor {
+  let current: HslColor = {
+    h: initial.h,
+    s: clamp(initial.s, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX),
+    l: clamp(initial.l, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
+    a: initial.a,
+  };
+
+  for (let iteration = 0; iteration < 24; iteration++) {
+    const record = toShadeRecord(current);
+    const backgroundDelta = deltaE(record.lab, BACKGROUND_LAB);
+    const backgroundLightnessDiff = Math.abs(record.hsl.l - BACKGROUND_HSL.l);
+
+    const violatingNeighbors = neighbors.filter((neighbor) => {
+      const neighborDelta = deltaE(record.lab, neighbor.lab);
+      const lightnessGap = Math.abs(record.hsl.l - neighbor.hsl.l);
+      return (
+        neighborDelta < CANTON_CONTRAST_CONFIG.minNeighborDeltaE ||
+        lightnessGap < CANTON_CONTRAST_CONFIG.minNeighborLightness
+      );
+    });
+
+    let updated = false;
+
+    if (violatingNeighbors.length > 0) {
+      const targetLightness: number[] = [];
+      for (const neighbor of violatingNeighbors) {
+        const direction = current.l <= neighbor.hsl.l ? -1 : 1;
+        const lightTarget = neighbor.hsl.l +
+          direction * (CANTON_CONTRAST_CONFIG.minNeighborLightness + 0.03);
+        targetLightness.push(lightTarget);
+      }
+      const proposedL = clamp(average(targetLightness), SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX);
+      if (Math.abs(proposedL - current.l) >= 0.002) {
+        notes.push(`lightness ${current.l.toFixed(3)} -> ${proposedL.toFixed(3)}`);
+        current = { ...current, l: proposedL };
+        updated = true;
+      } else {
+        const targetSaturation: number[] = [];
+        for (const neighbor of violatingNeighbors) {
+          const direction = current.s <= neighbor.hsl.s ? -1 : 1;
+          targetSaturation.push(
+            clamp(
+              current.s + direction * (0.1 + iteration * 0.01),
+              SAFE_SATURATION_MIN,
+              SAFE_SATURATION_MAX,
+            ),
+          );
+        }
+        const proposedS = clamp(average(targetSaturation), SAFE_SATURATION_MIN, SAFE_SATURATION_MAX);
+        if (Math.abs(proposedS - current.s) >= 0.002) {
+          notes.push(`saturation ${current.s.toFixed(3)} -> ${proposedS.toFixed(3)}`);
+          current = { ...current, s: proposedS };
+          updated = true;
+        }
+      }
+
+      if (!updated) {
+        const minExtremeL = Math.max(
+          SAFE_LIGHTNESS_MIN,
+          BACKGROUND_HSL.l + CANTON_CONTRAST_CONFIG.minBackgroundLightness + 0.02,
+        );
+        for (const neighbor of violatingNeighbors) {
+          const satDirection = current.s <= neighbor.hsl.s ? -1 : 1;
+          const satExtreme = satDirection === -1 ? SAFE_SATURATION_MIN : SAFE_SATURATION_MAX;
+          const lightExtreme = current.l <= neighbor.hsl.l ? minExtremeL : SAFE_LIGHTNESS_MAX;
+          if (
+            Math.abs(current.s - satExtreme) >= 0.01 ||
+            Math.abs(current.l - lightExtreme) >= 0.01
+          ) {
+            notes.push(
+              `extreme contrast l:${current.l.toFixed(3)}->${lightExtreme.toFixed(3)} s:${current.s.toFixed(3)}->${satExtreme.toFixed(3)}`,
+            );
+            current = { ...current, s: satExtreme, l: lightExtreme };
+            updated = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (
+      !updated &&
+      (backgroundDelta < CANTON_CONTRAST_CONFIG.minBackgroundDeltaE ||
+        backgroundLightnessDiff < CANTON_CONTRAST_CONFIG.minBackgroundLightness)
+    ) {
+      const direction = current.l <= BACKGROUND_HSL.l ? 1 : -1;
+      const proposedL = clamp(
+        BACKGROUND_HSL.l + direction * (CANTON_CONTRAST_CONFIG.minBackgroundLightness + 0.02),
+        SAFE_LIGHTNESS_MIN,
+        SAFE_LIGHTNESS_MAX,
+      );
+      if (Math.abs(proposedL - current.l) >= 0.002) {
+        notes.push(`background lightness ${current.l.toFixed(3)} -> ${proposedL.toFixed(3)}`);
+        current = { ...current, l: proposedL };
+        updated = true;
+      } else {
+        const proposedS = clamp(
+          current.s + direction * 0.08,
+          SAFE_SATURATION_MIN,
+          SAFE_SATURATION_MAX,
+        );
+        if (Math.abs(proposedS - current.s) >= 0.002) {
+          notes.push(`background saturation ${current.s.toFixed(3)} -> ${proposedS.toFixed(3)}`);
+          current = { ...current, s: proposedS };
+          updated = true;
+        }
+      }
+    }
+
+    if (!updated) {
+      break;
+    }
+  }
+
+  return current;
+}
+
+function enforceUniqueness(
+  initial: HslColor,
+  neighbors: ShadeRecord[],
+  used: Set<string>,
+  notes: string[],
+): HslColor {
+  let candidate = initial;
+  let rgba = hslToRgba(candidate);
+  let key = colorKey(rgba);
+
+  for (let attempt = 0; attempt < 12; attempt++) {
+    if (!used.has(key)) {
+      used.add(key);
+      return candidate;
+    }
+
+    const lightDirection = attempt % 2 === 0 ? 1 : -1;
+    const satDirection = attempt % 3 === 0 ? -1 : 1;
+    const lightAdjustment = 0.02 + attempt * 0.01;
+    const satAdjustment = 0.018 + attempt * 0.009;
+    const proposed: HslColor = {
+      ...candidate,
+      l: clamp(candidate.l + lightDirection * lightAdjustment, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
+      s: clamp(candidate.s + satDirection * satAdjustment, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX),
+    };
+    notes.push(
+      `uniqueness adjust l:${candidate.l.toFixed(3)}->${proposed.l.toFixed(3)} s:${candidate.s.toFixed(3)}->${proposed.s.toFixed(3)}`,
+    );
+    candidate = refineShade(proposed, neighbors, notes);
+    rgba = hslToRgba(candidate);
+    key = colorKey(rgba);
+  }
+
+  while (used.has(key)) {
+    const bump = 0.015 * (used.size + 1);
+    const proposed: HslColor = {
+      ...candidate,
+      l: clamp(candidate.l + bump, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
+      s: clamp(candidate.s - bump * 0.6, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX),
+    };
+    notes.push(
+      `uniqueness fallback l:${candidate.l.toFixed(3)}->${proposed.l.toFixed(3)} s:${candidate.s.toFixed(3)}->${proposed.s.toFixed(3)}`,
+    );
+    candidate = refineShade(proposed, neighbors, notes);
+    rgba = hslToRgba(candidate);
+    key = colorKey(rgba);
+  }
+
+  used.add(key);
+  return candidate;
+}
+
 export function assignCantonShades(
   nationId: string,
   cantonIds: string[],
@@ -229,6 +564,7 @@ export function assignCantonShades(
   }
 
   const uniqueCantons = Array.from(new Set(cantonIds));
+  const uniqueSet = new Set(uniqueCantons);
   const adjacency = options.adjacency ?? new Map<string, Set<string>>();
   const rng = createSeededRng(`${options.seed ?? 'default'}::${nationId}`);
 
@@ -239,60 +575,52 @@ export function assignCantonShades(
   const order = shuffleWithRng(prioritized, rng);
 
   const baseHsl = rgbaToHsl(baseColor);
-  const baseS = clamp(baseHsl.s, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX);
-  const baseL = clamp(baseHsl.l, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX);
-  const amplitudeL = Math.min(0.22, 0.12 + order.length * 0.015);
-  const amplitudeS = Math.min(0.18, 0.08 + order.length * 0.012);
+  const palette = buildShadePalette(order.length, { ...baseHsl, a: baseColor.a }, rng);
+  const available = palette.map((hsl, index) => ({ index, hsl }));
 
   const shades: Record<string, RgbaColor> = {};
-  const used = new Set<string>();
+  const usedKeys = new Set<string>();
+  const shadeRecords = new Map<string, ShadeRecord>();
+  const adjustmentNotes: Record<string, string[]> = {};
 
-  for (let i = 0; i < order.length; i++) {
-    const cantonId = order[i];
-    const direction = i % 2 === 0 ? 1 : -1;
-    const magnitude = Math.floor(i / 2) + 1;
-    const rangeFactor = Math.max(1, order.length);
-    let lightShift = direction * (amplitudeL * (magnitude / rangeFactor));
-    let satShift = direction * (amplitudeS * (magnitude / rangeFactor));
-    lightShift += (rng() - 0.5) * 0.04;
-    satShift += (rng() - 0.5) * 0.04;
+  for (const cantonId of order) {
+    const neighbors = Array.from(adjacency.get(cantonId) ?? [])
+      .filter((neighbor) => uniqueSet.has(neighbor))
+      .sort();
+    const neighborRecords = neighbors
+      .map((neighborId) => shadeRecords.get(neighborId))
+      .filter((record): record is ShadeRecord => Boolean(record));
 
-    if (order.length === 1 && Math.abs(lightShift) < 0.05) {
-      lightShift = 0.08;
-      satShift = 0.06;
+    let candidateIndex = available.findIndex((candidate) =>
+      candidateMeetsConstraints(candidate.hsl, neighborRecords),
+    );
+    if (candidateIndex === -1) {
+      candidateIndex = 0;
     }
 
-    let candidate = hslToRgba({
-      h: baseHsl.h,
-      s: clamp(baseS + satShift, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX),
-      l: clamp(baseL + lightShift, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
-      a: baseColor.a,
-    });
+    const [candidate] = available.splice(candidateIndex, 1);
+    const notes: string[] = [];
+    let refined = refineShade(candidate.hsl, neighborRecords, notes);
+    refined = enforceUniqueness(refined, neighborRecords, usedKeys, notes);
 
-    let key = colorKey(candidate);
-    let guard = 0;
-    while (used.has(key) && guard < 6) {
-      lightShift += (rng() - 0.5) * 0.06;
-      satShift += (rng() - 0.5) * 0.05;
-      candidate = hslToRgba({
-        h: baseHsl.h,
-        s: clamp(baseS + satShift, SAFE_SATURATION_MIN, SAFE_SATURATION_MAX),
-        l: clamp(baseL + lightShift, SAFE_LIGHTNESS_MIN, SAFE_LIGHTNESS_MAX),
-        a: baseColor.a,
-      });
-      key = colorKey(candidate);
-      guard++;
-    }
-
-    if (used.has(key)) {
-      candidate = enforceDistinctCandidate(baseColor, used);
-      key = colorKey(candidate);
-    } else {
-      used.add(key);
-    }
-
-    shades[cantonId] = candidate;
+    const record = toShadeRecord({ ...refined, a: baseColor.a });
+    shadeRecords.set(cantonId, record);
+    shades[cantonId] = record.rgba;
+    adjustmentNotes[cantonId] = notes;
   }
+
+  const logPayload = {
+    nationId,
+    baseColor,
+    cantonCount: uniqueCantons.length,
+    shades: order.map((id) => ({
+      cantonId: id,
+      color: shades[id],
+      adjustments: adjustmentNotes[id] ?? [],
+    })),
+  };
+
+  console.log('[mapColors] canton palette', logPayload);
 
   return shades;
 }
