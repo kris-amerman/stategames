@@ -45,7 +45,7 @@ export const CANTON_CONTRAST_CONFIG = {
   minBackgroundLightness: 0.18,
   backgroundColor: BACKGROUND_COLOR,
 } as const;
-const FALLBACK_PREFIX = '__fallback__';
+export const CANTON_FALLBACK_PREFIX = '__fallback__';
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -221,7 +221,7 @@ function shuffleWithRng<T>(items: T[], rng: () => number): T[] {
   return copy;
 }
 
-function resolveCantonId(
+export function resolveCantonId(
   cellKey: string,
   owner: string | undefined,
   cellCantons: Record<string, string | undefined>,
@@ -229,7 +229,7 @@ function resolveCantonId(
   const explicit = cellCantons[cellKey];
   if (explicit) return explicit;
   if (!owner) return null;
-  return `${FALLBACK_PREFIX}${owner}`;
+  return `${CANTON_FALLBACK_PREFIX}${owner}`;
 }
 
 function filterAdjacency(source: Map<string, Set<string>>, allowed: string[]): Map<string, Set<string>> {
