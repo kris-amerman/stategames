@@ -37,7 +37,7 @@ export let currentPlayerName: string | null = null;
 export let isGameCreator = false;
 export let requiredPlayers = 2;
 
-const BASE_COLOR_ALPHA = 0.3;
+const BASE_COLOR_ALPHA = 0.4;
 const DEFAULT_NATION_PALETTE = [
   '#FF6B6B',
   '#4D96FF',
