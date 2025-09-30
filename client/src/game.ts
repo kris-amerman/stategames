@@ -1,5 +1,6 @@
 import { MapSize, deserializeTypedArrays } from './mesh';
 import { drawCells } from './drawCells';
+import { drawRivers } from './drawRivers';
 import { WIDTH, HEIGHT } from './config';
 import {
   loadOrGetMesh,
@@ -470,6 +471,10 @@ export function renderGameState(): void {
     meshData.cellNeighbors,
     biomeConfig.smoothColors
   );
+
+  if (currentRivers.length > 0) {
+    drawRivers(ctx, meshData, currentRivers);
+  }
 
   drawTerritoryOverlay();
 
