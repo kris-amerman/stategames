@@ -19,6 +19,8 @@ export interface RiverPath {
   length: number;
   /** Number of confluences encountered while tracing this path */
   confluences: number;
+  /** True when this path joins a previously generated river network */
+  isTributary: boolean;
 }
 
 export interface RiverGenerationResult {
@@ -44,6 +46,7 @@ interface TraceResult {
   sinkType: SinkType;
   confluences: number;
   newLakes: number[];
+  joinedExisting: boolean;
 }
 
 /**
@@ -69,6 +72,7 @@ export function generateRivers(
   const logs: string[] = [];
   const newLakeCells: number[] = [];
   const downstream = new Int32Array(cellCount).fill(-1);
+  let distinctCount = 0;
 
   const minRiverLength = Math.max(2, controls.minRiverLength ?? 6);
   const allowNewLakes = controls.allowNewLakes !== false;
@@ -82,7 +86,7 @@ export function generateRivers(
   );
 
   for (const candidate of sourceCandidates) {
-    if (rivers.length >= controls.riverCount) break;
+    if (distinctCount >= controls.riverCount) break;
     if (riverFlags[candidate] === 1) continue;
 
     const trace = traceRiver(
@@ -104,6 +108,8 @@ export function generateRivers(
       continue;
     }
 
+    const isTributary = trace.joinedExisting;
+
     rivers.push({
       cells: trace.cells.slice(),
       source: candidate,
@@ -111,6 +117,7 @@ export function generateRivers(
       sinkType: trace.sinkType,
       length: trace.cells.length,
       confluences: trace.confluences,
+      isTributary,
     });
 
     for (let i = 0; i < trace.cells.length; i++) {
@@ -132,16 +139,21 @@ export function generateRivers(
       }
     }
 
+    if (!isTributary) {
+      distinctCount += 1;
+    }
+
     const elevation = cellElevations[candidate];
+    const label = isTributary ? 'Tributary' : 'River';
     logs.push(
-      `River ${rivers.length}: source ${candidate} (e=${elevation.toFixed(3)}) length ${trace.cells.length} ` +
+      `${label} ${rivers.length}: source ${candidate} (e=${elevation.toFixed(3)}) length ${trace.cells.length} ` +
         `sink ${trace.sinkType} at ${trace.sinkCell} confluences ${trace.confluences}`
     );
   }
 
-  if (rivers.length < controls.riverCount) {
+  if (distinctCount < controls.riverCount) {
     logs.push(
-      `Requested ${controls.riverCount} rivers but only generated ${rivers.length} due to limited valid sources.`
+      `Requested ${controls.riverCount} rivers but only generated ${distinctCount} due to limited valid sources.`
     );
   }
 
@@ -150,7 +162,7 @@ export function generateRivers(
     riverFlags,
     newLakeCells,
     requested: controls.riverCount,
-    generated: rivers.length,
+    generated: distinctCount,
     logs,
   };
 }
@@ -319,6 +331,7 @@ function traceRiver(
         ),
         confluences,
         newLakes: [],
+        joinedExisting: true,
       };
     }
 
@@ -338,6 +351,7 @@ function traceRiver(
         sinkType: 'lake',
         confluences,
         newLakes: [current],
+        joinedExisting: false,
       };
     }
 
@@ -350,6 +364,7 @@ function traceRiver(
         sinkType: 'lake',
         confluences,
         newLakes: [current],
+        joinedExisting: false,
       };
     }
 
@@ -362,6 +377,7 @@ function traceRiver(
         sinkType: isOcean[next] ? 'ocean' : 'lake',
         confluences,
         newLakes: [],
+        joinedExisting: false,
       };
     }
 

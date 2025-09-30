@@ -88,10 +88,11 @@ describe('generateRivers', () => {
       { riverCount: 2, minRiverLength: 2 }
     );
 
-    expect(result.rivers.length).toBe(2);
+    const primaries = result.rivers.filter((river) => !river.isTributary);
     expect(result.generated).toBe(2);
+    expect(primaries.length).toBe(2);
 
-    for (const river of result.rivers) {
+    for (const river of primaries) {
       const sourceElevation = elevations[river.source];
       const neighborhood: number[] = [sourceElevation];
       const start = mesh.offsets[river.source];
@@ -187,17 +188,21 @@ describe('generateRivers', () => {
       { riverCount: 2, minRiverLength: 3 }
     );
 
-    expect(result.rivers.length).toBe(2);
-    expect(result.rivers.some((river) => river.confluences > 0)).toBe(true);
+    const tributaries = result.rivers.filter((river) => river.isTributary);
+    expect(result.generated).toBe(1);
+    expect(tributaries.length).toBeGreaterThan(0);
+    expect(result.logs.some((log) => log.includes('only generated 1'))).toBe(true);
 
-    const [a, b] = result.rivers;
-    const sharedCells = a.cells.filter((cell) => b.cells.includes(cell));
-    expect(sharedCells.length).toBeGreaterThan(0);
-    const sharedNotSource = sharedCells.some(
-      (cell) => cell !== a.source && cell !== b.source
-    );
-    expect(sharedNotSource).toBe(true);
-    const sinkCell = a.cells[a.cells.length - 1];
-    expect(sharedCells.includes(sinkCell)).toBe(true);
+    const [main] = result.rivers.filter((river) => !river.isTributary);
+    expect(main).toBeDefined();
+    const sharedCells = new Set<number>();
+    for (const tributary of tributaries) {
+      for (const cell of tributary.cells) {
+        if (main.cells.includes(cell)) {
+          sharedCells.add(cell);
+        }
+      }
+    }
+    expect(sharedCells.size).toBeGreaterThan(0);
   });
 });

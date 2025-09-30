@@ -82,8 +82,24 @@ const mesh: MeshData = {
 describe('prepareRiverRenderSegments', () => {
   it('avoids duplicating downstream segments at confluences', () => {
     const rivers: RiverPath[] = [
-      { cells: [0, 1, 4, 5], source: 0, sink: 5, sinkType: 'ocean', length: 4, confluences: 0 },
-      { cells: [3, 4, 5], source: 3, sink: 5, sinkType: 'ocean', length: 3, confluences: 1 },
+      {
+        cells: [0, 1, 4, 5],
+        source: 0,
+        sink: 5,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 0,
+        isTributary: false,
+      },
+      {
+        cells: [3, 4, 5],
+        source: 3,
+        sink: 5,
+        sinkType: 'ocean',
+        length: 3,
+        confluences: 1,
+        isTributary: true,
+      },
     ];
 
     const segments = prepareRiverRenderSegments(rivers);
@@ -139,8 +155,24 @@ describe('drawRivers', () => {
     const ctxB = new MockContext();
 
     const rivers: RiverPath[] = [
-      { cells: [0, 1, 4, 5], source: 0, sink: 5, sinkType: 'ocean', length: 4, confluences: 0 },
-      { cells: [3, 4, 5], source: 3, sink: 5, sinkType: 'ocean', length: 3, confluences: 1 },
+      {
+        cells: [0, 1, 4, 5],
+        source: 0,
+        sink: 5,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 0,
+        isTributary: false,
+      },
+      {
+        cells: [3, 4, 5],
+        source: 3,
+        sink: 5,
+        sinkType: 'ocean',
+        length: 3,
+        confluences: 1,
+        isTributary: true,
+      },
     ];
 
     drawRivers(ctxA as unknown as CanvasRenderingContext2D, mesh, rivers);
