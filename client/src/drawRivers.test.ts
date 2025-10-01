@@ -4,6 +4,7 @@ import {
   buildRiverRenderPath,
   computeStrahlerOrders,
   createRiverWidthScale,
+  computeSegmentEdgeWidths,
   drawRivers,
   prepareRiverRenderSegments,
   RiverRenderSegment,
@@ -380,25 +381,66 @@ describe('drawRivers', () => {
     expect(main).toBeDefined();
     if (!main) return;
 
-    const widths: number[] = [];
-    let previous: number | null = null;
-    for (let i = 0; i < main.cells.length - 1; i++) {
-      const from = main.cells[i];
-      const to = main.cells[i + 1];
-      const fromOrder = orders.get(from) ?? 1;
-      const toOrder = orders.get(to) ?? fromOrder;
-      const upstreamWidth = scale.widthFor(fromOrder);
-      const downstreamWidth = scale.widthFor(Math.max(fromOrder, toOrder));
-      let width = downstreamWidth <= upstreamWidth ? upstreamWidth : upstreamWidth * 0.35 + downstreamWidth * 0.65;
-      if (previous !== null && width < previous) {
-        width = previous;
-      }
-      widths.push(width);
-      previous = width;
-    }
+    const widths = computeSegmentEdgeWidths(main.cells, orders, scale);
 
     for (let i = 1; i < widths.length; i++) {
       expect(widths[i]).toBeGreaterThanOrEqual(widths[i - 1]);
     }
+
+    const downstreamOrder = orders.get(main.cells[main.cells.length - 1]) ?? 1;
+    const downstreamTarget = scale.widthFor(downstreamOrder);
+    const upstreamTarget = scale.widthFor(orders.get(main.cells[0]) ?? 1);
+    expect(widths[0]).toBeLessThanOrEqual(upstreamTarget);
+    expect(widths[0]).toBeGreaterThanOrEqual(upstreamTarget * 0.8);
+    const lastWidth = widths[widths.length - 1];
+    const penultimate = widths[widths.length - 2];
+    expect(lastWidth).toBeGreaterThan(penultimate);
+    expect(lastWidth).toBeLessThanOrEqual(downstreamTarget + 1e-6);
+    if (downstreamTarget > penultimate + 1e-3) {
+      expect(lastWidth).toBeLessThan(downstreamTarget);
+    }
+  });
+
+  it('keeps tributaries narrower than the downstream confluence order', () => {
+    const rivers: RiverPath[] = [
+      {
+        cells: [0, 1, 4, 5],
+        source: 0,
+        sink: 5,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 0,
+        isTributary: false,
+      },
+      {
+        cells: [3, 4, 5],
+        source: 3,
+        sink: 5,
+        sinkType: 'ocean',
+        length: 3,
+        confluences: 1,
+        isTributary: true,
+      },
+    ];
+
+    const segments = prepareRiverRenderSegments(rivers);
+    const { orders } = computeStrahlerOrders(rivers);
+    const scale = createRiverWidthScale(orders, 10);
+
+    const tributary = segments.find((segment) => segment.cells[0] === 3);
+    const main = segments.find((segment) => segment.cells[0] === 0);
+    expect(tributary).toBeDefined();
+    expect(main).toBeDefined();
+    if (!tributary || !main) return;
+
+    const tribWidths = computeSegmentEdgeWidths(tributary.cells, orders, scale);
+    const mainWidths = computeSegmentEdgeWidths(main.cells, orders, scale);
+
+    const mainOrder = orders.get(main.cells[main.cells.length - 1]) ?? 1;
+    const mainTarget = scale.widthFor(mainOrder);
+    const tribLast = tribWidths[tribWidths.length - 1];
+    expect(tribLast).toBeLessThan(mainTarget);
+    expect(tribLast).toBeGreaterThanOrEqual(tribWidths[0]);
+    expect(mainWidths[mainWidths.length - 1]).toBeGreaterThan(tribLast);
   });
 });

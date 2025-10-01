@@ -384,7 +384,64 @@ describe('generateRivers', () => {
       return prevY === y && Math.abs(prevX - x) === 1;
     });
     expect(horizontalSteps.length).toBeGreaterThan(0);
+  });
 
+  it('continues a single river path through lakes with defined outlets', () => {
+    const width = 5;
+    const height = 5;
+    const mesh = createGridMesh(width, height);
+    const index = (x: number, y: number) => y * width + x;
+    const waterLevel = 0.25;
+    const elevations = new Float64Array(width * height).fill(0.6);
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (x === 0 || y === 0 || x === width - 1 || y === height - 1) {
+          elevations[index(x, y)] = 0.12;
+        }
+      }
+    }
+
+    elevations[index(2, 0)] = 0.82;
+    elevations[index(1, 1)] = 0.81;
+    elevations[index(3, 1)] = 0.8;
+
+    const lakeCell = index(2, 2);
+    elevations[lakeCell] = 0.15;
+    elevations[index(2, 1)] = 0.76;
+    elevations[index(2, 3)] = 0.38;
+    elevations[index(2, 4)] = 0.12;
+    elevations[index(1, 2)] = 0.78;
+    elevations[index(3, 2)] = 0.77;
+
+    const controls = {
+      riverCount: 1,
+      minRiverLength: 3,
+      headwaterBand: { min: 0.4, max: 0.99 },
+      minSourceSpacing: 2,
+      meanderBias: 0.5,
+      flatTolerance: 3,
+      tributaryDensity: 0.2,
+      allowNewLakes: true,
+    } as const;
+
+    const result = generateRivers(
+      elevations,
+      mesh.neighbors,
+      mesh.offsets,
+      waterLevel,
+      controls
+    );
+
+    const primary = result.rivers.find((river) => !river.isTributary);
+    expect(primary).toBeDefined();
+    if (!primary) return;
+
+    expect(primary.sinkType).toBe('ocean');
+    const lakeIndex = primary.cells.indexOf(lakeCell);
+    expect(lakeIndex).toBeGreaterThan(0);
+    expect(primary.cells[lakeIndex + 1]).toBe(index(2, 3));
+    expect(primary.cells[primary.cells.length - 1]).toBe(index(2, 4));
   });
 
   it('terminates inland basins by creating lakes when no outlet exists', () => {
@@ -440,6 +497,76 @@ describe('generateRivers', () => {
     expect(main!.sink).toBe(basin);
     expect(result.newLakeCells).toContain(basin);
     expect(result.riverFlags[basin]).toBe(1);
+  });
+
+  it('avoids hugging coastlines by favouring inland progress', () => {
+    const width = 6;
+    const height = 6;
+    const mesh = createGridMesh(width, height);
+    const index = (x: number, y: number) => y * width + x;
+    const waterLevel = 0.2;
+    const elevations = new Float64Array(width * height).fill(0.55);
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (x === 0 || y === 0 || x === width - 1 || y === height - 1) {
+          elevations[index(x, y)] = 0.1;
+        }
+      }
+    }
+
+    for (let y = 1; y < height - 1; y++) {
+      elevations[index(1, y)] = 0.82 - 0.05 * y;
+      elevations[index(2, y)] = 0.8 - 0.07 * y;
+      elevations[index(3, y)] = 0.78 - 0.08 * y;
+    }
+
+    elevations[index(2, 1)] = 0.88;
+    elevations[index(2, 2)] = 0.76;
+    elevations[index(3, 2)] = 0.7;
+    elevations[index(4, 3)] = 0.5;
+
+    const controls = {
+      riverCount: 1,
+      minRiverLength: 3,
+      headwaterBand: { min: 0.45, max: 0.95 },
+      minSourceSpacing: 2,
+      meanderBias: 0.6,
+      flatTolerance: 3,
+      tributaryDensity: 0.2,
+      allowNewLakes: true,
+    } as const;
+
+    const result = generateRivers(
+      elevations,
+      mesh.neighbors,
+      mesh.offsets,
+      waterLevel,
+      controls
+    );
+
+    const primary = result.rivers.find((river) => !river.isTributary);
+    expect(primary).toBeDefined();
+    if (!primary) return;
+
+    const coastlineRun = primary.cells.reduce(
+      (streak, cell, idx) => {
+        if (idx === primary.cells.length - 1) return streak;
+        const x = cell % width;
+        const nextStreak = x === 1 ? streak.current + 1 : 0;
+        return {
+          current: nextStreak,
+          longest: Math.max(streak.longest, nextStreak),
+        };
+      },
+      { current: 0, longest: 0 }
+    );
+
+    expect(coastlineRun.longest).toBeLessThanOrEqual(2);
+    const inlandStep = primary.cells.some(
+      (cell) => cell % width >= 2 && Math.floor(cell / width) > 1
+    );
+    expect(inlandStep).toBe(true);
   });
 
   it('remains deterministic for identical inputs', () => {

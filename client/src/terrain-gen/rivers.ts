@@ -106,6 +106,20 @@ export function generateRivers(
     cellOffsets,
     waterLevel
   );
+  const coastDistances = computeCoastDistances(
+    isWater,
+    isOcean,
+    cellNeighbors,
+    cellOffsets
+  );
+  const lakeOutlets = computeLakeOutlets(
+    cellElevations,
+    cellNeighbors,
+    cellOffsets,
+    isWater,
+    isOcean,
+    lakeSet
+  );
 
   const riverFlags = new Uint8Array(cellCount);
   const rivers: RiverPath[] = [];
@@ -138,6 +152,7 @@ export function generateRivers(
     headwaterMax
   );
 
+
   const primarySources = selectPrimarySources(
     sourceCandidates,
     landInfo,
@@ -168,7 +183,9 @@ export function generateRivers(
       downstream,
       allowNewLakes,
       meanderBias,
-      flatTolerance
+      flatTolerance,
+      coastDistances,
+      lakeOutlets
     );
 
     if (!trace) continue;
@@ -373,6 +390,89 @@ function labelLandmasses(
   }
 
   return { componentByCell, componentAreas, componentCount };
+}
+
+function computeCoastDistances(
+  isWater: boolean[],
+  isOcean: boolean[],
+  cellNeighbors: Int32Array,
+  cellOffsets: Uint32Array
+): Float32Array {
+  const cellCount = cellOffsets.length - 1;
+  const distances = new Float32Array(cellCount);
+  distances.fill(Number.POSITIVE_INFINITY);
+  const queue: number[] = [];
+
+  for (let cid = 0; cid < cellCount; cid++) {
+    if (isWater[cid]) continue;
+    const start = cellOffsets[cid];
+    const end = cellOffsets[cid + 1];
+    for (let i = start; i < end; i++) {
+      const nb = cellNeighbors[i];
+      if (nb < 0) continue;
+      if (isWater[nb] && isOcean[nb]) {
+        distances[cid] = 0;
+        queue.push(cid);
+        break;
+      }
+    }
+  }
+
+  for (let qi = 0; qi < queue.length; qi++) {
+    const cell = queue[qi];
+    const base = distances[cell];
+    const start = cellOffsets[cell];
+    const end = cellOffsets[cell + 1];
+    for (let i = start; i < end; i++) {
+      const nb = cellNeighbors[i];
+      if (nb < 0) continue;
+      if (isWater[nb]) continue;
+      if (distances[nb] <= base + 1) continue;
+      distances[nb] = base + 1;
+      queue.push(nb);
+    }
+  }
+
+  return distances;
+}
+
+function computeLakeOutlets(
+  cellElevations: Float64Array,
+  cellNeighbors: Int32Array,
+  cellOffsets: Uint32Array,
+  isWater: boolean[],
+  isOcean: boolean[],
+  lakeSet: Set<number>
+): Map<number, number> {
+  const outlets = new Map<number, number>();
+
+  for (const lakeCell of lakeSet) {
+    const start = cellOffsets[lakeCell];
+    const end = cellOffsets[lakeCell + 1];
+    let best = -1;
+    let bestElevation = Number.POSITIVE_INFINITY;
+
+    for (let i = start; i < end; i++) {
+      const nb = cellNeighbors[i];
+      if (nb < 0) continue;
+      if (isWater[nb]) continue;
+      if (isOcean[nb]) continue;
+      const elevation = cellElevations[nb];
+      if (
+        elevation < bestElevation - EPSILON ||
+        (Math.abs(elevation - bestElevation) <= EPSILON && nb < best)
+      ) {
+        bestElevation = elevation;
+        best = nb;
+      }
+    }
+
+    if (best !== -1) {
+      outlets.set(lakeCell, best);
+    }
+  }
+
+  return outlets;
 }
 
 function selectPrimarySources(
@@ -667,7 +767,9 @@ function traceRiver(
   downstream: Int32Array,
   allowNewLakes: boolean,
   meanderBias: number,
-  flatTolerance: number
+  flatTolerance: number,
+  coastDistances: Float32Array,
+  lakeOutlets: Map<number, number>
 ): TraceResult | null {
   const path: number[] = [source];
   const visited = new Set<number>([source]);
@@ -676,6 +778,10 @@ function traceRiver(
   let flatStreak = 0;
 
   const gentleThreshold = 0.02 + 0.08 * clamp01(meanderBias);
+  const normalizedCoastDistance = (cell: number): number => {
+    const value = coastDistances[cell];
+    return Number.isFinite(value) ? value : 6;
+  };
 
   while (true) {
     const currentElevation = cellElevations[current];
@@ -691,22 +797,32 @@ function traceRiver(
       }
     }
 
-    downhill.sort((a, b) => {
-      const dropA = currentElevation - cellElevations[a];
-      const dropB = currentElevation - cellElevations[b];
-      const gentleA = dropA <= gentleThreshold + EPSILON;
-      const gentleB = dropB <= gentleThreshold + EPSILON;
-
-      if (gentleA && gentleB) {
-        if (Math.abs(dropA - dropB) > EPSILON) {
-          return dropA - dropB; // prefer shallower drop for meander
-        }
+    const coastalCurrent = normalizedCoastDistance(current);
+    const scored = downhill.map((nb) => {
+      const drop = currentElevation - cellElevations[nb];
+      const gentle = drop <= gentleThreshold + EPSILON;
+      const dropScore = gentle
+        ? 1 + Math.max(0, gentleThreshold - drop)
+        : 2 + drop;
+      const coastalNext = normalizedCoastDistance(nb);
+      const coastDiff = coastalNext - coastalCurrent;
+      const coastWeight = coastalCurrent <= 2 ? 1.2 : 0.35;
+      let coastScore = coastDiff * coastWeight;
+      if (coastalCurrent <= 1 && coastDiff <= 0) {
+        coastScore += coastDiff * 1.4;
       }
+      const score = dropScore + coastScore;
+      return { nb, score, drop, coastDiff };
+    });
 
-      if (Math.abs(dropA - dropB) > EPSILON) {
-        return dropB - dropA; // otherwise prefer steeper descent
+    scored.sort((a, b) => {
+      if (Math.abs(b.score - a.score) > EPSILON) return b.score - a.score;
+      if (Math.abs(b.drop - a.drop) > EPSILON) return b.drop - a.drop;
+      if (Math.abs(b.coastDiff - a.coastDiff) > EPSILON) {
+        return b.coastDiff - a.coastDiff;
       }
-      return a - b;
+      if (a.nb !== b.nb) return a.nb - b.nb;
+      return 0;
     });
 
     const riverNeighbor = downhill.find((nb) => riverFlags[nb] === 1);
@@ -734,13 +850,13 @@ function traceRiver(
     }
 
     let next: number | undefined;
-    for (const candidate of downhill) {
-      if (visited.has(candidate)) continue;
-      const drop = currentElevation - cellElevations[candidate];
+    for (const candidate of scored) {
+      if (visited.has(candidate.nb)) continue;
+      const drop = currentElevation - cellElevations[candidate.nb];
       if (drop <= EPSILON && flatStreak >= flatTolerance) {
         continue;
       }
-      next = candidate;
+      next = candidate.nb;
       break;
     }
 
@@ -772,11 +888,30 @@ function traceRiver(
     path.push(next);
 
     if (isWater[next] || lakeSet.has(next)) {
+      const sinkType = isOcean[next] ? 'ocean' : 'lake';
+      visited.add(next);
       flatStreak = 0;
+
+      if (!isOcean[next]) {
+        const outlet = lakeOutlets.get(next);
+        if (outlet !== undefined && !visited.has(outlet)) {
+          const outletElevation = cellElevations[outlet];
+          if (outletElevation <= currentElevation + gentleThreshold + 0.02) {
+            path.push(outlet);
+            visited.add(outlet);
+            current = outlet;
+            if (Math.abs(cellElevations[next] - outletElevation) <= EPSILON) {
+              flatStreak = Math.min(flatTolerance, flatStreak + 1);
+            }
+            continue;
+          }
+        }
+      }
+
       return {
         cells: [...path],
         sinkCell: next,
-        sinkType: isOcean[next] ? 'ocean' : 'lake',
+        sinkType,
         confluences,
         newLakes: [],
         joinedExisting: false,
@@ -785,7 +920,7 @@ function traceRiver(
 
     visited.add(next);
     if (Math.abs(currentElevation - nextElevation) <= EPSILON) {
-      flatStreak += 1;
+      flatStreak = Math.min(flatTolerance, flatStreak + 1);
     } else {
       flatStreak = 0;
     }

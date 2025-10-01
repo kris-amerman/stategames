@@ -19,6 +19,11 @@ export interface RiverWidthScale {
   maxWidth: number;
 }
 
+const TAPER_GROWTH = 0.68;
+const CONFLUENCE_GROWTH = 0.45;
+const SOURCE_TAPER = 0.86;
+const SOURCE_MIN_WIDTH = 1.05;
+
 const EXIT_FRACTION = 0.45;
 const ENTRY_FRACTION = 0.55;
 
@@ -224,6 +229,64 @@ export function createRiverWidthScale(
   return { widthFor, minWidth, maxWidth };
 }
 
+export function computeSegmentEdgeWidths(
+  cells: number[],
+  orders: Map<number, number>,
+  scale: RiverWidthScale
+): number[] {
+  const widths: number[] = [];
+  let previous: number | null = null;
+
+  for (let i = 0; i < cells.length - 1; i++) {
+    const from = cells[i];
+    const to = cells[i + 1];
+    const fromOrder = orders.get(from) ?? 1;
+    const toOrder = orders.get(to) ?? fromOrder;
+    const upstreamTarget = scale.widthFor(fromOrder);
+    const downstreamOrder = Math.max(fromOrder, toOrder);
+    const downstreamTarget = scale.widthFor(downstreamOrder);
+
+    if (previous === null) {
+      const tapered = Math.min(
+        upstreamTarget,
+        Math.max(SOURCE_MIN_WIDTH, upstreamTarget * SOURCE_TAPER, scale.minWidth * SOURCE_TAPER)
+      );
+      widths.push(tapered);
+      previous = tapered;
+      continue;
+    }
+
+    const base = previous;
+    const desired = Math.max(upstreamTarget, downstreamTarget, base);
+    const delta = desired - base;
+
+    if (delta <= 1e-6) {
+      if (base + 1e-6 < upstreamTarget) {
+        const catchup = Math.max(upstreamTarget - base, 0);
+        previous = Math.min(upstreamTarget, base + catchup * 0.35);
+        widths.push(previous);
+      } else {
+        widths.push(base);
+      }
+      continue;
+    }
+
+    const growth = toOrder > fromOrder ? CONFLUENCE_GROWTH : TAPER_GROWTH;
+    let width = base + delta * growth;
+    if (width < upstreamTarget) {
+      width = base + Math.max(upstreamTarget - base, 0) * 0.35;
+    }
+    width = Math.min(width, desired, scale.maxWidth);
+    if (width < base) {
+      width = base;
+    }
+    widths.push(width);
+    previous = width;
+  }
+
+  return widths;
+}
+
 export function buildRiverRenderPath(
   cells: number[],
   mesh: MeshData,
@@ -347,16 +410,6 @@ export function drawRivers(
   const strahler = computeStrahlerOrders(rivers);
   const widthScale = createRiverWidthScale(strahler.orders, averageSpacing);
 
-  const edgeWidth = (fromOrder: number, toOrder: number): number => {
-    const upstreamWidth = widthScale.widthFor(fromOrder);
-    const downstreamOrder = Math.max(fromOrder, toOrder);
-    const downstreamWidth = widthScale.widthFor(downstreamOrder);
-    if (downstreamWidth <= upstreamWidth) {
-      return upstreamWidth;
-    }
-    return upstreamWidth * 0.35 + downstreamWidth * 0.65;
-  };
-
   const isDev = typeof import.meta !== 'undefined' && !!import.meta.env?.DEV;
   const confluenceCounts = new Map<number, number>();
   if (isDev) {
@@ -374,17 +427,11 @@ export function drawRivers(
   ctx.strokeStyle = '#1f6ef5';
 
   for (const segment of segments) {
-    let previousWidth: number | null = null;
+    const widths = computeSegmentEdgeWidths(segment.cells, strahler.orders, widthScale);
     for (let i = 0; i < segment.cells.length - 1; i++) {
       const from = segment.cells[i];
       const to = segment.cells[i + 1];
-      const fromOrder = strahler.orders.get(from) ?? 1;
-      const toOrder = strahler.orders.get(to) ?? fromOrder;
-      let width = edgeWidth(fromOrder, toOrder);
-      if (previousWidth !== null && width < previousWidth) {
-        width = previousWidth;
-      }
-      ctx.lineWidth = width;
+      ctx.lineWidth = widths[i];
 
       const subPath = buildRiverRenderPath([from, to], mesh, {
         sinkType: i === segment.cells.length - 2 ? segment.sinkType : null,
@@ -392,7 +439,6 @@ export function drawRivers(
       });
       if (subPath.length < 2) continue;
       strokeSmoothPath(ctx, subPath);
-      previousWidth = width;
     }
   }
 
@@ -405,26 +451,21 @@ export function drawRivers(
     rivers.forEach((river, index) => {
       if (river.isTributary) return;
       const entries: string[] = [];
-      let lastWidth = 0;
-      for (let i = 0; i < river.cells.length - 1; i++) {
-        const from = river.cells[i];
-        const to = river.cells[i + 1];
-        const fromOrder = strahler.orders.get(from) ?? 1;
-        const toOrder = strahler.orders.get(to) ?? fromOrder;
-        let width = edgeWidth(fromOrder, toOrder);
+      const widths = computeSegmentEdgeWidths(river.cells, strahler.orders, widthScale);
+      widths.forEach((width, idx) => {
         if (width <= widthScale.minWidth + 1e-3) {
           clamped.min += 1;
         }
         if (width >= widthScale.maxWidth - 1e-3) {
           clamped.max += 1;
         }
-        if (width < lastWidth) {
-          width = lastWidth;
-        }
-        lastWidth = width;
+        const from = river.cells[idx];
+        const to = river.cells[idx + 1];
+        const fromOrder = strahler.orders.get(from) ?? 1;
+        const toOrder = strahler.orders.get(to) ?? fromOrder;
         const order = Math.max(fromOrder, toOrder);
         entries.push(`(${order} → ${width.toFixed(2)})`);
-      }
+      });
       riverLogs.push(`River ${index}: ${entries.join(', ')}`);
     });
 
