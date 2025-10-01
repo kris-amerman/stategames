@@ -2,12 +2,29 @@ const EPSILON = 1e-6;
 
 export type SinkType = 'ocean' | 'lake';
 
+export interface HeadwaterBand {
+  /** Lower bound percentile (0-1) for eligible headwater elevations */
+  min: number;
+  /** Upper bound percentile (0-1) for eligible headwater elevations */
+  max: number;
+}
+
 export interface RiverControls {
   riverCount: number;
   /** Minimum number of cells (including mouth) that a river must traverse */
   minRiverLength?: number;
   /** When true, rivers may terminate in newly created lakes inside basins */
   allowNewLakes?: boolean;
+  /** Percentile band used to select headwater elevations */
+  headwaterBand?: HeadwaterBand;
+  /** Minimum graph distance between distinct river sources */
+  minSourceSpacing?: number;
+  /** Bias in [0,1] controlling preference for gentle meanders on flats */
+  meanderBias?: number;
+  /** Number of consecutive flat steps permitted before requiring descent */
+  flatTolerance?: number;
+  /** Relative density of seeded tributaries along main stems */
+  tributaryDensity?: number;
 }
 
 export interface RiverPath {
@@ -49,6 +66,29 @@ interface TraceResult {
   joinedExisting: boolean;
 }
 
+interface SourceCandidate {
+  cell: number;
+  elevation: number;
+  component: number;
+  concavity: number;
+  lowerNeighbors: number;
+  adjacentLake: boolean;
+  score: number;
+}
+
+interface LandmassInfo {
+  componentByCell: Int32Array;
+  componentAreas: number[];
+  componentCount: number;
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
 /**
  * Generates river paths and per-cell river flags for a terrain mesh.
  */
@@ -76,21 +116,48 @@ export function generateRivers(
 
   const minRiverLength = Math.max(2, controls.minRiverLength ?? 6);
   const allowNewLakes = controls.allowNewLakes !== false;
+  const headwaterBand = normalizeHeadwaterBand(controls.headwaterBand);
+  const minSourceSpacing = Math.max(1, Math.floor(controls.minSourceSpacing ?? 12));
+  const meanderBias = clamp01(controls.meanderBias ?? 0.6);
+  const flatTolerance = Math.max(0, Math.floor(controls.flatTolerance ?? 3));
+  const tributaryDensity = clamp01(controls.tributaryDensity ?? 0.45);
+
+  const landInfo = labelLandmasses(isWater, cellNeighbors, cellOffsets);
+  const { minElevation: headwaterMin, maxElevation: headwaterMax } =
+    computeHeadwaterElevationBand(cellElevations, isWater, headwaterBand);
 
   const sourceCandidates = identifySourceCandidates(
     cellElevations,
     cellNeighbors,
     cellOffsets,
     isWater,
-    waterLevel
+    isOcean,
+    waterLevel,
+    landInfo,
+    headwaterMin,
+    headwaterMax
   );
 
-  for (const candidate of sourceCandidates) {
+  const primarySources = selectPrimarySources(
+    sourceCandidates,
+    landInfo,
+    controls.riverCount,
+    minSourceSpacing,
+    cellNeighbors,
+    cellOffsets,
+    isWater,
+    isOcean,
+    logs
+  );
+
+  const candidateOrder = buildCandidateOrder(primarySources, sourceCandidates, tributaryDensity);
+
+  for (const candidate of candidateOrder) {
     if (distinctCount >= controls.riverCount) break;
-    if (riverFlags[candidate] === 1) continue;
+    if (riverFlags[candidate.cell] === 1) continue;
 
     const trace = traceRiver(
-      candidate,
+      candidate.cell,
       cellElevations,
       cellNeighbors,
       cellOffsets,
@@ -99,7 +166,9 @@ export function generateRivers(
       riverFlags,
       lakeSet,
       downstream,
-      allowNewLakes
+      allowNewLakes,
+      meanderBias,
+      flatTolerance
     );
 
     if (!trace) continue;
@@ -112,7 +181,7 @@ export function generateRivers(
 
     rivers.push({
       cells: trace.cells.slice(),
-      source: candidate,
+      source: candidate.cell,
       sink: trace.sinkCell,
       sinkType: trace.sinkType,
       length: trace.cells.length,
@@ -143,10 +212,10 @@ export function generateRivers(
       distinctCount += 1;
     }
 
-    const elevation = cellElevations[candidate];
+    const elevation = cellElevations[candidate.cell];
     const label = isTributary ? 'Tributary' : 'River';
     logs.push(
-      `${label} ${rivers.length}: source ${candidate} (e=${elevation.toFixed(3)}) length ${trace.cells.length} ` +
+      `${label} ${rivers.length}: source ${candidate.cell} (e=${elevation.toFixed(3)}) length ${trace.cells.length} ` +
         `sink ${trace.sinkType} at ${trace.sinkCell} confluences ${trace.confluences}`
     );
   }
@@ -224,53 +293,366 @@ function classifyWaterBodies(
   return { isWater, isOcean, lakeSet };
 }
 
+function normalizeHeadwaterBand(band?: HeadwaterBand): HeadwaterBand {
+  const min = clamp01(band?.min ?? 0.55);
+  let max = clamp01(band?.max ?? 0.92);
+  if (max <= min) {
+    max = clamp01(Math.min(1, min + 0.1));
+  }
+  if (max - min < 0.05) {
+    max = clamp01(min + 0.05);
+  }
+  return { min, max };
+}
+
+function computeHeadwaterElevationBand(
+  cellElevations: Float64Array,
+  isWater: boolean[],
+  band: HeadwaterBand
+): { minElevation: number; maxElevation: number } {
+  const landElevations: number[] = [];
+  for (let i = 0; i < cellElevations.length; i++) {
+    if (!isWater[i]) {
+      landElevations.push(cellElevations[i]);
+    }
+  }
+
+  if (landElevations.length === 0) {
+    return { minElevation: 0, maxElevation: 0 };
+  }
+
+  landElevations.sort((a, b) => a - b);
+  const lastIndex = landElevations.length - 1;
+  const minIndex = Math.max(0, Math.min(lastIndex, Math.floor(band.min * lastIndex)));
+  const maxIndex = Math.max(0, Math.min(lastIndex, Math.floor(band.max * lastIndex)));
+  let minElevation = landElevations[minIndex];
+  let maxElevation = landElevations[Math.max(minIndex, maxIndex)];
+  if (maxElevation < minElevation + EPSILON) {
+    maxElevation = minElevation + EPSILON;
+  }
+  return { minElevation, maxElevation };
+}
+
+function labelLandmasses(
+  isWater: boolean[],
+  cellNeighbors: Int32Array,
+  cellOffsets: Uint32Array
+): LandmassInfo {
+  const cellCount = cellOffsets.length - 1;
+  const componentByCell = new Int32Array(cellCount).fill(-1);
+  const componentAreas: number[] = [];
+  let componentCount = 0;
+  const queue: number[] = [];
+
+  for (let cid = 0; cid < cellCount; cid++) {
+    if (isWater[cid]) continue;
+    if (componentByCell[cid] !== -1) continue;
+
+    queue.length = 0;
+    queue.push(cid);
+    componentByCell[cid] = componentCount;
+    let area = 0;
+
+    while (queue.length > 0) {
+      const cell = queue.shift()!;
+      area += 1;
+      const start = cellOffsets[cell];
+      const end = cellOffsets[cell + 1];
+      for (let i = start; i < end; i++) {
+        const nb = cellNeighbors[i];
+        if (nb < 0) continue;
+        if (isWater[nb]) continue;
+        if (componentByCell[nb] !== -1) continue;
+        componentByCell[nb] = componentCount;
+        queue.push(nb);
+      }
+    }
+
+    componentAreas.push(area);
+    componentCount += 1;
+  }
+
+  return { componentByCell, componentAreas, componentCount };
+}
+
+function selectPrimarySources(
+  candidates: SourceCandidate[],
+  landInfo: LandmassInfo,
+  requestedRivers: number,
+  minSourceSpacing: number,
+  cellNeighbors: Int32Array,
+  cellOffsets: Uint32Array,
+  isWater: boolean[],
+  isOcean: boolean[],
+  logs: string[]
+): SourceCandidate[] {
+  if (requestedRivers <= 0 || candidates.length === 0) {
+    return [];
+  }
+
+  const { componentCount, componentAreas } = landInfo;
+  if (componentCount === 0) {
+    return [];
+  }
+
+  const availablePerComponent = new Array<number>(componentCount).fill(0);
+  for (const candidate of candidates) {
+    if (candidate.component >= 0) {
+      availablePerComponent[candidate.component] += 1;
+    }
+  }
+
+  const totalArea = componentAreas.reduce((sum, value) => sum + value, 0);
+  const rawTargets = componentAreas.map((area) =>
+    totalArea > 0 ? (area / totalArea) * requestedRivers : 0
+  );
+  const targets = rawTargets.map((value) => Math.floor(value));
+  let assigned = targets.reduce((sum, value) => sum + value, 0);
+  let remainder = Math.max(0, requestedRivers - assigned);
+
+  const fractionalOrder = rawTargets
+    .map((value, idx) => ({ idx, fraction: value - targets[idx] }))
+    .sort((a, b) => {
+      if (b.fraction !== a.fraction) return b.fraction - a.fraction;
+      return a.idx - b.idx;
+    });
+
+  for (const entry of fractionalOrder) {
+    if (remainder <= 0) break;
+    if (availablePerComponent[entry.idx] <= targets[entry.idx]) continue;
+    targets[entry.idx] += 1;
+    remainder -= 1;
+  }
+
+  if (remainder > 0) {
+    const capacityOrder = availablePerComponent
+      .map((available, idx) => ({ idx, slack: Math.max(0, available - targets[idx]) }))
+      .filter((entry) => entry.slack > 0)
+      .sort((a, b) => {
+        if (b.slack !== a.slack) return b.slack - a.slack;
+        return a.idx - b.idx;
+      });
+    for (const entry of capacityOrder) {
+      if (remainder <= 0) break;
+      const allocatable = Math.min(entry.slack, remainder);
+      targets[entry.idx] += allocatable;
+      remainder -= allocatable;
+    }
+  }
+
+  const selected: SourceCandidate[] = [];
+  const selectedSet = new Set<number>();
+  const selectedPerComponent = new Array<number>(componentCount).fill(0);
+  const totalTarget = targets.reduce((sum, value) => sum + value, 0);
+
+  for (const candidate of candidates) {
+    if (selected.length >= totalTarget) {
+      break;
+    }
+
+    const comp = candidate.component;
+    if (comp < 0) continue;
+    if (selectedPerComponent[comp] >= targets[comp]) continue;
+
+    if (
+      !isBeyondSpacing(
+        candidate.cell,
+        selectedSet,
+        minSourceSpacing,
+        cellNeighbors,
+        cellOffsets,
+        isWater,
+        isOcean
+      )
+    ) {
+      continue;
+    }
+
+    selected.push(candidate);
+    selectedSet.add(candidate.cell);
+    selectedPerComponent[comp] += 1;
+  }
+
+  for (let comp = 0; comp < componentCount; comp++) {
+    if (targets[comp] > 0 && selectedPerComponent[comp] < targets[comp]) {
+      logs.push(
+        `Landmass ${comp}: requested ${targets[comp]} river sources but placed ${selectedPerComponent[comp]} (shortfall ${targets[comp] - selectedPerComponent[comp]}).`
+      );
+    }
+  }
+
+  return selected;
+}
+
+function buildCandidateOrder(
+  primarySources: SourceCandidate[],
+  allCandidates: SourceCandidate[],
+  tributaryDensity: number
+): SourceCandidate[] {
+  if (allCandidates.length === 0) {
+    return [];
+  }
+
+  const indexLookup = new Map<number, number>();
+  for (let i = 0; i < allCandidates.length; i++) {
+    indexLookup.set(allCandidates[i].cell, i);
+  }
+
+  const primaries = [...primarySources].sort((a, b) => {
+    const ia = indexLookup.get(a.cell) ?? 0;
+    const ib = indexLookup.get(b.cell) ?? 0;
+    return ia - ib;
+  });
+  const primarySet = new Set<number>(primaries.map((candidate) => candidate.cell));
+
+  const secondary = allCandidates.filter((candidate) => !primarySet.has(candidate.cell));
+  const prioritizedCount = Math.min(
+    secondary.length,
+    Math.round(secondary.length * clamp01(tributaryDensity))
+  );
+  const prioritized = secondary.slice(0, prioritizedCount);
+  const remainder = secondary.slice(prioritizedCount);
+
+  return [...primaries, ...prioritized, ...remainder];
+}
+
+function isBeyondSpacing(
+  cell: number,
+  selected: Set<number>,
+  minSourceSpacing: number,
+  cellNeighbors: Int32Array,
+  cellOffsets: Uint32Array,
+  isWater: boolean[],
+  isOcean: boolean[]
+): boolean {
+  if (selected.size === 0 || minSourceSpacing <= 0) {
+    return true;
+  }
+
+  const visited = new Set<number>([cell]);
+  const queue: Array<{ id: number; distance: number }> = [{ id: cell, distance: 0 }];
+
+  while (queue.length > 0) {
+    const { id, distance } = queue.shift()!;
+    if (distance > 0 && selected.has(id)) {
+      return false;
+    }
+    if (distance >= minSourceSpacing) continue;
+
+    const start = cellOffsets[id];
+    const end = cellOffsets[id + 1];
+    for (let i = start; i < end; i++) {
+      const nb = cellNeighbors[i];
+      if (nb < 0) continue;
+      if (visited.has(nb)) continue;
+      if (isWater[nb] && isOcean[nb]) continue;
+      visited.add(nb);
+      queue.push({ id: nb, distance: distance + 1 });
+    }
+  }
+
+  return true;
+}
+
 function identifySourceCandidates(
   cellElevations: Float64Array,
   cellNeighbors: Int32Array,
   cellOffsets: Uint32Array,
   isWater: boolean[],
-  waterLevel: number
-): number[] {
+  isOcean: boolean[],
+  waterLevel: number,
+  landInfo: LandmassInfo,
+  minElevation: number,
+  maxElevation: number
+): SourceCandidate[] {
   const cellCount = cellOffsets.length - 1;
-  const candidates: number[] = [];
+  const candidates: SourceCandidate[] = [];
+  const elevationRange = Math.max(EPSILON, maxElevation - minElevation);
 
   for (let cid = 0; cid < cellCount; cid++) {
     if (isWater[cid]) continue;
-    const neighborhood: number[] = [cellElevations[cid]];
+
+    const component = landInfo.componentByCell[cid];
+    if (component < 0) continue;
+
+    const elevation = cellElevations[cid];
     const start = cellOffsets[cid];
     const end = cellOffsets[cid + 1];
+    if (start === end) continue;
+
+    let higherNeighbors = 0;
+    let lowerNeighbors = 0;
+    let lowerDropSum = 0;
+    let nearlyLevel = 0;
+    let concavitySupport = 0;
+    let adjacentLake = false;
+
     for (let i = start; i < end; i++) {
       const nb = cellNeighbors[i];
       if (nb < 0) continue;
-      neighborhood.push(cellElevations[nb]);
+      const nbElevation = cellElevations[nb];
+
+      if (isWater[nb] && !isOcean[nb]) {
+        adjacentLake = true;
+      }
+
+      if (nbElevation > elevation + EPSILON) {
+        higherNeighbors += 1;
+      } else if (nbElevation < elevation - EPSILON) {
+        lowerNeighbors += 1;
+        const drop = elevation - nbElevation;
+        lowerDropSum += drop;
+        if (!isWater[nb]) {
+          concavitySupport += Math.min(1, drop / 0.15);
+        }
+      } else {
+        nearlyLevel += 1;
+      }
     }
 
-    if (neighborhood.length <= 1) continue;
+    if (!adjacentLake) {
+      if (elevation < minElevation - EPSILON) continue;
+      if (elevation > maxElevation + EPSILON) continue;
+    }
 
-    const median = computeMedian(neighborhood);
-    if (cellElevations[cid] <= median + EPSILON) continue;
-    if (cellElevations[cid] <= waterLevel + 0.05) continue;
+    if (higherNeighbors === 0 && !adjacentLake) {
+      continue; // local maximum
+    }
 
-    candidates.push(cid);
+    if (lowerNeighbors === 0 && !adjacentLake) {
+      continue; // ridge or flat summit
+    }
+
+    const concavity = lowerNeighbors > 0 ? lowerDropSum / lowerNeighbors : 0;
+    const normalizedElevation = Math.min(1, Math.max(0, (elevation - minElevation) / elevationRange));
+    const slopeBalance = lowerNeighbors + nearlyLevel > 0
+      ? lowerNeighbors / (lowerNeighbors + nearlyLevel)
+      : 0;
+    const lakeBonus = adjacentLake ? 0.25 : 0;
+    const score = normalizedElevation * 0.6 + concavity * 0.25 + slopeBalance * 0.1 + concavitySupport * 0.05 + lakeBonus;
+
+    if (elevation <= waterLevel + 0.02 && !adjacentLake) {
+      continue;
+    }
+
+    candidates.push({
+      cell: cid,
+      elevation,
+      component,
+      concavity,
+      lowerNeighbors,
+      adjacentLake,
+      score,
+    });
   }
 
   candidates.sort((a, b) => {
-    const da = cellElevations[a];
-    const db = cellElevations[b];
-    if (da !== db) return db - da;
-    return a - b;
+    if (Math.abs(b.score - a.score) > 1e-6) return b.score - a.score;
+    if (Math.abs(b.elevation - a.elevation) > EPSILON) return b.elevation - a.elevation;
+    return a.cell - b.cell;
   });
 
   return candidates;
-}
-
-function computeMedian(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    return (sorted[mid - 1] + sorted[mid]) / 2;
-  }
-  return sorted[mid];
 }
 
 function traceRiver(
@@ -283,12 +665,17 @@ function traceRiver(
   riverFlags: Uint8Array,
   lakeSet: Set<number>,
   downstream: Int32Array,
-  allowNewLakes: boolean
+  allowNewLakes: boolean,
+  meanderBias: number,
+  flatTolerance: number
 ): TraceResult | null {
   const path: number[] = [source];
   const visited = new Set<number>([source]);
   let current = source;
   let confluences = 0;
+  let flatStreak = 0;
+
+  const gentleThreshold = 0.02 + 0.08 * clamp01(meanderBias);
 
   while (true) {
     const currentElevation = cellElevations[current];
@@ -305,9 +692,20 @@ function traceRiver(
     }
 
     downhill.sort((a, b) => {
-      const ea = cellElevations[a];
-      const eb = cellElevations[b];
-      if (Math.abs(ea - eb) > EPSILON) return ea - eb;
+      const dropA = currentElevation - cellElevations[a];
+      const dropB = currentElevation - cellElevations[b];
+      const gentleA = dropA <= gentleThreshold + EPSILON;
+      const gentleB = dropB <= gentleThreshold + EPSILON;
+
+      if (gentleA && gentleB) {
+        if (Math.abs(dropA - dropB) > EPSILON) {
+          return dropA - dropB; // prefer shallower drop for meander
+        }
+      }
+
+      if (Math.abs(dropA - dropB) > EPSILON) {
+        return dropB - dropA; // otherwise prefer steeper descent
+      }
       return a - b;
     });
 
@@ -337,10 +735,13 @@ function traceRiver(
 
     let next: number | undefined;
     for (const candidate of downhill) {
-      if (!visited.has(candidate)) {
-        next = candidate;
-        break;
+      if (visited.has(candidate)) continue;
+      const drop = currentElevation - cellElevations[candidate];
+      if (drop <= EPSILON && flatStreak >= flatTolerance) {
+        continue;
       }
+      next = candidate;
+      break;
     }
 
     if (next === undefined) {
@@ -371,6 +772,7 @@ function traceRiver(
     path.push(next);
 
     if (isWater[next] || lakeSet.has(next)) {
+      flatStreak = 0;
       return {
         cells: [...path],
         sinkCell: next,
@@ -382,6 +784,11 @@ function traceRiver(
     }
 
     visited.add(next);
+    if (Math.abs(currentElevation - nextElevation) <= EPSILON) {
+      flatStreak += 1;
+    } else {
+      flatStreak = 0;
+    }
     current = next;
   }
 }

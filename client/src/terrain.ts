@@ -46,6 +46,11 @@ export const terrainControls: RiverControls = {
   riverCount: 8,
   minRiverLength: 8,
   allowNewLakes: true,
+  headwaterBand: { min: 0.58, max: 0.92 },
+  minSourceSpacing: 14,
+  meanderBias: 0.65,
+  flatTolerance: 4,
+  tributaryDensity: 0.5,
 };
 
 export function setCurrentCellBiomes(data: Uint8Array) {
