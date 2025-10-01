@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { MeshData } from './mesh';
 import {
   buildRiverRenderPath,
+  computeStrahlerOrders,
+  createRiverWidthScale,
   drawRivers,
   prepareRiverRenderSegments,
   RiverRenderSegment,
@@ -14,7 +16,8 @@ type MockCommand =
   | { type: 'moveTo'; x: number; y: number }
   | { type: 'lineTo'; x: number; y: number }
   | { type: 'quadraticCurveTo'; cx: number; cy: number; x: number; y: number }
-  | { type: 'stroke' };
+  | { type: 'stroke' }
+  | { type: 'lineWidth'; value: number };
 
 class MockContext {
   public canvas: { width: number; height: number } = { width: 300, height: 200 };
@@ -22,7 +25,16 @@ class MockContext {
   public lineCap = 'butt';
   public lineJoin = 'miter';
   public strokeStyle = '#000000';
-  public lineWidth = 1;
+  private _lineWidth = 1;
+
+  get lineWidth() {
+    return this._lineWidth;
+  }
+
+  set lineWidth(value: number) {
+    this._lineWidth = value;
+    this.commands.push({ type: 'lineWidth', value });
+  }
 
   beginPath() {
     this.commands.push({ type: 'beginPath' });
@@ -78,6 +90,162 @@ const mesh: MeshData = {
   ]),
   cellCount: 6,
 };
+
+describe('computeStrahlerOrders', () => {
+  it('assigns order one to simple source-to-sink rivers', () => {
+    const rivers: RiverPath[] = [
+      {
+        cells: [0, 1, 2],
+        source: 0,
+        sink: 2,
+        sinkType: 'ocean',
+        length: 3,
+        confluences: 0,
+        isTributary: false,
+      },
+    ];
+
+    const result = computeStrahlerOrders(rivers);
+    expect(result.orders.get(0)).toBe(1);
+    expect(result.orders.get(1)).toBe(1);
+    expect(result.orders.get(2)).toBe(1);
+  });
+
+  it('increments order at symmetric confluences', () => {
+    const rivers: RiverPath[] = [
+      {
+        cells: [0, 1, 4, 8],
+        source: 0,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 1,
+        isTributary: false,
+      },
+      {
+        cells: [2, 3, 4, 8],
+        source: 2,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 1,
+        isTributary: true,
+      },
+      {
+        cells: [5, 6, 7, 8],
+        source: 5,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 1,
+        isTributary: true,
+      },
+      {
+        cells: [9, 10, 7, 8],
+        source: 9,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 1,
+        isTributary: true,
+      },
+    ];
+
+    const result = computeStrahlerOrders(rivers);
+    expect(result.orders.get(4)).toBe(2);
+    expect(result.orders.get(7)).toBe(2);
+    expect(result.orders.get(8)).toBe(3);
+  });
+
+  it('keeps downstream order for asymmetric merges', () => {
+    const rivers: RiverPath[] = [
+      {
+        cells: [0, 1, 4, 8],
+        source: 0,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 1,
+        isTributary: false,
+      },
+      {
+        cells: [2, 3, 4, 8],
+        source: 2,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 1,
+        isTributary: true,
+      },
+      {
+        cells: [5, 6, 8],
+        source: 5,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 3,
+        confluences: 1,
+        isTributary: true,
+      },
+    ];
+
+    const result = computeStrahlerOrders(rivers);
+    expect(result.orders.get(4)).toBe(2);
+    expect(result.orders.get(8)).toBe(2);
+  });
+});
+
+describe('createRiverWidthScale', () => {
+  it('maps increasing order to monotonically increasing widths', () => {
+    const rivers: RiverPath[] = [
+      {
+        cells: [0, 1, 4, 8],
+        source: 0,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 1,
+        isTributary: false,
+      },
+      {
+        cells: [2, 3, 4, 8],
+        source: 2,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 1,
+        isTributary: true,
+      },
+      {
+        cells: [5, 6, 7, 8],
+        source: 5,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 1,
+        isTributary: true,
+      },
+      {
+        cells: [9, 10, 7, 8],
+        source: 9,
+        sink: 8,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 1,
+        isTributary: true,
+      },
+    ];
+
+    const { orders } = computeStrahlerOrders(rivers);
+    const scale = createRiverWidthScale(orders, 12);
+    const width1 = scale.widthFor(1);
+    const width2 = scale.widthFor(2);
+    const width3 = scale.widthFor(3);
+    expect(width1).toBeGreaterThanOrEqual(scale.minWidth);
+    expect(width3).toBeLessThanOrEqual(scale.maxWidth);
+    expect(width2).toBeGreaterThan(width1);
+    expect(width3).toBeGreaterThan(width2);
+  });
+});
 
 describe('prepareRiverRenderSegments', () => {
   it('avoids duplicating downstream segments at confluences', () => {
@@ -179,6 +347,58 @@ describe('drawRivers', () => {
     drawRivers(ctxB as unknown as CanvasRenderingContext2D, mesh, rivers);
 
     expect(ctxA.commands).toEqual(ctxB.commands);
-    expect(ctxA.lineWidth).toBeLessThan(10);
+    expect(ctxA.lineWidth).toBeLessThan(12);
+  });
+
+  it('ensures widths grow or stay constant downstream on the main river', () => {
+    const rivers: RiverPath[] = [
+      {
+        cells: [0, 1, 4, 5],
+        source: 0,
+        sink: 5,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 0,
+        isTributary: false,
+      },
+      {
+        cells: [3, 4, 5],
+        source: 3,
+        sink: 5,
+        sinkType: 'ocean',
+        length: 3,
+        confluences: 1,
+        isTributary: true,
+      },
+    ];
+
+    const segments = prepareRiverRenderSegments(rivers);
+    const { orders } = computeStrahlerOrders(rivers);
+    const scale = createRiverWidthScale(orders, 10);
+
+    const main = segments.find((segment) => segment.cells[0] === 0);
+    expect(main).toBeDefined();
+    if (!main) return;
+
+    const widths: number[] = [];
+    let previous: number | null = null;
+    for (let i = 0; i < main.cells.length - 1; i++) {
+      const from = main.cells[i];
+      const to = main.cells[i + 1];
+      const fromOrder = orders.get(from) ?? 1;
+      const toOrder = orders.get(to) ?? fromOrder;
+      const upstreamWidth = scale.widthFor(fromOrder);
+      const downstreamWidth = scale.widthFor(Math.max(fromOrder, toOrder));
+      let width = downstreamWidth <= upstreamWidth ? upstreamWidth : upstreamWidth * 0.35 + downstreamWidth * 0.65;
+      if (previous !== null && width < previous) {
+        width = previous;
+      }
+      widths.push(width);
+      previous = width;
+    }
+
+    for (let i = 1; i < widths.length; i++) {
+      expect(widths[i]).toBeGreaterThanOrEqual(widths[i - 1]);
+    }
   });
 });

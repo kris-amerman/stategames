@@ -7,6 +7,18 @@ export interface RiverRenderSegment {
   isComplete: boolean;
 }
 
+export interface StrahlerResult {
+  orders: Map<number, number>;
+  upstreams: Map<number, number[]>;
+  maxOrder: number;
+}
+
+export interface RiverWidthScale {
+  widthFor(order: number): number;
+  minWidth: number;
+  maxWidth: number;
+}
+
 const EXIT_FRACTION = 0.45;
 const ENTRY_FRACTION = 0.55;
 
@@ -49,6 +61,167 @@ export function prepareRiverRenderSegments(rivers: RiverPath[]): RiverRenderSegm
   }
 
   return segments;
+}
+
+export function computeStrahlerOrders(rivers: RiverPath[]): StrahlerResult {
+  const downstream = new Map<number, number>();
+  const upstreamSets = new Map<number, Set<number>>();
+  const cells = new Set<number>();
+
+  for (const river of rivers) {
+    for (const cell of river.cells) {
+      cells.add(cell);
+    }
+
+    for (let i = 0; i < river.cells.length - 1; i++) {
+      const from = river.cells[i];
+      const to = river.cells[i + 1];
+      if (from === to) continue;
+
+      const existing = downstream.get(from);
+      if (existing !== undefined && existing !== to) {
+        // Prefer the first encountered downstream path to maintain determinism.
+        continue;
+      }
+      downstream.set(from, to);
+
+      let upstream = upstreamSets.get(to);
+      if (!upstream) {
+        upstream = new Set<number>();
+        upstreamSets.set(to, upstream);
+      }
+      upstream.add(from);
+    }
+  }
+
+  const orders = new Map<number, number>();
+  const pending = new Map<number, number>();
+  const incomingOrders = new Map<number, number[]>();
+
+  for (const cell of cells) {
+    const upstream = upstreamSets.get(cell);
+    pending.set(cell, upstream ? upstream.size : 0);
+  }
+
+  const sources = Array.from(cells).filter((cell) => (pending.get(cell) ?? 0) === 0);
+  sources.sort((a, b) => a - b);
+
+  const queue: number[] = [];
+  for (const source of sources) {
+    orders.set(source, 1);
+    queue.push(source);
+  }
+
+  while (queue.length > 0) {
+    const cell = queue.shift()!;
+    const downstreamCell = downstream.get(cell);
+    if (downstreamCell === undefined) {
+      continue;
+    }
+
+    let list = incomingOrders.get(downstreamCell);
+    if (!list) {
+      list = [];
+      incomingOrders.set(downstreamCell, list);
+    }
+    list.push(orders.get(cell)!);
+
+    const remaining = (pending.get(downstreamCell) ?? 0) - 1;
+    pending.set(downstreamCell, remaining);
+
+    if (remaining === 0) {
+      const ordersList = incomingOrders.get(downstreamCell) ?? [];
+      if (ordersList.length === 0) {
+        orders.set(downstreamCell, 1);
+      } else {
+        let highest = ordersList[0];
+        let highestCount = 1;
+        for (let i = 1; i < ordersList.length; i++) {
+          const value = ordersList[i];
+          if (value > highest) {
+            highest = value;
+            highestCount = 1;
+          } else if (value === highest) {
+            highestCount += 1;
+          }
+        }
+        const downstreamOrder = highestCount >= 2 ? highest + 1 : highest;
+        orders.set(downstreamCell, downstreamOrder);
+      }
+      queue.push(downstreamCell);
+    }
+  }
+
+  let maxOrder = 1;
+  for (const order of orders.values()) {
+    if (order > maxOrder) {
+      maxOrder = order;
+    }
+  }
+
+  const upstreams = new Map<number, number[]>();
+  for (const cell of cells) {
+    const upstream = upstreamSets.get(cell);
+    if (upstream) {
+      upstreams.set(cell, Array.from(upstream).sort((a, b) => a - b));
+    } else {
+      upstreams.set(cell, []);
+    }
+  }
+
+  return { orders, upstreams, maxOrder };
+}
+
+export function createRiverWidthScale(
+  orders: Map<number, number>,
+  averageSpacing: number
+): RiverWidthScale {
+  let maxOrder = 1;
+  for (const value of orders.values()) {
+    if (value > maxOrder) {
+      maxOrder = value;
+    }
+  }
+
+  const minWidth = Math.max(1.4, averageSpacing * 0.22);
+  const maxWidth = Math.max(minWidth + 2.2, averageSpacing * 0.85);
+  const cache = new Map<number, number>();
+  const clampWidth = (width: number): number =>
+    Math.min(Math.max(width, minWidth), maxWidth);
+
+  const computeBaseWidth = (order: number): number => {
+    if (order <= 1) return minWidth;
+    if (order >= maxOrder) return maxWidth;
+    const t = maxOrder === 1 ? 0 : (order - 1) / (maxOrder - 1);
+    const eased = t * (0.5 + 0.5 * t);
+    const width = minWidth + (maxWidth - minWidth) * eased;
+    return clampWidth(width);
+  };
+
+  for (let order = 1; order <= maxOrder; order++) {
+    cache.set(order, computeBaseWidth(order));
+  }
+
+  const widthFor = (order: number): number => {
+    if (order <= 1) {
+      return minWidth;
+    }
+    if (order >= maxOrder) {
+      return maxWidth;
+    }
+    const lower = Math.floor(order);
+    const upper = Math.ceil(order);
+    const lowerWidth = cache.get(lower) ?? computeBaseWidth(lower);
+    const upperWidth = cache.get(upper) ?? computeBaseWidth(upper);
+    if (lower === upper) {
+      return lowerWidth;
+    }
+    const fraction = order - lower;
+    const interpolated = lowerWidth + (upperWidth - lowerWidth) * fraction;
+    return clampWidth(interpolated);
+  };
+
+  return { widthFor, minWidth, maxWidth };
 }
 
 export function buildRiverRenderPath(
@@ -170,24 +343,106 @@ export function drawRivers(
   }
 
   const averageSpacing = distanceSamples > 0 ? totalDistance / distanceSamples : 8;
-  const lineWidth = Math.max(1.2, averageSpacing * 0.35);
+
+  const strahler = computeStrahlerOrders(rivers);
+  const widthScale = createRiverWidthScale(strahler.orders, averageSpacing);
+
+  const edgeWidth = (fromOrder: number, toOrder: number): number => {
+    const upstreamWidth = widthScale.widthFor(fromOrder);
+    const downstreamOrder = Math.max(fromOrder, toOrder);
+    const downstreamWidth = widthScale.widthFor(downstreamOrder);
+    if (downstreamWidth <= upstreamWidth) {
+      return upstreamWidth;
+    }
+    return upstreamWidth * 0.35 + downstreamWidth * 0.65;
+  };
+
+  const isDev = typeof import.meta !== 'undefined' && !!import.meta.env?.DEV;
+  const confluenceCounts = new Map<number, number>();
+  if (isDev) {
+    for (const [cell, upstream] of strahler.upstreams) {
+      if (upstream.length >= 2) {
+        const order = strahler.orders.get(cell) ?? 1;
+        confluenceCounts.set(order, (confluenceCounts.get(order) ?? 0) + 1);
+      }
+    }
+  }
 
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = '#1f6ef5';
-  ctx.lineWidth = lineWidth;
 
   for (const segment of segments) {
-    const path = buildRiverRenderPath(segment.cells, mesh, {
-      sinkType: segment.sinkType,
-      isComplete: segment.isComplete,
-    });
-    if (path.length < 2) continue;
-    strokeSmoothPath(ctx, path);
+    let previousWidth: number | null = null;
+    for (let i = 0; i < segment.cells.length - 1; i++) {
+      const from = segment.cells[i];
+      const to = segment.cells[i + 1];
+      const fromOrder = strahler.orders.get(from) ?? 1;
+      const toOrder = strahler.orders.get(to) ?? fromOrder;
+      let width = edgeWidth(fromOrder, toOrder);
+      if (previousWidth !== null && width < previousWidth) {
+        width = previousWidth;
+      }
+      ctx.lineWidth = width;
+
+      const subPath = buildRiverRenderPath([from, to], mesh, {
+        sinkType: i === segment.cells.length - 2 ? segment.sinkType : null,
+        isComplete: i === segment.cells.length - 2 ? segment.isComplete : false,
+      });
+      if (subPath.length < 2) continue;
+      strokeSmoothPath(ctx, subPath);
+      previousWidth = width;
+    }
   }
 
   ctx.restore();
+
+  if (isDev) {
+    const clamped: { min: number; max: number } = { min: 0, max: 0 };
+    const riverLogs: string[] = [];
+
+    rivers.forEach((river, index) => {
+      if (river.isTributary) return;
+      const entries: string[] = [];
+      let lastWidth = 0;
+      for (let i = 0; i < river.cells.length - 1; i++) {
+        const from = river.cells[i];
+        const to = river.cells[i + 1];
+        const fromOrder = strahler.orders.get(from) ?? 1;
+        const toOrder = strahler.orders.get(to) ?? fromOrder;
+        let width = edgeWidth(fromOrder, toOrder);
+        if (width <= widthScale.minWidth + 1e-3) {
+          clamped.min += 1;
+        }
+        if (width >= widthScale.maxWidth - 1e-3) {
+          clamped.max += 1;
+        }
+        if (width < lastWidth) {
+          width = lastWidth;
+        }
+        lastWidth = width;
+        const order = Math.max(fromOrder, toOrder);
+        entries.push(`(${order} → ${width.toFixed(2)})`);
+      }
+      riverLogs.push(`River ${index}: ${entries.join(', ')}`);
+    });
+
+    const confluenceSummary = Array.from(confluenceCounts.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([order, count]) => `order ${order}: ${count}`)
+      .join(', ');
+
+    if (riverLogs.length > 0) {
+      console.debug('[river-render] widths', riverLogs.join(' | '));
+      if (confluenceSummary.length > 0) {
+        console.debug('[river-render] confluences', confluenceSummary);
+      }
+      if (clamped.min + clamped.max > 0) {
+        console.debug('[river-render] clamped widths', clamped);
+      }
+    }
+  }
 }
 
 function findSharedEdgeMidpoint(
