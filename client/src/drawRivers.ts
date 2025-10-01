@@ -27,6 +27,15 @@ const SOURCE_MIN_WIDTH = 1.05;
 const EXIT_FRACTION = 0.45;
 const ENTRY_FRACTION = 0.55;
 
+type Point = [number, number];
+
+interface SegmentAnchorPoints {
+  nodes: Point[];
+  exits: Point[];
+  entries: Point[];
+  shared: (Point | null)[];
+}
+
 export function prepareRiverRenderSegments(rivers: RiverPath[]): RiverRenderSegment[] {
   const rendered = new Set<number>();
   const segments: RiverRenderSegment[] = [];
@@ -294,57 +303,13 @@ export function buildRiverRenderPath(
 ): [number, number][] {
   if (cells.length < 2) return [];
 
-  const points: [number, number][] = [];
-  const { cellTriangleCenters } = mesh;
+  const anchors = collectSegmentAnchors(cells, mesh, options);
+  const points: Point[] = [anchors.nodes[0]];
 
-  const getCenter = (cell: number): [number, number] => [
-    cellTriangleCenters[cell * 2],
-    cellTriangleCenters[cell * 2 + 1],
-  ];
-
-  const lerp = (
-    a: [number, number],
-    b: [number, number],
-    t: number
-  ): [number, number] => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-
-  const mouthPoint = (
-    upstream: number,
-    sink: number
-  ): [number, number] | null =>
-    findSharedEdgeMidpoint(upstream, sink, mesh) ?? lerp(getCenter(upstream), getCenter(sink), 0.52);
-
-  points.push(getCenter(cells[0]));
-
-  for (let i = 0; i < cells.length - 1; i++) {
-    const current = cells[i];
-    const next = cells[i + 1];
-
-    const centerCurrent = getCenter(current);
-    const centerNext = getCenter(next);
-
-    const exitPoint = lerp(centerCurrent, centerNext, EXIT_FRACTION);
-    points.push(exitPoint);
-
-    const isLastSegment = i === cells.length - 2;
-    if (
-      isLastSegment &&
-      options.isComplete &&
-      options.sinkType !== null &&
-      (options.sinkType === 'lake' || options.sinkType === 'ocean')
-    ) {
-      const mouth = mouthPoint(current, next);
-      if (mouth) {
-        points.push(mouth);
-      } else {
-        points.push(lerp(centerCurrent, centerNext, ENTRY_FRACTION));
-      }
-      continue;
-    }
-
-    const entryPoint = lerp(centerCurrent, centerNext, ENTRY_FRACTION);
-    points.push(entryPoint);
-    points.push(centerNext);
+  for (let i = 0; i < anchors.exits.length; i++) {
+    points.push(anchors.exits[i]);
+    points.push(anchors.entries[i]);
+    points.push(anchors.nodes[i + 1]);
   }
 
   return points;
@@ -361,17 +326,28 @@ export function strokeSmoothPath(
 
   if (points.length === 2) {
     ctx.lineTo(points[1][0], points[1][1]);
-  } else {
-    for (let i = 0; i < points.length - 2; i++) {
-      const [cx, cy] = points[i + 1];
-      const [nx, ny] = points[i + 2];
-      const midX = (cx + nx) / 2;
-      const midY = (cy + ny) / 2;
-      ctx.quadraticCurveTo(cx, cy, midX, midY);
-    }
-    const [px, py] = points[points.length - 2];
-    const [lx, ly] = points[points.length - 1];
-    ctx.quadraticCurveTo(px, py, lx, ly);
+    ctx.stroke();
+    return;
+  }
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = i === 0 ? reflectPoint(points[1], points[0]) : points[i - 1];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 =
+      i + 2 < points.length
+        ? points[i + 2]
+        : reflectPoint(points[i], points[i + 1]);
+
+    const control = computeCatmullRomControls(p0, p1, p2, p3, 0.75);
+    ctx.bezierCurveTo(
+      control.cp1[0],
+      control.cp1[1],
+      control.cp2[0],
+      control.cp2[1],
+      p2[0],
+      p2[1]
+    );
   }
 
   ctx.stroke();
@@ -428,17 +404,23 @@ export function drawRivers(
 
   for (const segment of segments) {
     const widths = computeSegmentEdgeWidths(segment.cells, strahler.orders, widthScale);
-    for (let i = 0; i < segment.cells.length - 1; i++) {
-      const from = segment.cells[i];
-      const to = segment.cells[i + 1];
-      ctx.lineWidth = widths[i];
+    const anchors = collectSegmentAnchors(segment.cells, mesh, {
+      sinkType: segment.sinkType,
+      isComplete: segment.isComplete,
+    });
 
-      const subPath = buildRiverRenderPath([from, to], mesh, {
-        sinkType: i === segment.cells.length - 2 ? segment.sinkType : null,
-        isComplete: i === segment.cells.length - 2 ? segment.isComplete : false,
-      });
-      if (subPath.length < 2) continue;
-      strokeSmoothPath(ctx, subPath);
+    for (let i = 0; i < widths.length; i++) {
+      ctx.lineWidth = widths[i];
+      const start = anchors.nodes[i];
+      const end = anchors.nodes[i + 1];
+      if (!start || !end) continue;
+
+      const { cp1, cp2 } = computeSegmentControls(anchors, i);
+
+      ctx.beginPath();
+      ctx.moveTo(start[0], start[1]);
+      ctx.bezierCurveTo(cp1[0], cp1[1], cp2[0], cp2[1], end[0], end[1]);
+      ctx.stroke();
     }
   }
 
@@ -484,6 +466,111 @@ export function drawRivers(
       }
     }
   }
+}
+
+function collectSegmentAnchors(
+  cells: number[],
+  mesh: MeshData,
+  options: { sinkType: SinkType | null; isComplete: boolean }
+): SegmentAnchorPoints {
+  const { cellTriangleCenters } = mesh;
+  const getCenter = (cell: number): Point => [
+    cellTriangleCenters[cell * 2],
+    cellTriangleCenters[cell * 2 + 1],
+  ];
+
+  const nodes: Point[] = [getCenter(cells[0])];
+  const exits: Point[] = [];
+  const entries: Point[] = [];
+  const shared: (Point | null)[] = [];
+
+  for (let i = 0; i < cells.length - 1; i++) {
+    const currentCell = cells[i];
+    const nextCell = cells[i + 1];
+    const start = getCenter(currentCell);
+    const sharedEdge = findSharedEdgeMidpoint(currentCell, nextCell, mesh);
+    let target = getCenter(nextCell);
+
+    const isLast = i === cells.length - 2;
+    if (
+      isLast &&
+      options.isComplete &&
+      options.sinkType !== null &&
+      (options.sinkType === 'lake' || options.sinkType === 'ocean')
+    ) {
+      const mouth = sharedEdge ?? lerpPoint(start, target, 0.52);
+      if (mouth) {
+        target = mouth;
+      }
+    }
+
+    exits.push(lerpPoint(start, target, EXIT_FRACTION));
+    entries.push(lerpPoint(start, target, ENTRY_FRACTION));
+    shared.push(sharedEdge);
+    nodes.push(target);
+  }
+
+  return { nodes, exits, entries, shared };
+}
+
+function computeSegmentControls(
+  anchors: SegmentAnchorPoints,
+  index: number
+): { cp1: Point; cp2: Point } {
+  const { nodes, exits, entries, shared } = anchors;
+  const start = nodes[index];
+  const end = nodes[index + 1];
+  const prev = index > 0 ? nodes[index - 1] : reflectPoint(start, end);
+  const next =
+    index + 2 < nodes.length
+      ? nodes[index + 2]
+      : reflectPoint(end, start);
+
+  const { cp1: baseCp1, cp2: baseCp2 } = computeCatmullRomControls(
+    prev,
+    start,
+    end,
+    next,
+    0.72
+  );
+
+  let cp1 = lerpPoint(baseCp1, exits[index], 0.55);
+  let cp2 = lerpPoint(baseCp2, entries[index], 0.55);
+
+  const sharedPoint = shared[index];
+  if (sharedPoint) {
+    cp1 = lerpPoint(cp1, sharedPoint, 0.35);
+    cp2 = lerpPoint(cp2, sharedPoint, 0.35);
+  }
+
+  return { cp1, cp2 };
+}
+
+function computeCatmullRomControls(
+  p0: Point,
+  p1: Point,
+  p2: Point,
+  p3: Point,
+  tension: number
+): { cp1: Point; cp2: Point } {
+  const factor = (tension * 1) / 6;
+  const cp1: Point = [
+    p1[0] + (p2[0] - p0[0]) * factor,
+    p1[1] + (p2[1] - p0[1]) * factor,
+  ];
+  const cp2: Point = [
+    p2[0] - (p3[0] - p1[0]) * factor,
+    p2[1] - (p3[1] - p1[1]) * factor,
+  ];
+  return { cp1, cp2 };
+}
+
+function lerpPoint(a: Point, b: Point, t: number): Point {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+}
+
+function reflectPoint(pivot: Point, point: Point): Point {
+  return [pivot[0] * 2 - point[0], pivot[1] * 2 - point[1]];
 }
 
 function findSharedEdgeMidpoint(

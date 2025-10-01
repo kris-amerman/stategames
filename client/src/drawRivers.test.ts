@@ -17,6 +17,7 @@ type MockCommand =
   | { type: 'moveTo'; x: number; y: number }
   | { type: 'lineTo'; x: number; y: number }
   | { type: 'quadraticCurveTo'; cx: number; cy: number; x: number; y: number }
+  | { type: 'bezierCurveTo'; cx1: number; cy1: number; cx2: number; cy2: number; x: number; y: number }
   | { type: 'stroke' }
   | { type: 'lineWidth'; value: number };
 
@@ -48,6 +49,16 @@ class MockContext {
   }
   quadraticCurveTo(cx: number, cy: number, x: number, y: number) {
     this.commands.push({ type: 'quadraticCurveTo', cx, cy, x, y });
+  }
+  bezierCurveTo(
+    cx1: number,
+    cy1: number,
+    cx2: number,
+    cy2: number,
+    x: number,
+    y: number
+  ) {
+    this.commands.push({ type: 'bezierCurveTo', cx1, cy1, cx2, cy2, x, y });
   }
   stroke() {
     this.commands.push({ type: 'stroke' });
@@ -300,7 +311,7 @@ describe('buildRiverRenderPath', () => {
 });
 
 describe('strokeSmoothPath', () => {
-  it('uses quadratic curves to ensure smooth transitions', () => {
+  it('uses bezier curves to ensure smooth transitions', () => {
     const ctx = new MockContext();
     const points: [number, number][] = [
       [5, 5],
@@ -313,7 +324,7 @@ describe('strokeSmoothPath', () => {
     ];
 
     strokeSmoothPath(ctx as unknown as CanvasRenderingContext2D, points);
-    const curveCommands = ctx.commands.filter((cmd) => cmd.type === 'quadraticCurveTo');
+    const curveCommands = ctx.commands.filter((cmd) => cmd.type === 'bezierCurveTo');
     expect(curveCommands.length).toBeGreaterThan(0);
   });
 });
