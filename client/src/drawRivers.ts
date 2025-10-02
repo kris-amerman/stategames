@@ -1,10 +1,11 @@
-import { RiverPath, SinkType } from './terrain-gen/rivers';
+import { RiverPath, RiverSample, SinkType } from './terrain-gen/rivers';
 import { MeshData } from './mesh';
 
 export interface RiverRenderSegment {
   cells: number[];
   sinkType: SinkType | null;
   isComplete: boolean;
+  samples: RiverSample[];
 }
 
 const EXIT_FRACTION = 0.45;
@@ -16,15 +17,25 @@ export function prepareRiverRenderSegments(rivers: RiverPath[]): RiverRenderSegm
 
   for (const river of rivers) {
     const segmentCells: number[] = [];
+    const segmentSpans: { start: number; end: number }[] = [];
     let truncated = false;
+    let spanIndex = 0;
 
     for (const cell of river.cells) {
+      while (spanIndex < river.spans.length && river.spans[spanIndex].cell !== cell) {
+        spanIndex += 1;
+      }
+      const span = river.spans[spanIndex];
+      if (!span) break;
       if (segmentCells.length > 0 && rendered.has(cell)) {
         segmentCells.push(cell);
+        segmentSpans.push({ start: span.start, end: span.end });
         truncated = true;
         break;
       }
       segmentCells.push(cell);
+      segmentSpans.push({ start: span.start, end: span.end });
+      spanIndex += 1;
     }
 
     if (segmentCells.length < 2) {
@@ -41,7 +52,10 @@ export function prepareRiverRenderSegments(rivers: RiverPath[]): RiverRenderSegm
 
     const isComplete = !truncated && segmentCells.length === river.cells.length;
     const sinkType = isComplete ? river.sinkType : null;
-    segments.push({ cells: segmentCells, sinkType, isComplete });
+    const spanStart = segmentSpans[0]?.start ?? 0;
+    const spanEnd = segmentSpans[segmentSpans.length - 1]?.end ?? spanStart;
+    const samples = spanEnd > spanStart ? river.samples.slice(spanStart, spanEnd) : [];
+    segments.push({ cells: segmentCells, sinkType, isComplete, samples });
 
     for (const cell of segmentCells) {
       rendered.add(cell);
@@ -179,6 +193,10 @@ export function drawRivers(
   ctx.lineWidth = lineWidth;
 
   for (const segment of segments) {
+    if (segment.samples.length > 1) {
+      strokeVariableWidthPath(ctx, segment.samples);
+      continue;
+    }
     const path = buildRiverRenderPath(segment.cells, mesh, {
       sinkType: segment.sinkType,
       isComplete: segment.isComplete,
@@ -188,6 +206,24 @@ export function drawRivers(
   }
 
   ctx.restore();
+}
+
+function strokeVariableWidthPath(ctx: CanvasRenderingContext2D, samples: RiverSample[]): void {
+  if (samples.length < 2) return;
+
+  for (let i = 0; i < samples.length - 1; i++) {
+    const a = samples[i];
+    const b = samples[i + 1];
+    const control: [number, number] = [
+      (a.position[0] + b.position[0]) / 2,
+      (a.position[1] + b.position[1]) / 2,
+    ];
+    ctx.lineWidth = Math.max(0.5, (a.width + b.width) / 2);
+    ctx.beginPath();
+    ctx.moveTo(a.position[0], a.position[1]);
+    ctx.quadraticCurveTo(control[0], control[1], b.position[0], b.position[1]);
+    ctx.stroke();
+  }
 }
 
 function findSharedEdgeMidpoint(

@@ -46,6 +46,19 @@ export const terrainControls: RiverControls = {
   riverCount: 8,
   minRiverLength: 8,
   allowNewLakes: true,
+  widthMin: 1.5,
+  widthMax: 9,
+  widthJitterPct: 0.08,
+  headwaterBand: [0.64, 0.92],
+  minSourceSpacing: 80,
+  meanderBias: 0.045,
+  flatTolerance: 120,
+  tributaryDensity: 0.45,
+  widthByOrder: [1.6, 2.4, 3.5, 4.8, 6.1, 7.4],
+  widthTaper: 160,
+  maxWidthSlope: 0.05,
+  curvatureSmoothness: 1.2,
+  seed: 202311,
 };
 
 export function setCurrentCellBiomes(data: Uint8Array) {
@@ -124,6 +137,7 @@ export function generateTerrain(ctx: CanvasRenderingContext2D): void {
     cellElevations,
     meshData.cellNeighbors,
     meshData.cellOffsets,
+    meshData.cellTriangleCenters,
     biomeConfig.waterLevel,
     terrainControls
   );

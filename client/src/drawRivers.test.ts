@@ -7,7 +7,7 @@ import {
   RiverRenderSegment,
   strokeSmoothPath,
 } from './drawRivers';
-import { RiverPath } from './terrain-gen/rivers';
+import { RiverPath, RiverSample, RiverCellSpan } from './terrain-gen/rivers';
 
 type MockCommand =
   | { type: 'beginPath' }
@@ -79,35 +79,94 @@ const mesh: MeshData = {
   cellCount: 6,
 };
 
+function buildSamples(cells: number[]): { samples: RiverSample[]; spans: RiverCellSpan[] } {
+  const samples: RiverSample[] = [];
+  const spans: RiverCellSpan[] = [];
+
+  const getCenter = (cell: number): [number, number] => [
+    mesh.cellTriangleCenters[cell * 2],
+    mesh.cellTriangleCenters[cell * 2 + 1],
+  ];
+
+  const lerp = (a: [number, number], b: [number, number], t: number): [number, number] => [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+  ];
+
+  const pushSample = (cell: number, position: [number, number], distance: number, index: number) => {
+    const sample: RiverSample = {
+      cell,
+      distance,
+      position,
+      order: 1,
+      width: 2 + index * 0.2,
+    };
+    samples.push(sample);
+    const last = spans[spans.length - 1];
+    if (last && last.cell === cell) {
+      last.end = samples.length;
+    } else {
+      spans.push({ cell, start: samples.length - 1, end: samples.length });
+    }
+  };
+
+  let distance = 0;
+  let index = 0;
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i];
+    const center = getCenter(cell);
+    if (i === 0) {
+      pushSample(cell, center, distance, index++);
+    }
+    if (i === cells.length - 1) break;
+    const next = cells[i + 1];
+    const nextCenter = getCenter(next);
+    const exitPoint = lerp(center, nextCenter, 0.55);
+    distance += Math.hypot(exitPoint[0] - samples[samples.length - 1].position[0], exitPoint[1] - samples[samples.length - 1].position[1]);
+    pushSample(cell, exitPoint, distance, index++);
+    const entryPoint = lerp(center, nextCenter, 0.45);
+    distance += Math.hypot(entryPoint[0] - exitPoint[0], entryPoint[1] - exitPoint[1]);
+    pushSample(next, entryPoint, distance, index++);
+    distance += Math.hypot(nextCenter[0] - entryPoint[0], nextCenter[1] - entryPoint[1]);
+    pushSample(next, nextCenter, distance, index++);
+  }
+
+  return { samples, spans };
+}
+
+function makeRiverPath(cells: number[], sinkType: SinkType, isTributary = false): RiverPath {
+  const { samples, spans } = buildSamples(cells);
+  return {
+    cells,
+    samples,
+    spans,
+    source: cells[0],
+    sink: cells[cells.length - 1],
+    sinkType,
+    length: cells.length,
+    confluences: isTributary ? 1 : 0,
+    isTributary,
+    order: 1,
+    widthStats: { min: 2, mean: 2.5, max: 3 },
+  };
+}
+
 describe('prepareRiverRenderSegments', () => {
   it('avoids duplicating downstream segments at confluences', () => {
     const rivers: RiverPath[] = [
-      {
-        cells: [0, 1, 4, 5],
-        source: 0,
-        sink: 5,
-        sinkType: 'ocean',
-        length: 4,
-        confluences: 0,
-        isTributary: false,
-      },
-      {
-        cells: [3, 4, 5],
-        source: 3,
-        sink: 5,
-        sinkType: 'ocean',
-        length: 3,
-        confluences: 1,
-        isTributary: true,
-      },
+      makeRiverPath([0, 1, 4, 5], 'ocean', false),
+      makeRiverPath([3, 4, 5], 'ocean', true),
     ];
 
     const segments = prepareRiverRenderSegments(rivers);
-    const expected: RiverRenderSegment[] = [
-      { cells: [0, 1, 4, 5], sinkType: 'ocean', isComplete: true },
-      { cells: [3, 4], sinkType: null, isComplete: false },
-    ];
-    expect(segments).toEqual(expected);
+    expect(segments.length).toBe(2);
+    expect(segments[0].cells).toEqual([0, 1, 4, 5]);
+    expect(segments[0].sinkType).toBe('ocean');
+    expect(segments[0].isComplete).toBe(true);
+    expect(segments[0].samples.length).toBeGreaterThan(3);
+    expect(segments[1].cells).toEqual([3, 4]);
+    expect(segments[1].sinkType).toBeNull();
+    expect(segments[1].samples.length).toBeGreaterThan(0);
   });
 });
 
@@ -155,24 +214,8 @@ describe('drawRivers', () => {
     const ctxB = new MockContext();
 
     const rivers: RiverPath[] = [
-      {
-        cells: [0, 1, 4, 5],
-        source: 0,
-        sink: 5,
-        sinkType: 'ocean',
-        length: 4,
-        confluences: 0,
-        isTributary: false,
-      },
-      {
-        cells: [3, 4, 5],
-        source: 3,
-        sink: 5,
-        sinkType: 'ocean',
-        length: 3,
-        confluences: 1,
-        isTributary: true,
-      },
+      makeRiverPath([0, 1, 4, 5], 'ocean', false),
+      makeRiverPath([3, 4, 5], 'ocean', true),
     ];
 
     drawRivers(ctxA as unknown as CanvasRenderingContext2D, mesh, rivers);
