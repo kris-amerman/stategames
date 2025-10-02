@@ -21,6 +21,8 @@ type MockCommand =
   | { type: 'stroke' }
   | { type: 'lineWidth'; value: number };
 
+type Point = [number, number];
+
 class MockContext {
   public canvas: { width: number; height: number } = { width: 300, height: 200 };
   public commands: MockCommand[] = [];
@@ -65,6 +67,52 @@ class MockContext {
   }
   save() {}
   restore() {}
+}
+
+interface BezierSegment {
+  start: Point;
+  cp1: Point;
+  cp2: Point;
+  end: Point;
+}
+
+function extractBezierSegments(commands: MockCommand[]): BezierSegment[] {
+  const segments: BezierSegment[] = [];
+  let currentStart: Point | null = null;
+
+  for (const command of commands) {
+    if (command.type === 'moveTo') {
+      currentStart = [command.x, command.y];
+    } else if (command.type === 'bezierCurveTo' && currentStart) {
+      segments.push({
+        start: currentStart,
+        cp1: [command.cx1, command.cy1],
+        cp2: [command.cx2, command.cy2],
+        end: [command.x, command.y],
+      });
+      currentStart = [command.x, command.y];
+    }
+  }
+
+  return segments;
+}
+
+function pointSubtract(a: Point, b: Point): Point {
+  return [a[0] - b[0], a[1] - b[1]];
+}
+
+function pointLength(point: Point): number {
+  return Math.hypot(point[0], point[1]);
+}
+
+function normalizePoint(point: Point): Point {
+  const length = pointLength(point);
+  if (length < 1e-6) return [0, 0];
+  return [point[0] / length, point[1] / length];
+}
+
+function dotProduct(a: Point, b: Point): number {
+  return a[0] * b[0] + a[1] * b[1];
 }
 
 const mesh: MeshData = {
@@ -360,6 +408,57 @@ describe('drawRivers', () => {
 
     expect(ctxA.commands).toEqual(ctxB.commands);
     expect(ctxA.lineWidth).toBeLessThan(12);
+  });
+
+  it('maintains continuous tangents between consecutive bezier segments', () => {
+    const ctx = new MockContext();
+
+    const rivers: RiverPath[] = [
+      {
+        cells: [0, 1, 4, 5],
+        source: 0,
+        sink: 5,
+        sinkType: 'ocean',
+        length: 4,
+        confluences: 0,
+        isTributary: false,
+      },
+      {
+        cells: [3, 4, 5],
+        source: 3,
+        sink: 5,
+        sinkType: 'ocean',
+        length: 3,
+        confluences: 1,
+        isTributary: true,
+      },
+    ];
+
+    drawRivers(ctx as unknown as CanvasRenderingContext2D, mesh, rivers);
+
+    const segments = extractBezierSegments(ctx.commands);
+    expect(segments.length).toBeGreaterThan(1);
+
+    for (let i = 0; i < segments.length - 1; i++) {
+      const current = segments[i];
+      const next = segments[i + 1];
+
+      const incoming = pointSubtract(current.end, current.cp2);
+      const outgoing = pointSubtract(next.cp1, next.start);
+
+      const incomingLength = pointLength(incoming);
+      const outgoingLength = pointLength(outgoing);
+      expect(incomingLength).toBeGreaterThan(0);
+      expect(outgoingLength).toBeGreaterThan(0);
+
+      const dot = dotProduct(normalizePoint(incoming), normalizePoint(outgoing));
+      expect(dot).toBeGreaterThan(0.94);
+
+      const ratio =
+        Math.abs(incomingLength - outgoingLength) /
+        Math.max(incomingLength, outgoingLength);
+      expect(ratio).toBeLessThan(0.65);
+    }
   });
 
   it('ensures widths grow or stay constant downstream on the main river', () => {

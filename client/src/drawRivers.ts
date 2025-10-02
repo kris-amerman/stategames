@@ -26,6 +26,8 @@ const SOURCE_MIN_WIDTH = 1.05;
 
 const EXIT_FRACTION = 0.45;
 const ENTRY_FRACTION = 0.55;
+const CURVE_TENSION = 0.72;
+const EPSILON = 1e-6;
 
 type Point = [number, number];
 
@@ -34,6 +36,11 @@ interface SegmentAnchorPoints {
   exits: Point[];
   entries: Point[];
   shared: (Point | null)[];
+}
+
+interface SegmentControls {
+  cp1: Point;
+  cp2: Point;
 }
 
 export function prepareRiverRenderSegments(rivers: RiverPath[]): RiverRenderSegment[] {
@@ -339,7 +346,7 @@ export function strokeSmoothPath(
         ? points[i + 2]
         : reflectPoint(points[i], points[i + 1]);
 
-    const control = computeCatmullRomControls(p0, p1, p2, p3, 0.75);
+    const control = computeCatmullRomControls(p0, p1, p2, p3, CURVE_TENSION);
     ctx.bezierCurveTo(
       control.cp1[0],
       control.cp1[1],
@@ -409,13 +416,17 @@ export function drawRivers(
       isComplete: segment.isComplete,
     });
 
+    const segmentControls = computeSegmentControlPairs(anchors);
+
     for (let i = 0; i < widths.length; i++) {
       ctx.lineWidth = widths[i];
       const start = anchors.nodes[i];
       const end = anchors.nodes[i + 1];
       if (!start || !end) continue;
 
-      const { cp1, cp2 } = computeSegmentControls(anchors, i);
+      const controls = segmentControls[i];
+      if (!controls) continue;
+      const { cp1, cp2 } = controls;
 
       ctx.beginPath();
       ctx.moveTo(start[0], start[1]);
@@ -513,37 +524,166 @@ function collectSegmentAnchors(
   return { nodes, exits, entries, shared };
 }
 
-function computeSegmentControls(
-  anchors: SegmentAnchorPoints,
-  index: number
-): { cp1: Point; cp2: Point } {
+function computeSegmentControlPairs(anchors: SegmentAnchorPoints): SegmentControls[] {
   const { nodes, exits, entries, shared } = anchors;
-  const start = nodes[index];
-  const end = nodes[index + 1];
-  const prev = index > 0 ? nodes[index - 1] : reflectPoint(start, end);
-  const next =
-    index + 2 < nodes.length
-      ? nodes[index + 2]
-      : reflectPoint(end, start);
-
-  const { cp1: baseCp1, cp2: baseCp2 } = computeCatmullRomControls(
-    prev,
-    start,
-    end,
-    next,
-    0.72
-  );
-
-  let cp1 = lerpPoint(baseCp1, exits[index], 0.55);
-  let cp2 = lerpPoint(baseCp2, entries[index], 0.55);
-
-  const sharedPoint = shared[index];
-  if (sharedPoint) {
-    cp1 = lerpPoint(cp1, sharedPoint, 0.35);
-    cp2 = lerpPoint(cp2, sharedPoint, 0.35);
+  const segmentCount = nodes.length - 1;
+  if (segmentCount <= 0) {
+    return [];
   }
 
-  return { cp1, cp2 };
+  const controls: SegmentControls[] = new Array(segmentCount);
+  for (let i = 0; i < segmentCount; i++) {
+    const start = nodes[i];
+    const end = nodes[i + 1];
+    const prev = i === 0 ? reflectPoint(start, end) : nodes[i - 1];
+    const next =
+      i + 2 < nodes.length ? nodes[i + 2] : reflectPoint(end, start);
+    const base = computeCatmullRomControls(prev, start, end, next, CURVE_TENSION);
+    controls[i] = {
+      cp1: [base.cp1[0], base.cp1[1]],
+      cp2: [base.cp2[0], base.cp2[1]],
+    };
+  }
+
+  const segmentLimit = (index: number): number => {
+    const start = nodes[index];
+    const end = nodes[index + 1];
+    return pointLength(subtractPoints(end, start)) * 0.85;
+  };
+
+  for (let i = 1; i < nodes.length - 1; i++) {
+    const prevControl = controls[i - 1];
+    const nextControl = controls[i];
+    if (!prevControl || !nextControl) continue;
+
+    const incoming = subtractPoints(nodes[i], prevControl.cp2);
+    const outgoing = subtractPoints(nextControl.cp1, nodes[i]);
+    let baseLength = (pointLength(incoming) + pointLength(outgoing)) * 0.5;
+
+    const prevLimit = pointLength(subtractPoints(nodes[i], nodes[i - 1])) * 0.82;
+    const nextLimit = pointLength(subtractPoints(nodes[i + 1], nodes[i])) * 0.82;
+    const maxLength = Math.max(EPSILON, Math.min(prevLimit, nextLimit));
+    if (!(baseLength > EPSILON)) {
+      baseLength = maxLength * 0.6;
+    } else if (baseLength > maxLength) {
+      baseLength = maxLength;
+    }
+
+    let direction: Point = [0, 0];
+    const accumulate = (vector: Point, weight: number) => {
+      const len = pointLength(vector);
+      if (len < EPSILON || weight <= 0) return;
+      direction = addPoints(direction, scalePoint(vector, weight / len));
+    };
+
+    accumulate(outgoing, 1);
+    accumulate(incoming, 1);
+    accumulate(subtractPoints(nodes[i + 1], nodes[i - 1]), 0.7);
+
+    if (i < exits.length) {
+      accumulate(subtractPoints(exits[i], nodes[i]), 0.6);
+    }
+    if (i - 1 >= 0 && i - 1 < entries.length) {
+      accumulate(subtractPoints(nodes[i], entries[i - 1]), 0.6);
+    }
+    if (shared[i - 1]) {
+      accumulate(subtractPoints(shared[i - 1]!, nodes[i]), 0.5);
+    }
+    if (shared[i]) {
+      accumulate(subtractPoints(shared[i]!, nodes[i]), 0.5);
+    }
+
+    if (pointLength(direction) < EPSILON) {
+      direction = subtractPoints(nodes[i + 1], nodes[i - 1]);
+    }
+    direction = normalizePoint(direction);
+    const tangent = scalePoint(direction, baseLength);
+
+    prevControl.cp2 = addPoints(nodes[i], scalePoint(tangent, -1));
+    nextControl.cp1 = addPoints(nodes[i], tangent);
+
+    prevControl.cp2 = clampControlAroundPoint(prevControl.cp2, nodes[i], prevLimit);
+    nextControl.cp1 = clampControlAroundPoint(nextControl.cp1, nodes[i], nextLimit);
+  }
+
+  if (controls.length > 0) {
+    const startControl = controls[0];
+    let baseLength = pointLength(subtractPoints(startControl.cp1, nodes[0]));
+    const limit = segmentLimit(0);
+    if (!(baseLength > EPSILON)) {
+      baseLength = limit * 0.65;
+    } else if (baseLength > limit) {
+      baseLength = limit;
+    }
+
+    let direction: Point = [0, 0];
+    const accumulateStart = (vector: Point, weight: number) => {
+      const len = pointLength(vector);
+      if (len < EPSILON || weight <= 0) return;
+      direction = addPoints(direction, scalePoint(vector, weight / len));
+    };
+
+    accumulateStart(subtractPoints(startControl.cp1, nodes[0]), 1);
+    if (nodes.length > 1) {
+      accumulateStart(subtractPoints(nodes[1], nodes[0]), 0.7);
+    }
+    if (exits[0]) {
+      accumulateStart(subtractPoints(exits[0], nodes[0]), 0.6);
+    }
+    if (shared[0]) {
+      accumulateStart(subtractPoints(shared[0]!, nodes[0]), 0.5);
+    }
+
+    if (pointLength(direction) < EPSILON && nodes.length > 1) {
+      direction = subtractPoints(nodes[1], nodes[0]);
+    }
+    direction = normalizePoint(direction);
+    const tangent = scalePoint(direction, baseLength);
+    startControl.cp1 = addPoints(nodes[0], tangent);
+    startControl.cp1 = clampControlAroundPoint(startControl.cp1, nodes[0], limit);
+  }
+
+  const lastIndex = controls.length - 1;
+  if (lastIndex >= 0) {
+    const endControl = controls[lastIndex];
+    const nodeIndex = nodes.length - 1;
+    let baseLength = pointLength(subtractPoints(nodes[nodeIndex], endControl.cp2));
+    const limit = pointLength(subtractPoints(nodes[nodeIndex], nodes[nodeIndex - 1])) * 0.85;
+
+    if (!(baseLength > EPSILON)) {
+      baseLength = limit * 0.65;
+    } else if (baseLength > limit) {
+      baseLength = limit;
+    }
+
+    let direction: Point = [0, 0];
+    const accumulateEnd = (vector: Point, weight: number) => {
+      const len = pointLength(vector);
+      if (len < EPSILON || weight <= 0) return;
+      direction = addPoints(direction, scalePoint(vector, weight / len));
+    };
+
+    accumulateEnd(subtractPoints(nodes[nodeIndex], endControl.cp2), 1);
+    accumulateEnd(subtractPoints(nodes[nodeIndex], nodes[nodeIndex - 1]), 0.7);
+    if (entries.length > 0) {
+      const entry = entries[entries.length - 1];
+      accumulateEnd(subtractPoints(nodes[nodeIndex], entry), 0.6);
+    }
+    const sharedTail = shared[shared.length - 1];
+    if (sharedTail) {
+      accumulateEnd(subtractPoints(sharedTail, nodes[nodeIndex]), 0.5);
+    }
+
+    if (pointLength(direction) < EPSILON) {
+      direction = subtractPoints(nodes[nodeIndex], nodes[nodeIndex - 1]);
+    }
+    direction = normalizePoint(direction);
+    const tangent = scalePoint(direction, baseLength);
+    endControl.cp2 = addPoints(nodes[nodeIndex], scalePoint(tangent, -1));
+    endControl.cp2 = clampControlAroundPoint(endControl.cp2, nodes[nodeIndex], limit);
+  }
+
+  return controls;
 }
 
 function computeCatmullRomControls(
@@ -563,6 +703,43 @@ function computeCatmullRomControls(
     p2[1] - (p3[1] - p1[1]) * factor,
   ];
   return { cp1, cp2 };
+}
+
+function clampControlAroundPoint(point: Point, anchor: Point, limit: number): Point {
+  if (!(limit > EPSILON)) {
+    return point;
+  }
+  const vector = subtractPoints(point, anchor);
+  const length = pointLength(vector);
+  if (!(length > limit)) {
+    return point;
+  }
+  const direction = normalizePoint(vector);
+  return addPoints(anchor, scalePoint(direction, limit));
+}
+
+function addPoints(a: Point, b: Point): Point {
+  return [a[0] + b[0], a[1] + b[1]];
+}
+
+function subtractPoints(a: Point, b: Point): Point {
+  return [a[0] - b[0], a[1] - b[1]];
+}
+
+function scalePoint(point: Point, scalar: number): Point {
+  return [point[0] * scalar, point[1] * scalar];
+}
+
+function pointLength(point: Point): number {
+  return Math.hypot(point[0], point[1]);
+}
+
+function normalizePoint(point: Point): Point {
+  const length = pointLength(point);
+  if (!(length > EPSILON)) {
+    return [0, 0];
+  }
+  return [point[0] / length, point[1] / length];
 }
 
 function lerpPoint(a: Point, b: Point, t: number): Point {
